@@ -144,6 +144,8 @@ agentmemory works with any agent that supports hooks, MCP, or REST API. All agen
   <sub>Works with <strong>any</strong> agent that speaks MCP or HTTP. One server, memories shared across all of them.</sub>
 </p>
 
+The included `docker-compose.yml` mounts `iii-config.yaml` into the `iii-engine` container and persists iii state in the named `iii-data` volume.
+
 ---
 
 You explain the same architecture every session. You re-discover the same bugs. You re-teach the same preferences. Built-in memory (CLAUDE.md, .cursorrules) caps out at 200 lines and goes stale. agentmemory fixes this. It silently captures what your agent does, compresses it into searchable memory, and injects the right context when the next session starts. One command. Works across agents.
