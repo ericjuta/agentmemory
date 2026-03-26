@@ -144,7 +144,7 @@ agentmemory works with any agent that supports hooks, MCP, or REST API. All agen
   <sub>Works with <strong>any</strong> agent that speaks MCP or HTTP. One server, memories shared across all of them.</sub>
 </p>
 
-The included `docker-compose.yml` mounts `iii-config.yaml` into the `iii-engine` container and persists iii state in the named `iii-data` volume.
+The included `docker-compose.yml` starts both `iii-engine` and the `agentmemory-worker`, mounts `iii-config.yaml` into the engine container, and persists iii state in the named `iii-data` volume.
 
 ---
 
