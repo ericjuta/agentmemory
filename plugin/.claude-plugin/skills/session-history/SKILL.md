@@ -6,7 +6,7 @@ user-invocable: true
 
 Fetch recent session history from agentmemory:
 
-!`curl -s -H "Authorization: Bearer ${AGENTMEMORY_SECRET:-}" "http://${AGENTMEMORY_URL:-localhost:3111}/agentmemory/sessions" 2>/dev/null || echo '{"sessions":[]}'`
+!`curl -s -H "Authorization: Bearer ${AGENTMEMORY_SECRET:-}" "${AGENTMEMORY_URL:-http://127.0.0.1:3111}/agentmemory/sessions" 2>/dev/null || echo '{"sessions":[]}'`
 
 Present the sessions in reverse chronological order:
 - Show session ID (first 8 chars), project, start time, status

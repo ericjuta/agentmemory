@@ -12,7 +12,7 @@ To save this, make a POST request using the Bash tool:
 ```bash
 curl -s -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${AGENTMEMORY_SECRET:-}" \
-  -X POST "http://${AGENTMEMORY_URL:-localhost:3111}/agentmemory/remember" \
+  -X POST "${AGENTMEMORY_URL:-http://127.0.0.1:3111}/agentmemory/remember" \
   -d '{"content": "<ESCAPED_CONTENT>", "concepts": [<CONCEPTS>], "files": [<FILES>]}'
 ```
 

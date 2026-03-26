@@ -14,7 +14,7 @@ Steps:
    ```bash
    curl -s -H "Content-Type: application/json" \
      -H "Authorization: Bearer ${AGENTMEMORY_SECRET:-}" \
-     -X POST "http://${AGENTMEMORY_URL:-localhost:3111}/agentmemory/search" \
+     -X POST "${AGENTMEMORY_URL:-http://127.0.0.1:3111}/agentmemory/search" \
      -d '{"query": "<SEARCH_TERM>", "limit": 20}'
    ```
 
@@ -23,7 +23,7 @@ Steps:
    ```bash
    curl -s -H "Content-Type: application/json" \
      -H "Authorization: Bearer ${AGENTMEMORY_SECRET:-}" \
-     -X POST "http://${AGENTMEMORY_URL:-localhost:3111}/agentmemory/forget" \
+     -X POST "${AGENTMEMORY_URL:-http://127.0.0.1:3111}/agentmemory/forget" \
      -d '{"sessionId": "<ID>"}' # or {"observationIds": ["id1", "id2"]}
    ```
 
