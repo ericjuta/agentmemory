@@ -565,14 +565,14 @@ agentmemory auto-detects your provider. For best results, install local embeddin
 npm install @xenova/transformers
 ```
 
-| Provider | Model | Cost | Notes |
-|---|---|---|---|
-| **Local (recommended)** | `all-MiniLM-L6-v2` | Free | Offline, +8pp recall over BM25-only |
-| Gemini | `text-embedding-004` | Free tier | 1500 RPM |
-| OpenAI | `text-embedding-3-small` | $0.02/1M | Highest quality |
-| Voyage AI | `voyage-code-3` | Paid | Optimized for code |
-| Cohere | `embed-english-v3.0` | Free trial | General purpose |
-| OpenRouter | Any model | Varies | Multi-model proxy |
+| Provider | Model | Dimensions | Env Var | Notes |
+|---|---|---|---|---|
+| **Local (recommended)** | `all-MiniLM-L6-v2` | 384 | `EMBEDDING_PROVIDER=local` | Free, offline, +8pp recall over BM25-only |
+| Gemini | `gemini-embedding-2-preview` | 768 default | `GEMINI_API_KEY` | Set `GEMINI_EMBEDDING_MODEL` or `GEMINI_EMBEDDING_DIMENSIONS` to override |
+| OpenAI | `text-embedding-3-small` | 1536 | `OPENAI_API_KEY` | $0.02/1M tokens |
+| Voyage AI | `voyage-code-3` | 1024 | `VOYAGE_API_KEY` | Optimized for code |
+| Cohere | `embed-english-v3.0` | 1024 | `COHERE_API_KEY` | Free trial available |
+| OpenRouter | Any embedding model | varies | `OPENROUTER_API_KEY` | Multi-model proxy |
 
 ---
 
@@ -728,6 +728,8 @@ Create `~/.agentmemory/.env`:
 # LLM provider (pick one, or leave empty for Claude subscription)
 # ANTHROPIC_API_KEY=sk-ant-...
 # GEMINI_API_KEY=...
+# GEMINI_EMBEDDING_MODEL=gemini-embedding-2-preview
+# GEMINI_EMBEDDING_DIMENSIONS=768
 # OPENROUTER_API_KEY=...
 
 # Embedding provider (auto-detected, or override)
