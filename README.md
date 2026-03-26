@@ -568,7 +568,7 @@ npm install @xenova/transformers
 | Provider | Model | Dimensions | Env Var | Notes |
 |---|---|---|---|---|
 | **Local (recommended)** | `all-MiniLM-L6-v2` | 384 | `EMBEDDING_PROVIDER=local` | Free, offline, +8pp recall over BM25-only |
-| Gemini | `gemini-embedding-2-preview` | 768 default | `GEMINI_API_KEY` | Set `GEMINI_EMBEDDING_MODEL` or `GEMINI_EMBEDDING_DIMENSIONS` to override |
+| Gemini | `gemini-embedding-2-preview` | 3072 full / configurable lower | `GEMINI_API_KEY` | Set `GEMINI_EMBEDDING_MODEL` or `GEMINI_EMBEDDING_DIMENSIONS` to override |
 | OpenAI | `text-embedding-3-small` | 1536 | `OPENAI_API_KEY` | $0.02/1M tokens |
 | Voyage AI | `voyage-code-3` | 1024 | `VOYAGE_API_KEY` | Optimized for code |
 | Cohere | `embed-english-v3.0` | 1024 | `COHERE_API_KEY` | Free trial available |
@@ -728,8 +728,9 @@ Create `~/.agentmemory/.env`:
 # LLM provider (pick one, or leave empty for Claude subscription)
 # ANTHROPIC_API_KEY=sk-ant-...
 # GEMINI_API_KEY=...
+# GEMINI_MODEL=gemini-flash-latest
 # GEMINI_EMBEDDING_MODEL=gemini-embedding-2-preview
-# GEMINI_EMBEDDING_DIMENSIONS=768
+# GEMINI_EMBEDDING_DIMENSIONS=3072
 # OPENROUTER_API_KEY=...
 
 # Embedding provider (auto-detected, or override)
@@ -767,8 +768,10 @@ Create `~/.agentmemory/.env`:
                                    #   log only per Claude Code docs)
                                    # Observations are still captured via
                                    # PostToolUse regardless of this flag.
-# GRAPH_EXTRACTION_ENABLED=false
+# GRAPH_EXTRACTION_ENABLED=true
+# GRAPH_EXTRACTION_BATCH_SIZE=10
 # CONSOLIDATION_ENABLED=true
+# CONSOLIDATION_DECAY_DAYS=30
 # LESSON_DECAY_ENABLED=true
 # OBSIDIAN_AUTO_EXPORT=false
 # AGENTMEMORY_EXPORT_ROOT=~/.agentmemory
