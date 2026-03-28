@@ -567,7 +567,10 @@ export function registerApiTriggers(
     ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
-      const result = await sdk.trigger({ function_id: "mem::consolidate", payload: req.body });
+      const result = await sdk.trigger({
+        function_id: "mem::consolidate",
+        payload: req.body ?? {},
+      });
       return { status_code: 200, body: result };
     },
   );

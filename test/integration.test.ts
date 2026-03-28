@@ -208,6 +208,21 @@ describe("agentmemory integration", () => {
     });
   });
 
+  describe("consolidate", () => {
+    it("handles an empty request body", async () => {
+      const res = await fetch(url("/agentmemory/consolidate"), {
+        method: "POST",
+        headers: authHeaders(),
+      });
+      expect(res.status).toBe(200);
+      const body = (await json(res)) as {
+        consolidated: number;
+        reason?: string;
+      };
+      expect(typeof body.consolidated).toBe("number");
+    });
+  });
+
   describe("context", () => {
     it("generates context for a project", async () => {
       const res = await fetch(url("/agentmemory/context"), {
