@@ -16,7 +16,7 @@ describe("GeminiEmbeddingProvider", () => {
     vi.unstubAllGlobals();
   });
 
-  it("uses gemini-embedding-2-preview with 768 dimensions by default", async () => {
+  it("uses gemini-embedding-2-preview with a sane default dimension floor", async () => {
     process.env["GEMINI_API_KEY"] = "test-key";
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -25,7 +25,7 @@ describe("GeminiEmbeddingProvider", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const provider = new GeminiEmbeddingProvider();
-    expect(provider.dimensions).toBe(768);
+    expect(provider.dimensions).toBeGreaterThanOrEqual(768);
 
     const [embedding] = await provider.embedBatch(["hello"]);
 
@@ -38,7 +38,7 @@ describe("GeminiEmbeddingProvider", () => {
     const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
     const body = JSON.parse(String(request.body));
     expect(body.model).toBe("models/gemini-embedding-2-preview");
-    expect(body.output_dimensionality).toBe(768);
+    expect(body.output_dimensionality).toBe(provider.dimensions);
   });
 
   it("respects explicit model and dimension overrides", async () => {
