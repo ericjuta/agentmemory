@@ -935,6 +935,97 @@ export function registerApiTriggers(
     config: { api_path: "/agentmemory/graph/extract", http_method: "POST" },
   });
 
+  sdk.registerFunction(
+    { id: "api::graph-build" },
+    async (
+      req: ApiRequest<{ project?: string; sessionId?: string }>,
+    ): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+
+      try {
+        const sessions = await kv.list<Session>(KV.sessions);
+        const filteredSessions = req.body?.sessionId
+          ? sessions.filter((session) => session.id === req.body?.sessionId)
+          : req.body?.project
+            ? sessions.filter((session) => session.project === req.body?.project)
+            : sessions;
+
+        const observationsBySession = await Promise.all(
+          filteredSessions.map((session) =>
+            kv
+              .list<CompressedObservation>(KV.observations(session.id))
+              .catch(() => [] as CompressedObservation[]),
+          ),
+        );
+
+        const observations = observationsBySession
+          .flat()
+          .filter((observation) => observation.title && observation.narrative);
+
+        if (observations.length === 0) {
+          return {
+            status_code: 200,
+            body: {
+              success: true,
+              sessions: filteredSessions.length,
+              observations: 0,
+              nodes: 0,
+              edges: 0,
+            },
+          };
+        }
+
+        let nodes = 0;
+        let edges = 0;
+        const batchSize = 25;
+        for (let i = 0; i < observations.length; i += batchSize) {
+          const batch = observations.slice(i, i + batchSize);
+          const result = await sdk.trigger<
+            { observations: CompressedObservation[] },
+            { success: boolean; nodesAdded?: number; edgesAdded?: number; error?: string }
+          >("mem::graph-extract", { observations: batch });
+          if (!result.success) {
+            return {
+              status_code: 500,
+              body: {
+                success: false,
+                error: result.error || "graph extraction failed",
+                sessions: filteredSessions.length,
+                observations: observations.length,
+                nodes,
+                edges,
+              },
+            };
+          }
+          nodes += result.nodesAdded || 0;
+          edges += result.edgesAdded || 0;
+        }
+
+        return {
+          status_code: 200,
+          body: {
+            success: true,
+            sessions: filteredSessions.length,
+            observations: observations.length,
+            nodes,
+            edges,
+          },
+        };
+      } catch {
+        return {
+          status_code: 404,
+          body: { error: "Knowledge graph not enabled" },
+        };
+      }
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::graph-build",
+    config: { api_path: "/agentmemory/graph/build", http_method: "POST" },
+  });
+
   sdk.registerFunction("api::consolidate-pipeline", 
     async (req: ApiRequest<{ tier?: string }>): Promise<Response> => {
       const authErr = checkAuth(req, secret);

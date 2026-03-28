@@ -223,6 +223,45 @@ describe("agentmemory integration", () => {
     });
   });
 
+  describe("graph", () => {
+    it("builds graph state for an empty scoped session without error", async () => {
+      const sessionId = `test_graph_${Date.now()}`;
+      const startRes = await fetch(url("/agentmemory/session/start"), {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({
+          sessionId,
+          project: PROJECT,
+          cwd: PROJECT,
+        }),
+      });
+      expect(startRes.status).toBe(200);
+
+      const res = await fetch(url("/agentmemory/graph/build"), {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ sessionId }),
+      });
+      expect(res.status).toBe(200);
+      const body = (await json(res)) as {
+        success: boolean;
+        observations: number;
+        nodes: number;
+        edges: number;
+      };
+      expect(body.success).toBe(true);
+      expect(body.observations).toBe(0);
+      expect(body.nodes).toBe(0);
+      expect(body.edges).toBe(0);
+
+      await fetch(url("/agentmemory/session/end"), {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ sessionId }),
+      });
+    });
+  });
+
   describe("context", () => {
     it("generates context for a project", async () => {
       const res = await fetch(url("/agentmemory/context"), {
