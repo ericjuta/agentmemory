@@ -9,6 +9,7 @@ import { isAutoCompressEnabled } from "../config.js";
 import { buildSyntheticCompression } from "./compress-synthetic.js";
 import { getSearchIndex } from "./search.js";
 import { logger } from "../logger.js";
+import { upsertTurnCapsuleFromRaw } from "./turn-capsules.js";
 
 export function registerObserveFunction(
   sdk: ISdk,
@@ -72,6 +73,7 @@ export function registerObserveFunction(
 
       if (typeof sanitizedRaw === "object" && sanitizedRaw !== null) {
         const d = sanitizedRaw as Record<string, unknown>;
+        raw.turnId = d["turn_id"] as string | undefined;
         if (
           payload.hookType === "post_tool_use" ||
           payload.hookType === "post_tool_failure"
@@ -82,6 +84,13 @@ export function registerObserveFunction(
         }
         if (payload.hookType === "prompt_submit") {
           raw.userPrompt = d["prompt"] as string | undefined;
+        }
+        if (payload.hookType === "assistant_result") {
+          raw.assistantResponse = d["assistant_text"] as string | undefined;
+        }
+        if (payload.hookType === "stop") {
+          raw.assistantResponse =
+            d["last_assistant_message"] as string | undefined;
         }
       }
 
@@ -97,6 +106,14 @@ export function registerObserveFunction(
         }
 
         await kv.set(KV.observations(payload.sessionId), obsId, raw);
+
+        await upsertTurnCapsuleFromRaw(
+          kv,
+          payload.sessionId,
+          payload.project,
+          payload.cwd,
+          raw,
+        );
 
         if (dedupMap && dedupHash) {
           dedupMap.record(dedupHash);

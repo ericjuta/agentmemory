@@ -19,6 +19,7 @@ import { scoreCompression } from "../eval/quality.js";
 import { compressWithRetry } from "../eval/self-correct.js";
 import type { MetricsStore } from "../eval/metrics-store.js";
 import { logger } from "../logger.js";
+import { upsertTurnCapsuleFromCompressed } from "./turn-capsules.js";
 
 const VALID_TYPES = new Set<string>([
   "file_read",
@@ -79,6 +80,7 @@ export function registerCompressFunction(
         toolInput: data.raw.toolInput,
         toolOutput: data.raw.toolOutput,
         userPrompt: data.raw.userPrompt,
+        assistantResponse: data.raw.assistantResponse,
         timestamp: data.raw.timestamp,
       });
 
@@ -123,6 +125,7 @@ export function registerCompressFunction(
           id: data.observationId,
           sessionId: data.sessionId,
           timestamp: data.raw.timestamp,
+          turnId: data.raw.turnId,
           ...parsed,
           confidence: qualityScore / 100,
         };
@@ -173,6 +176,8 @@ export function registerCompressFunction(
             });
           }
         }
+
+        await upsertTurnCapsuleFromCompressed(kv, compressed);
 
         const latencyMs = Date.now() - startMs;
         if (metricsStore) {

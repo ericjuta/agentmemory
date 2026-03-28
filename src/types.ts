@@ -15,6 +15,7 @@ export interface RawObservation {
   sessionId: string;
   timestamp: string;
   hookType: HookType;
+  turnId?: string;
   toolName?: string;
   toolInput?: unknown;
   toolOutput?: unknown;
@@ -27,6 +28,7 @@ export interface CompressedObservation {
   id: string;
   sessionId: string;
   timestamp: string;
+  turnId?: string;
   type: ObservationType;
   title: string;
   subtitle?: string;
@@ -92,6 +94,7 @@ export type HookType =
   | "pre_tool_use"
   | "post_tool_use"
   | "post_tool_failure"
+  | "assistant_result"
   | "pre_compact"
   | "subagent_start"
   | "subagent_stop"
@@ -99,6 +102,25 @@ export type HookType =
   | "task_completed"
   | "stop"
   | "session_end";
+
+export interface TurnCapsule {
+  id: string;
+  sessionId: string;
+  turnId: string;
+  project: string;
+  cwd: string;
+  createdAt: string;
+  updatedAt: string;
+  userPrompt?: string;
+  assistantConclusion?: string;
+  files: string[];
+  concepts: string[];
+  hadFailure: boolean;
+  hadDecision: boolean;
+  sourceObservationIds: string[];
+  importantObservationIds: string[];
+  maxImportance: number;
+}
 
 export interface HookPayload {
   hookType: HookType;
