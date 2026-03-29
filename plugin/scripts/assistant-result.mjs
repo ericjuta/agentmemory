@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-//#region src/hooks/post-tool-failure.ts
+//#region src/hooks/assistant-result.ts
 const REST_URL = process.env["AGENTMEMORY_URL"] || "http://127.0.0.1:3111";
 const SECRET = process.env["AGENTMEMORY_SECRET"] || "";
 function authHeaders() {
@@ -16,23 +16,21 @@ async function main() {
 	} catch {
 		return;
 	}
-	if (data.is_interrupt) return;
 	const sessionId = data.session_id || "unknown";
 	try {
 		await fetch(`${REST_URL}/agentmemory/observe`, {
 			method: "POST",
 			headers: authHeaders(),
 			body: JSON.stringify({
-				hookType: "post_tool_failure",
+				hookType: "assistant_result",
 				sessionId,
 				project: data.cwd || process.cwd(),
 				cwd: data.cwd || process.cwd(),
 				timestamp: (/* @__PURE__ */ new Date()).toISOString(),
 				data: {
 					turn_id: data.turn_id ?? data.turnId,
-					tool_name: data.tool_name,
-					tool_input: typeof data.tool_input === "string" ? data.tool_input.slice(0, 4e3) : JSON.stringify(data.tool_input ?? "").slice(0, 4e3),
-					error: typeof data.error === "string" ? data.error.slice(0, 4e3) : JSON.stringify(data.error ?? "").slice(0, 4e3)
+					assistant_text: typeof data.assistant_text === "string" ? data.assistant_text.slice(0, 4e3) : typeof data.assistant_message === "string" ? data.assistant_message.slice(0, 4e3) : typeof data.message === "string" ? data.message.slice(0, 4e3) : "",
+					is_final: data.is_final ?? true
 				}
 			}),
 			signal: AbortSignal.timeout(3e3)
@@ -43,4 +41,4 @@ main();
 
 //#endregion
 export {  };
-//# sourceMappingURL=post-tool-failure.mjs.map
+//# sourceMappingURL=assistant-result.mjs.map

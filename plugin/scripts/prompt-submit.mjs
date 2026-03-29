@@ -27,7 +27,10 @@ async function main() {
 				project: data.cwd || process.cwd(),
 				cwd: data.cwd || process.cwd(),
 				timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-				data: { prompt: data.prompt }
+				data: {
+					turn_id: data.turn_id ?? data.turnId,
+					prompt: data.prompt
+				}
 			}),
 			signal: AbortSignal.timeout(3e3)
 		});

@@ -18,6 +18,24 @@ async function main() {
 	}
 	const sessionId = data.session_id || "unknown";
 	try {
+		await fetch(`${REST_URL}/agentmemory/observe`, {
+			method: "POST",
+			headers: authHeaders(),
+			body: JSON.stringify({
+				hookType: "stop",
+				sessionId,
+				project: data.cwd || process.cwd(),
+				cwd: data.cwd || process.cwd(),
+				timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+				data: {
+					turn_id: data.turn_id ?? data.turnId,
+					last_assistant_message: typeof data.last_assistant_message === "string" ? data.last_assistant_message.slice(0, 4e3) : ""
+				}
+			}),
+			signal: AbortSignal.timeout(3e3)
+		});
+	} catch {}
+	try {
 		await fetch(`${REST_URL}/agentmemory/summarize`, {
 			method: "POST",
 			headers: authHeaders(),
