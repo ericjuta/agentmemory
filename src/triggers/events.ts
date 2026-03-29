@@ -2,8 +2,13 @@ import { TriggerAction, type ISdk } from "iii-sdk";
 import type { HookPayload, Session } from "../types.js";
 import { KV, STREAM } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
+import type { CompressionTracker } from "../state/compression-tracker.js";
 
-export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
+export function registerEventTriggers(
+  sdk: ISdk,
+  kv: StateKV,
+  tracker?: CompressionTracker,
+): void {
   sdk.registerFunction(
     "event::session::started",
     async (data: { sessionId: string; project: string; cwd: string }) => {
@@ -41,8 +46,19 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
     config: { topic: "agentmemory.observation" },
   });
 
-  sdk.registerFunction("event::session::stopped", async (data: { sessionId: string }) =>
-    sdk.trigger({ function_id: "mem::summarize", payload: data }),
+  sdk.registerFunction("event::session::stopped", async (data: { sessionId: string }) => {
+    if (tracker) {
+      try {
+        await tracker.drain(data.sessionId, 30_000);
+      } catch {
+        // timeout — summarize with whatever is available
+        console.warn(
+          `[agentmemory] Drain timeout for session ${data.sessionId}, proceeding with partial data`,
+        );
+      }
+    }
+    return sdk.trigger({ function_id: "mem::summarize", payload: data });
+  },
   );
   sdk.registerTrigger({
     type: "durable:subscriber",

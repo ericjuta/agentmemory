@@ -20,6 +20,15 @@ import { compressWithRetry } from "../eval/self-correct.js";
 import type { MetricsStore } from "../eval/metrics-store.js";
 import { logger } from "../logger.js";
 import { upsertTurnCapsuleFromCompressed } from "./turn-capsules.js";
+import { Semaphore } from "../state/semaphore.js";
+import type { CompressionTracker } from "../state/compression-tracker.js";
+
+/** Cap concurrent LLM compression calls to avoid starving the engine. */
+const compressSemaphore = new Semaphore(6);
+
+export function getCompressMetrics() {
+  return { active: compressSemaphore.active, pending: compressSemaphore.pending };
+}
 
 const VALID_TYPES = new Set<string>([
   "file_read",
@@ -66,150 +75,226 @@ export function registerCompressFunction(
   kv: StateKV,
   provider: MemoryProvider,
   metricsStore?: MetricsStore,
+  tracker?: CompressionTracker,
+  graphEnabled?: boolean,
 ): void {
-  sdk.registerFunction("mem::compress", 
+  sdk.registerFunction("mem::compress",
     async (data: {
       observationId: string;
       sessionId: string;
       raw: RawObservation;
     }) => {
-      const startMs = Date.now();
-      const prompt = buildCompressionPrompt({
-        hookType: data.raw.hookType,
-        toolName: data.raw.toolName,
-        toolInput: data.raw.toolInput,
-        toolOutput: data.raw.toolOutput,
-        userPrompt: data.raw.userPrompt,
-        assistantResponse: data.raw.assistantResponse,
-        timestamp: data.raw.timestamp,
-      });
-
       try {
-        const validator = (response: string) => {
-          const parsed = parseCompressionXml(response);
-          if (!parsed) return { valid: false, errors: ["xml_parse_failed"] };
-          const result = validateOutput(
-            CompressOutputSchema,
-            parsed,
-            "mem::compress",
-          );
-          return result.valid
-            ? { valid: true }
-            : { valid: false, errors: result.result.errors };
-        };
-
-        const { response, retried } = await compressWithRetry(
-          provider,
-          COMPRESSION_SYSTEM,
-          prompt,
-          validator,
-          1,
-        );
-
-        const parsed = parseCompressionXml(response);
-        if (!parsed) {
-          const latencyMs = Date.now() - startMs;
-          if (metricsStore) {
-            await metricsStore.record("mem::compress", latencyMs, false);
-          }
-          logger.warn("Failed to parse compression XML", {
-            obsId: data.observationId,
-            retried,
+        return await compressSemaphore.run(async () => {
+          const startMs = Date.now();
+          const prompt = buildCompressionPrompt({
+            hookType: data.raw.hookType,
+            toolName: data.raw.toolName,
+            toolInput: data.raw.toolInput,
+            toolOutput: data.raw.toolOutput,
+            userPrompt: data.raw.userPrompt,
+            assistantResponse: data.raw.assistantResponse,
+            timestamp: data.raw.timestamp,
           });
-          return { success: false, error: "parse_failed" };
-        }
 
-        const qualityScore = scoreCompression(parsed);
+          try {
+            const validator = (response: string) => {
+              const parsed = parseCompressionXml(response);
+              if (!parsed) return { valid: false, errors: ["xml_parse_failed"] };
+              const result = validateOutput(
+                CompressOutputSchema,
+                parsed,
+                "mem::compress",
+              );
+              return result.valid
+                ? { valid: true }
+                : { valid: false, errors: result.result.errors };
+            };
 
-        const compressed: CompressedObservation = {
-          id: data.observationId,
-          sessionId: data.sessionId,
-          timestamp: data.raw.timestamp,
-          turnId: data.raw.turnId,
-          ...parsed,
-          confidence: qualityScore / 100,
-        };
+            const { response, retried } = await compressWithRetry(
+              provider,
+              COMPRESSION_SYSTEM,
+              prompt,
+              validator,
+              1,
+            );
 
-        await kv.set(
-          KV.observations(data.sessionId),
-          data.observationId,
-          compressed,
-        );
+            const parsed = parseCompressionXml(response);
+            if (!parsed) {
+              const latencyMs = Date.now() - startMs;
+              if (metricsStore) {
+                await metricsStore.record("mem::compress", latencyMs, false);
+              }
+              logger.warn("Failed to parse compression XML", {
+                obsId: data.observationId,
+                retried,
+              });
+              return { success: false, error: "parse_failed" };
+            }
 
-        getSearchIndex().add(compressed);
+            const qualityScore = scoreCompression(parsed);
 
-        const streamResults = await Promise.allSettled([
-          sdk.trigger({
-            function_id: "stream::set",
-            payload: {
-              stream_name: STREAM.name,
-              group_id: STREAM.group(data.sessionId),
-              item_id: data.observationId,
-              data: { type: "compressed", observation: compressed },
-            },
-          }),
-          sdk.trigger({
-            function_id: "stream::send",
-            payload: {
-              stream_name: STREAM.name,
-              group_id: STREAM.viewerGroup,
-              id: `compressed-${data.observationId}`,
-              type: "compressed_observation",
-              data: {
-                type: "compressed",
-                observation: compressed,
-                sessionId: data.sessionId,
-              },
-            },
-            action: TriggerAction.Void(),
-          }),
-        ]);
-        for (const result of streamResults) {
-          if (result.status === "rejected") {
-            logger.warn("Non-fatal stream publish failure after compress", {
+            const compressed: CompressedObservation = {
+              id: data.observationId,
               sessionId: data.sessionId,
-              observationId: data.observationId,
-              error:
-                result.reason instanceof Error
-                  ? result.reason.message
-                  : String(result.reason),
+              timestamp: data.raw.timestamp,
+              turnId: data.raw.turnId,
+              ...parsed,
+              confidence: qualityScore / 100,
+            };
+
+            await kv.set(
+              KV.observations(data.sessionId),
+              data.observationId,
+              compressed,
+            );
+
+            getSearchIndex().add(compressed);
+
+            const streamResults = await Promise.allSettled([
+              sdk.trigger({
+                function_id: "stream::set",
+                payload: {
+                  stream_name: STREAM.name,
+                  group_id: STREAM.group(data.sessionId),
+                  item_id: data.observationId,
+                  data: { type: "compressed", observation: compressed },
+                },
+              }),
+              sdk.trigger({
+                function_id: "stream::send",
+                payload: {
+                  stream_name: STREAM.name,
+                  group_id: STREAM.viewerGroup,
+                  id: `compressed-${data.observationId}`,
+                  type: "compressed_observation",
+                  data: {
+                    type: "compressed",
+                    observation: compressed,
+                    sessionId: data.sessionId,
+                  },
+                },
+                action: TriggerAction.Void(),
+              }),
+            ]);
+            for (const result of streamResults) {
+              if (result.status === "rejected") {
+                logger.warn("Non-fatal stream publish failure after compress", {
+                  sessionId: data.sessionId,
+                  observationId: data.observationId,
+                  error:
+                    result.reason instanceof Error
+                      ? result.reason.message
+                      : String(result.reason),
+                });
+              }
+            }
+
+            await upsertTurnCapsuleFromCompressed(kv, compressed);
+
+            const latencyMs = Date.now() - startMs;
+            if (metricsStore) {
+              await metricsStore.record(
+                "mem::compress",
+                latencyMs,
+                true,
+                qualityScore,
+              );
+            }
+
+            if (graphEnabled) {
+              sdk.triggerVoid("mem::graph-extract", {
+                observations: [compressed],
+              });
+            }
+
+            logger.info("Observation compressed", {
+              obsId: data.observationId,
+              type: compressed.type,
+              importance: compressed.importance,
+              qualityScore,
+              retried,
             });
+
+            return { success: true, compressed, qualityScore };
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            const latencyMs = Date.now() - startMs;
+            if (metricsStore) {
+              await metricsStore.record("mem::compress", latencyMs, false);
+            }
+            logger.error("Compression failed", {
+              obsId: data.observationId,
+              error: msg,
+            });
+
+            await kv.set(KV.compressRetry, data.observationId, {
+              obsId: data.observationId,
+              sessionId: data.sessionId,
+              retries: 0,
+              failedAt: new Date().toISOString(),
+            }).catch(() => {});
+
+            return { success: false, error: "compression_failed" };
           }
-        }
-
-        await upsertTurnCapsuleFromCompressed(kv, compressed);
-
-        const latencyMs = Date.now() - startMs;
-        if (metricsStore) {
-          await metricsStore.record(
-            "mem::compress",
-            latencyMs,
-            true,
-            qualityScore,
-          );
-        }
-
-        logger.info("Observation compressed", {
-          obsId: data.observationId,
-          type: compressed.type,
-          importance: compressed.importance,
-          qualityScore,
-          retried,
         });
-
-        return { success: true, compressed, qualityScore };
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        const latencyMs = Date.now() - startMs;
-        if (metricsStore) {
-          await metricsStore.record("mem::compress", latencyMs, false);
-        }
-        logger.error("Compression failed", {
-          obsId: data.observationId,
-          error: msg,
-        });
-        return { success: false, error: "compression_failed" };
+      } finally {
+        tracker?.decrement(data.sessionId);
       }
+    },
+  );
+
+  sdk.registerFunction(
+    { id: "mem::compress-retry", description: "Retry failed compressions from dead-letter" },
+    async () => {
+      const ctx = getContext();
+      const entries = await kv.list<{
+        obsId: string;
+        sessionId: string;
+        retries: number;
+        failedAt: string;
+      }>(KV.compressRetry);
+      let retried = 0;
+      let removed = 0;
+
+      for (const entry of entries) {
+        if (entry.retries >= 3) {
+          await kv.delete(KV.compressRetry, entry.obsId).catch(() => {});
+          removed++;
+          continue;
+        }
+
+        const raw = await kv
+          .get(KV.observations(entry.sessionId), entry.obsId)
+          .catch(() => null);
+        if (!raw || (raw as any).title) {
+          // Already compressed or missing
+          await kv.delete(KV.compressRetry, entry.obsId).catch(() => {});
+          removed++;
+          continue;
+        }
+
+        // Re-trigger compression (will go through semaphore)
+        sdk.triggerVoid("mem::compress", {
+          observationId: entry.obsId,
+          sessionId: entry.sessionId,
+          raw,
+        });
+
+        // Update retry count
+        await kv
+          .set(KV.compressRetry, entry.obsId, {
+            ...entry,
+            retries: entry.retries + 1,
+          })
+          .catch(() => {});
+        retried++;
+      }
+
+      if (retried > 0 || removed > 0) {
+        ctx.logger.info("Compress retry complete", { retried, removed });
+      }
+      return { retried, removed };
     },
   );
 }

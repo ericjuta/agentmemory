@@ -10,12 +10,14 @@ import { buildSyntheticCompression } from "./compress-synthetic.js";
 import { getSearchIndex } from "./search.js";
 import { logger } from "../logger.js";
 import { upsertTurnCapsuleFromRaw } from "./turn-capsules.js";
+import type { CompressionTracker } from "../state/compression-tracker.js";
 
 export function registerObserveFunction(
   sdk: ISdk,
   kv: StateKV,
   dedupMap?: DedupMap,
   maxObservationsPerSession?: number,
+  tracker?: CompressionTracker,
 ): void {
   sdk.registerFunction("mem::observe", 
     async (payload: HookPayload) => {
@@ -161,6 +163,7 @@ export function registerObserveFunction(
         // and BM25 search still work without burning the user's Claude
         // token allocation on every tool invocation.
         if (isAutoCompressEnabled()) {
+          tracker?.increment(payload.sessionId);
           await sdk.trigger({
             function_id: "mem::compress",
             payload: {
