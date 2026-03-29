@@ -1069,6 +1069,16 @@
         html += '</div>';
       }
 
+      if (snap.pipeline) {
+        var p = snap.pipeline;
+        html += '<div class="card" style="margin-bottom:16px"><div class="card-title">Compression Pipeline</div>';
+        html += '<div class="stats-grid" style="grid-template-columns:repeat(3,1fr)">';
+        html += '<div class="stat-card"><div class="label">Active</div><div class="value">' + (p.compressActive || 0) + '</div><div class="sub">concurrent LLM calls</div></div>';
+        html += '<div class="stat-card"><div class="label">Pending</div><div class="value">' + (p.compressPending || 0) + '</div><div class="sub">queued in semaphore</div></div>';
+        html += '<div class="stat-card"><div class="label">Inflight</div><div class="value">' + (p.totalInflight || 0) + '</div><div class="sub">total across sessions</div></div>';
+        html += '</div></div>';
+      }
+
       if (snap.alerts && snap.alerts.length > 0) {
         html += '<div class="card" style="margin-bottom:16px;border-color:var(--accent);border-width:2px;"><div class="card-title" style="color:var(--accent);border-bottom-color:var(--accent);">Alerts (' + snap.alerts.length + ')</div>';
         snap.alerts.forEach(function(al) {
@@ -1206,7 +1216,39 @@
       html += '<div class="consolidation-row"><span class="cl">Semantic facts</span><span class="cv">' + semFacts.length + '</span></div>';
       html += '<div class="consolidation-row"><span class="cl">Procedures</span><span class="cv">' + procItems.length + '</span></div>';
       html += '<div class="consolidation-row"><span class="cl">Relations</span><span class="cv">' + relItems.length + '</span></div>';
+      html += '<div class="consolidation-row"><span class="cl">Consolidated memories</span><span class="cv">' + d.memories.length + '</span></div>';
       html += '</div>';
+
+      if (d.memories.length > 0) {
+        html += '<div class="card" style="margin-top:16px;"><div class="card-title">Consolidated Memories (' + d.memories.length + ')</div>';
+        var typeGroups = {};
+        d.memories.forEach(function(m) {
+          var t = m.type || 'other';
+          if (!typeGroups[t]) typeGroups[t] = [];
+          typeGroups[t].push(m);
+        });
+        Object.keys(typeGroups).sort().forEach(function(type) {
+          var items = typeGroups[type];
+          html += '<div style="margin-bottom:12px;">';
+          html += '<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:var(--ink-faint);margin-bottom:4px;font-family:var(--font-ui);">' + esc(type) + ' (' + items.length + ')</div>';
+          items.sort(function(a, b) { return (b.strength || 0) - (a.strength || 0); }).slice(0, 5).forEach(function(m) {
+            var str = typeof m.strength === 'number' ? m.strength : 5;
+            var strPct = Math.round((str / 10) * 100);
+            var barColor = strPct > 70 ? 'var(--green)' : strPct > 40 ? 'var(--yellow)' : 'var(--red)';
+            html += '<div class="memory-fact">';
+            html += '<span style="color:var(--ink);" title="' + esc(m.content || '') + '">' + esc(m.title || m.id) + '</span>';
+            html += '<span style="display:flex;align-items:center;gap:6px;">';
+            html += '<span class="strength-bar" style="width:40px;"><span class="fill" style="width:' + strPct + '%;background:' + barColor + '"></span></span>';
+            html += '<span style="font-size:10px;font-family:var(--font-mono);color:var(--ink-faint);">v' + (m.version || 1) + '</span>';
+            html += '</span></div>';
+          });
+          if (items.length > 5) {
+            html += '<div style="font-size:10px;color:var(--ink-faint);font-style:italic;padding:2px 0;">+ ' + (items.length - 5) + ' more</div>';
+          }
+          html += '</div>';
+        });
+        html += '</div>';
+      }
 
       if (relItems.length > 0) {
         html += '<div class="card" style="margin-top:16px;"><div class="card-title">Memory Relations</div>';
