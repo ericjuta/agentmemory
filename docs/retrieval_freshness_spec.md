@@ -54,15 +54,16 @@ The context builder should assemble results from three lanes:
 
 Default budget split for `mem::context`:
 
-- 40% hot lane
-- 30% warm lane
-- 30% cold lane
+- 40% hot lane / 30% warm lane / 30% cold lane (no query)
+- 20% hot lane / 40% warm lane / 40% cold lane (query present)
 
 Rules:
 
 - no single lane should consume the full token budget by default
 - unused budget from one lane may be reallocated to another lane
 - same-session hot-lane results should receive the highest default priority
+- when a query is present, budget shifts toward warm/cold lanes to prioritize
+  relevant content over recent-but-irrelevant capsules
 
 ## Turn Capsules
 
@@ -357,13 +358,25 @@ Status:
   freshness, but turn stitching still depends on the upstream host actually
   providing `turn_id`
 
+### Implemented (Query-Aware Ranking)
+
+- `mem::context` now accepts an optional `query` parameter
+- `prompt_submit` hook triggers context refresh with the user's prompt as query
+- REST endpoint `POST /agentmemory/context/refresh` exposes query-aware context
+- query scoring filters noise words (<4 chars), normalizes as fraction of
+  meaningful terms matched
+- blocks matching any query term always rank above blocks matching none
+- lane budgets shift to 20/40/40 (hot/warm/cold) when query is present
+- consolidated memories (KV.memories) are now included in the cold lane
+- memory usefulness feedback loop tracks injected memories and adjusts strength
+  on session end based on session quality
+
 ### Not Yet Implemented
 
-- query-aware ranking signals such as:
-  - file overlap boost
-  - concept overlap boost
-  - prompt similarity
-  - graph entity overlap
+- file overlap boost (beyond term matching)
+- concept overlap boost (beyond term matching)
+- prompt similarity (embedding-based)
+- graph entity overlap boost
 
 ## Next Steps
 
@@ -371,5 +384,5 @@ Status:
    available outside Claude Code.
 2. Extend regression coverage for hook-provided `turn_id` stitching with
    runtime-shaped payloads.
-3. Add query-aware ranking features only if `mem::context` evolves to accept
-   an explicit follow-up query or retrieval seed.
+3. Add embedding-based prompt similarity for richer query-aware ranking.
+4. Add concept/file-specific overlap boosts beyond raw term matching.

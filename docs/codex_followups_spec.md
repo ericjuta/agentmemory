@@ -195,3 +195,25 @@ This follow-up lane is done when:
 - docs clearly distinguish native Codex adapter usage from generic MCP/REST
 - `mem::context` optionally accepts a query without regressing freshness
 - default retrieval behavior remains stable when no query is supplied
+
+## Current Status
+
+### Track 1: Codex Payload Compatibility Test
+
+- implemented
+
+### Track 2: Codex-Native Documentation
+
+- implemented
+
+### Track 3: Query-Aware Ranking
+
+- implemented
+- `mem::context` accepts optional `query` parameter
+- `prompt_submit` hook fires context refresh with user prompt as query
+- `POST /agentmemory/context/refresh` endpoint added
+- query scoring normalizes term overlap, skips noise words, hard-partitions
+  matched vs unmatched blocks
+- lane budgets shift from 40/30/30 to 20/40/40 when query is present
+- consolidated memories (KV.memories) now included in cold lane
+- memory usefulness feedback loop adjusts strength on session end
