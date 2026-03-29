@@ -8,11 +8,13 @@ import type {
   ProceduralMemory,
   SemanticMemory,
   TurnCapsule,
+  SessionWorkingSet,
 } from "../types.js";
 import { KV } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
 import { recordAccessBatch } from "./access-tracker.js";
 import { logger } from "../logger.js";
+import { GraphRetrieval } from "./graph-retrieval.js";
 
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 3);
@@ -65,6 +67,32 @@ function formatTurnCapsule(capsule: TurnCapsule, currentSession: boolean): strin
     lines.push(`Signals: ${signals.join(", ")}`);
   }
   return lines.join("\n");
+}
+
+function formatWorkingSet(workingSet: SessionWorkingSet): string | null {
+  if (workingSet.latestCompletedCapsule) {
+    return formatTurnCapsule(workingSet.latestCompletedCapsule, true);
+  }
+
+  const lines = ["## Current Working Set"];
+  if (workingSet.latestAssistantConclusion) {
+    lines.push("Conclusion: " + workingSet.latestAssistantConclusion);
+  }
+  if (workingSet.latestImportantFiles.length > 0) {
+    lines.push("Files: " + workingSet.latestImportantFiles.slice(0, 6).join(", "));
+  }
+  if (workingSet.latestImportantConcepts.length > 0) {
+    lines.push(
+      "Concepts: " + workingSet.latestImportantConcepts.slice(0, 8).join(", "),
+    );
+  }
+  const signals: string[] = [];
+  if (workingSet.latestHadFailure) signals.push("failure");
+  if (workingSet.latestHadDecision) signals.push("decision");
+  if (signals.length > 0) {
+    lines.push("Signals: " + signals.join(", "));
+  }
+  return lines.length > 1 ? lines.join("\n") : null;
 }
 
 function formatProfile(profile: ProjectProfile): string | null {
@@ -180,6 +208,30 @@ export function registerContextFunction(
       const hotBlocks: RankedContextBlock[] = [];
       const warmBlocks: RankedContextBlock[] = [];
       const coldBlocks: RankedContextBlock[] = [];
+      const graphRetrieval = new GraphRetrieval(kv);
+
+      const workingSet = await kv
+        .get<SessionWorkingSet>(KV.workingSets, data.sessionId)
+        .catch(() => null);
+      if (workingSet?.project === data.project) {
+        const snapshotContent = formatWorkingSet(workingSet);
+        if (snapshotContent) {
+          hotBlocks.push(
+            makeBlock(
+              `working-set:${workingSet.sessionId}`,
+              "hot",
+              "observation",
+              snapshotContent,
+              new Date(workingSet.updatedAt).getTime(),
+              {
+                isCapsule: Boolean(workingSet.latestCompletedCapsule),
+                sessionId: workingSet.sessionId,
+                sourceObservationIds: workingSet.latestImportantObservationIds,
+              },
+            ),
+          );
+        }
+      }
 
       const profile = await kv
         .get<ProjectProfile>(KV.profiles, data.project)
@@ -372,6 +424,12 @@ export function registerContextFunction(
           return b.importance - a.importance;
         })
         .slice(0, 20);
+      const recentObservationIndex = new Map(
+        recentObservationsPerSession
+          .flatMap((observations) => observations)
+          .filter((observation) => observation.title)
+          .map((observation) => [observation.id, observation] as const),
+      );
       for (const observation of warmObservations) {
         warmBlocks.push(
           makeBlock(
@@ -386,6 +444,40 @@ export function registerContextFunction(
             },
           ),
         );
+      }
+
+      const graphSeedObservationIds = [
+        ...(workingSet?.latestImportantObservationIds || []),
+        ...projectCapsules
+          .filter((capsule) => capsule.sessionId === data.sessionId)
+          .flatMap((capsule) => capsule.sourceObservationIds)
+          .slice(0, 12),
+      ];
+      if (graphSeedObservationIds.length > 0) {
+        const graphResults = await graphRetrieval
+          .expandFromChunks(graphSeedObservationIds, 1, 8)
+          .catch(() => []);
+        for (const result of graphResults) {
+          const observation = recentObservationIndex.get(result.obsId);
+          if (!observation) continue;
+          const content =
+            formatObservation(observation, observation.sessionId === data.sessionId) +
+            "\nGraph: " +
+            result.graphContext;
+          warmBlocks.push(
+            makeBlock(
+              `graph:${observation.id}`,
+              "warm",
+              "observation",
+              content,
+              new Date(observation.timestamp).getTime() + Math.round(result.score * 1000),
+              {
+                sessionId: observation.sessionId,
+                sourceObservationIds: [observation.id],
+              },
+            ),
+          );
+        }
       }
 
       let usedTokens = 0;

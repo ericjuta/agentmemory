@@ -5,6 +5,7 @@ import type {
 } from "../types.js";
 import { KV } from "../state/schema.js";
 import type { StateKV } from "../state/kv.js";
+import { updateSessionWorkingSet } from "./working-set.js";
 
 function turnCapsuleKey(sessionId: string, turnId: string): string {
   return `${sessionId}:${turnId}`;
@@ -145,6 +146,7 @@ export async function upsertTurnCapsuleFromRaw(
   };
 
   await kv.set(KV.turnCapsules, key, next);
+  await updateSessionWorkingSet(kv, next, raw.hookType);
 }
 
 export async function upsertTurnCapsuleFromCompressed(
@@ -183,4 +185,5 @@ export async function upsertTurnCapsuleFromCompressed(
   };
 
   await kv.set(KV.turnCapsules, key, next);
+  await updateSessionWorkingSet(kv, next, compressed.type);
 }

@@ -122,6 +122,22 @@ export interface TurnCapsule {
   maxImportance: number;
 }
 
+export interface SessionWorkingSet {
+  sessionId: string;
+  project: string;
+  cwd: string;
+  updatedAt: string;
+  latestTurnId?: string;
+  latestCompletedTurnId?: string;
+  latestCompletedCapsule?: TurnCapsule;
+  latestAssistantConclusion?: string;
+  latestImportantFiles: string[];
+  latestImportantConcepts: string[];
+  latestImportantObservationIds: string[];
+  latestHadFailure: boolean;
+  latestHadDecision: boolean;
+}
+
 export interface HookPayload {
   hookType: HookType;
   sessionId: string;

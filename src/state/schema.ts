@@ -16,6 +16,7 @@ export const KV = {
   graphNodes: "mem:graph:nodes",
   graphEdges: "mem:graph:edges",
   turnCapsules: "mem:turn-capsules",
+  workingSets: "mem:working-sets",
   semantic: "mem:semantic",
   procedural: "mem:procedural",
   teamShared: (teamId: string) => `mem:team:${teamId}:shared`,
