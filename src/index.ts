@@ -400,10 +400,17 @@ async function main() {
           { consolidated?: number; totalObservations?: number }
         >("mem::consolidate", {});
 
+        // Discover relations between memories
+        const relateResult = await sdk.trigger<
+          Record<string, never>,
+          { created?: number }
+        >("mem::auto-relate", {}).catch(() => ({ created: 0 }));
+
         const r = pipelineResult?.results || {};
         const pipelineWork = ((r.semantic as any)?.newFacts || 0) + ((r.procedural as any)?.newProcedures || 0);
         const consolidateWork = consolidateResult?.consolidated || 0;
-        return pipelineWork + consolidateWork;
+        const relateWork = relateResult?.created || 0;
+        return pipelineWork + consolidateWork + relateWork;
       },
       { baseMs: consolidationIntervalMs, minMs: 600_000, maxMs: 14_400_000, label: "Consolidation" },
     );
