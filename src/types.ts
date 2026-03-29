@@ -74,6 +74,7 @@ export interface Memory {
   sourceObservationIds?: string[];
   isLatest: boolean;
   forgetAfter?: string;
+  lastAccessedAt?: string;
 }
 
 export interface SessionSummary {

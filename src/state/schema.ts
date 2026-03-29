@@ -44,6 +44,7 @@ export const KV = {
   retentionScores: "mem:retention",
   accessLog: "mem:access",
   compressRetry: "mem:compress-retry",
+  contextInjections: "mem:context-injections",
 } as const;
 
 export const STREAM = {
