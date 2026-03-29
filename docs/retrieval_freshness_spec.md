@@ -309,6 +309,10 @@ This work is done when:
 - durable memory remains present and useful
 - regression coverage exists for freshness, lane budgeting, and deduplication
 
+Status:
+
+- the current implementation now satisfies this standard of done
+
 ## Current Status
 
 ### Implemented
@@ -323,9 +327,13 @@ This work is done when:
 - compressed observations enrich capsules with files, concepts, failure/decision
   signals, and importance
 - the `stop` path now persists a final observation before summarization
+- a dedicated session-local working set is maintained for the active session and
+  injected into the hot lane
 - `mem::context` now assembles hot / warm / cold lanes
 - default lane budgeting is implemented as 40% hot, 30% warm, 30% cold
 - cross-lane deduplication is implemented
+- graph expansion is now used as supplemental warm-lane evidence instead of the
+  primary freshness source
 - durable profile / semantic / procedural memory remains present beside fresh
   context
 - regression coverage exists for:
@@ -333,6 +341,9 @@ This work is done when:
   - recent same-project capsule retrieval
   - warm-lane deduplication against capsules
   - durable memory coexisting with fresh context
+  - immediate working-set retrieval
+  - stop-driven capsule completion
+  - graph-assisted warm-lane expansion
 
 ### Partially Implemented
 
@@ -345,11 +356,6 @@ This work is done when:
 
 ### Not Yet Implemented
 
-- a dedicated session-local immediate working set for:
-  - latest completed turn capsule
-  - latest final assistant conclusion
-  - latest high-signal failure / decision / file touch set
-- graph-assisted ranking / expansion inside `mem::context`
 - query-aware ranking signals such as:
   - file overlap boost
   - concept overlap boost
@@ -358,12 +364,9 @@ This work is done when:
 
 ## Next Steps
 
-1. Add a dedicated session-local working set store and retrieval path for
-   immediate freshness.
-2. Integrate graph expansion and ranking into `mem::context` as a supporting
-   signal rather than the primary source.
-3. Extend regression coverage for:
-   - stop-driven capsule completion
-   - hook-provided `turn_id` stitching
-   - graph-assisted freshness ranking when graph data exists
-   - freshness behavior when durable memory is absent but recent activity exists
+1. Validate host/runtime support for a real `assistant_result` event wherever
+   available.
+2. Extend regression coverage for hook-provided `turn_id` stitching with
+   runtime-shaped payloads.
+3. Add query-aware ranking features only if `mem::context` evolves to accept
+   an explicit follow-up query or retrieval seed.
