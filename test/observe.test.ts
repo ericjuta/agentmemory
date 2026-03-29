@@ -34,6 +34,12 @@ describe("observe freshness plumbing", () => {
       "Freshness now prefers the current turn capsule.",
     );
     expect(capsule.importantObservationIds).toEqual([result.observationId]);
+
+    const workingSet = await kv.get<any>(KV.workingSets, "session-1");
+    expect(workingSet.latestCompletedTurnId).toBe("turn-1");
+    expect(workingSet.latestAssistantConclusion).toBe(
+      "Freshness now prefers the current turn capsule.",
+    );
   });
 
   it("parses stop payloads into final assistant conclusions for the current turn", async () => {
@@ -79,5 +85,9 @@ describe("observe freshness plumbing", () => {
       "The latest turn capsule is now retrieved immediately.",
     );
     expect(capsule.importantObservationIds).toContain(result.observationId);
+
+    const workingSet = await kv.get<any>(KV.workingSets, "session-1");
+    expect(workingSet.latestCompletedTurnId).toBe("turn-2");
+    expect(workingSet.latestCompletedCapsule.turnId).toBe("turn-2");
   });
 });
