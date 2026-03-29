@@ -218,6 +218,11 @@ export interface HealthSnapshot {
   eventLoopLagMs: number;
   uptimeSeconds: number;
   kvConnectivity?: { status: string; latencyMs?: number; error?: string };
+  pipeline?: {
+    compressActive: number;
+    compressPending: number;
+    totalInflight: number;
+  };
   status: "healthy" | "degraded" | "critical";
   alerts: string[];
 }

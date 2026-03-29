@@ -4,9 +4,16 @@ import type { StateKV } from "../state/kv.js";
 import { KV } from "../state/schema.js";
 import { evaluateHealth } from "./thresholds.js";
 
+export interface PipelineMetrics {
+  compressActive: number;
+  compressPending: number;
+  totalInflight: number;
+}
+
 export function registerHealthMonitor(
   sdk: ISdk,
   kv: StateKV,
+  getPipelineMetrics?: () => PipelineMetrics,
 ): { stop: () => void } {
   let connectionState = "connected";
   let prevCpuUsage = process.cpuUsage();
@@ -80,6 +87,7 @@ export function registerHealthMonitor(
       eventLoopLagMs,
       uptimeSeconds: uptime,
       kvConnectivity,
+      pipeline: getPipelineMetrics?.(),
       status: "healthy",
       alerts: [],
     };
@@ -88,7 +96,9 @@ export function registerHealthMonitor(
     snapshot.status = evaluated.status;
     snapshot.alerts = evaluated.alerts;
 
-    await kv.set(KV.health, "latest", snapshot).catch(() => {});
+    await kv.set(KV.health, "latest", snapshot).catch((err) => {
+      console.warn("[agentmemory] Health snapshot persist failed:", err);
+    });
     return snapshot;
   }
 

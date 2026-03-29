@@ -27,6 +27,9 @@ Output XML:
 
 import { getXmlTag, getXmlChildren } from "../prompts/xml.js";
 import { logger } from "../logger.js";
+import { Semaphore } from "../state/semaphore.js";
+
+const consolidateLock = new Semaphore(1);
 
 function parseMemoryXml(
   xml: string,
@@ -68,8 +71,9 @@ export function registerConsolidateFunction(
   provider: MemoryProvider,
 ): void {
   sdk.registerFunction("mem::consolidate", 
-    async (data: { project?: string; minObservations?: number }) => {
-      const minObs = data.minObservations ?? 10;
+    async (data: { project?: string; minObservations?: number }) =>
+      consolidateLock.run(async () => {
+        const minObs = data.minObservations ?? 10;
 
       const sessions = await kv.list<Session>(KV.sessions);
       const filtered = data.project
@@ -220,6 +224,6 @@ export function registerConsolidateFunction(
         totalObs: allObs.length,
       });
       return { consolidated, totalObservations: allObs.length };
-    },
+    }),
   );
 }

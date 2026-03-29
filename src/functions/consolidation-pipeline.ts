@@ -17,6 +17,9 @@ import {
 import { recordAudit } from "./audit.js";
 import { getConsolidationDecayDays, isConsolidationEnabled } from "../config.js";
 import { logger } from "../logger.js";
+import { Semaphore } from "../state/semaphore.js";
+
+const consolidationSemaphore = new Semaphore(2);
 
 function applyDecay(
   items: Array<{
@@ -78,9 +81,8 @@ export function registerConsolidationPipelineFunction(
           );
 
           try {
-            const response = await provider.summarize(
-              SEMANTIC_MERGE_SYSTEM,
-              prompt,
+            const response = await consolidationSemaphore.run(() =>
+              provider.summarize(SEMANTIC_MERGE_SYSTEM, prompt),
             );
 
             const factRegex = /<fact\s+confidence="([^"]+)">([^<]+)<\/fact>/g;
@@ -161,9 +163,8 @@ export function registerConsolidationPipelineFunction(
           const prompt = buildProceduralExtractionPrompt(patterns);
 
           try {
-            const response = await provider.summarize(
-              PROCEDURAL_EXTRACTION_SYSTEM,
-              prompt,
+            const response = await consolidationSemaphore.run(() =>
+              provider.summarize(PROCEDURAL_EXTRACTION_SYSTEM, prompt),
             );
 
             const procRegex =
