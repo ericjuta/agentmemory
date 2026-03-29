@@ -14,6 +14,9 @@ import {
 } from "../prompts/graph-extraction.js";
 import { recordAudit } from "./audit.js";
 import { logger } from "../logger.js";
+import { Semaphore } from "../state/semaphore.js";
+
+const graphSemaphore = new Semaphore(2);
 
 function parseGraphXml(
   xml: string,
@@ -101,9 +104,8 @@ export function registerGraphFunction(
       );
 
       try {
-        const response = await provider.compress(
-          GRAPH_EXTRACTION_SYSTEM,
-          prompt,
+        const response = await graphSemaphore.run(() =>
+          provider.compress(GRAPH_EXTRACTION_SYSTEM, prompt),
         );
 
         const obsIds = data.observations.map((o) => o.id);
