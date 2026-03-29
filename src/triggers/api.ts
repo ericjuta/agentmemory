@@ -228,6 +228,51 @@ export function registerApiTriggers(
     },
   });
 
+  sdk.registerFunction(
+    { id: "api::context-refresh" },
+    async (
+      req: ApiRequest<{
+        sessionId: string;
+        project: string;
+        query: string;
+      }>,
+    ): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      if (
+        !req.body?.sessionId ||
+        !req.body?.project ||
+        !req.body?.query ||
+        typeof req.body.query !== "string"
+      ) {
+        return {
+          status_code: 400,
+          body: { error: "sessionId, project, and query are required" },
+        };
+      }
+      if (req.body.query.trim().length <= 10) {
+        return {
+          status_code: 200,
+          body: { context: "", blocks: 0, tokens: 0, skipped: true },
+        };
+      }
+      const result = await sdk.trigger("mem::context", {
+        sessionId: req.body.sessionId,
+        project: req.body.project,
+        query: req.body.query,
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::context-refresh",
+    config: {
+      api_path: "/agentmemory/context/refresh",
+      http_method: "POST",
+    },
+  });
+
   sdk.registerFunction("api::search", 
     async (
       req: ApiRequest<{
