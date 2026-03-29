@@ -308,3 +308,64 @@ This work is done when:
 - recent follow-up recall no longer depends on consolidation timing
 - durable memory remains present and useful
 - regression coverage exists for freshness, lane budgeting, and deduplication
+
+## Current Status
+
+### Implemented
+
+- turn-capsule storage exists in `mem:turn-capsules`
+- `TurnCapsule` is defined and used by retrieval
+- raw observations update capsules immediately during `mem::observe`
+- compressed observations enrich capsules with files, concepts, failure/decision
+  signals, and importance
+- `mem::context` now assembles hot / warm / cold lanes
+- default lane budgeting is implemented as 40% hot, 30% warm, 30% cold
+- cross-lane deduplication is implemented
+- durable profile / semantic / procedural memory remains present beside fresh
+  context
+- regression coverage exists for:
+  - same-session capsule preference
+  - recent same-project capsule retrieval
+  - warm-lane deduplication against capsules
+  - durable memory coexisting with fresh context
+
+### Partially Implemented
+
+- `assistant_result` handling exists in observation parsing and capsule update
+  logic, but the shipped hook pipeline does not currently emit an
+  `assistant_result` event
+- `turn_id` extraction exists, but the shipped hooks do not consistently send
+  `turn_id`, so turn stitching depends on callers already providing it
+- completion semantics are only partially realized:
+  - capsule code can ingest `assistant_result` and `stop`
+  - the current `stop` hook triggers summarization, but does not persist a
+    final stop observation into the capsule path
+
+### Not Yet Implemented
+
+- a dedicated session-local immediate working set for:
+  - latest completed turn capsule
+  - latest final assistant conclusion
+  - latest high-signal failure / decision / file touch set
+- graph-assisted ranking / expansion inside `mem::context`
+- query-aware ranking signals such as:
+  - file overlap boost
+  - concept overlap boost
+  - prompt similarity
+  - graph entity overlap
+
+## Next Steps
+
+1. Add end-to-end hook support for `assistant_result`.
+2. Propagate `turn_id` through prompt, tool, and stop hook payloads.
+3. Update the `stop` path so it records a final observation for capsule
+   completion before or alongside summarization.
+4. Add a dedicated session-local working set store and retrieval path for
+   immediate freshness.
+5. Integrate graph expansion and ranking into `mem::context` as a supporting
+   signal rather than the primary source.
+6. Extend regression coverage for:
+   - stop-driven capsule completion
+   - hook-provided `turn_id` stitching
+   - graph-assisted freshness ranking when graph data exists
+   - freshness behavior when durable memory is absent but recent activity exists
