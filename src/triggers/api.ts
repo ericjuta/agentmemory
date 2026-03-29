@@ -304,6 +304,21 @@ export function registerApiTriggers(
   });
 
   sdk.registerFunction(
+    { id: "api::auto-relate" },
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const result = await sdk.trigger("mem::auto-relate", {});
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::auto-relate",
+    config: { api_path: "/agentmemory/auto-relate", http_method: "POST" },
+  });
+
+  sdk.registerFunction(
     { id: "api::relations" },
     async (req: ApiRequest): Promise<Response> => {
       const authErr = checkAuth(req, secret);
