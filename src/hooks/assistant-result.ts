@@ -22,8 +22,6 @@ async function main() {
     return;
   }
 
-  if (data.is_interrupt) return;
-
   const sessionId = (data.session_id as string) || "unknown";
 
   try {
@@ -31,22 +29,22 @@ async function main() {
       method: "POST",
       headers: authHeaders(),
       body: JSON.stringify({
-        hookType: "post_tool_failure",
+        hookType: "assistant_result",
         sessionId,
         project: data.cwd || process.cwd(),
         cwd: data.cwd || process.cwd(),
         timestamp: new Date().toISOString(),
         data: {
           turn_id: data.turn_id ?? data.turnId,
-          tool_name: data.tool_name,
-          tool_input:
-            typeof data.tool_input === "string"
-              ? data.tool_input.slice(0, 4000)
-              : JSON.stringify(data.tool_input ?? "").slice(0, 4000),
-          error:
-            typeof data.error === "string"
-              ? data.error.slice(0, 4000)
-              : JSON.stringify(data.error ?? "").slice(0, 4000),
+          assistant_text:
+            typeof data.assistant_text === "string"
+              ? data.assistant_text.slice(0, 4000)
+              : typeof data.assistant_message === "string"
+                ? data.assistant_message.slice(0, 4000)
+                : typeof data.message === "string"
+                  ? data.message.slice(0, 4000)
+                  : "",
+          is_final: data.is_final ?? true,
         },
       }),
       signal: AbortSignal.timeout(3000),

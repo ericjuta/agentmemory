@@ -35,6 +35,7 @@ async function main() {
         cwd: data.cwd || process.cwd(),
         timestamp: new Date().toISOString(),
         data: {
+          turn_id: data.turn_id ?? data.turnId,
           tool_name: data.tool_name,
           tool_input: data.tool_input,
           tool_output: truncate(data.tool_output, 8000),

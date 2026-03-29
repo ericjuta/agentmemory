@@ -25,6 +25,30 @@ async function main() {
   const sessionId = (data.session_id as string) || "unknown";
 
   try {
+    await fetch(`${REST_URL}/agentmemory/observe`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({
+        hookType: "stop",
+        sessionId,
+        project: data.cwd || process.cwd(),
+        cwd: data.cwd || process.cwd(),
+        timestamp: new Date().toISOString(),
+        data: {
+          turn_id: data.turn_id ?? data.turnId,
+          last_assistant_message:
+            typeof data.last_assistant_message === "string"
+              ? data.last_assistant_message.slice(0, 4000)
+              : "",
+        },
+      }),
+      signal: AbortSignal.timeout(3000),
+    });
+  } catch {
+    // observe is best-effort
+  }
+
+  try {
     await fetch(`${REST_URL}/agentmemory/summarize`, {
       method: "POST",
       headers: authHeaders(),
