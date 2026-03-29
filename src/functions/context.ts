@@ -55,11 +55,14 @@ function queryTerms(query?: string): string[] {
 function scoreQueryOverlap(content: string, terms: string[]): number {
   if (terms.length === 0) return 0;
   const normalized = content.toLowerCase();
-  let score = 0;
+  let hits = 0;
   for (const term of terms) {
-    if (normalized.includes(term)) score++;
+    if (term.length < 4) continue; // skip noise words like "etc", "the"
+    if (normalized.includes(term)) hits++;
   }
-  return score;
+  // Normalize: fraction of meaningful query terms matched
+  const meaningful = terms.filter((t) => t.length >= 4).length;
+  return meaningful > 0 ? hits / meaningful : 0;
 }
 
 function formatTurnCapsule(capsule: TurnCapsule, currentSession: boolean): string {
@@ -542,13 +545,18 @@ export function registerContextFunction(
         0,
         budget - estimateTokens(header) - estimateTokens(footer),
       );
+      // When a query is present, shift budget toward warm/cold (relevant content)
+      // over hot (recent-but-possibly-irrelevant capsules)
+      const hasQuery = terms.length > 0;
+      const hotPct = hasQuery ? 0.2 : 0.4;
+      const warmPct = hasQuery ? 0.4 : 0.3;
       const laneBudgets = {
-        hot: Math.floor(availableBudget * 0.4),
-        warm: Math.floor(availableBudget * 0.3),
+        hot: Math.floor(availableBudget * hotPct),
+        warm: Math.floor(availableBudget * warmPct),
         cold:
           availableBudget -
-          Math.floor(availableBudget * 0.4) -
-          Math.floor(availableBudget * 0.3),
+          Math.floor(availableBudget * hotPct) -
+          Math.floor(availableBudget * warmPct),
       };
 
       const selectedIds = new Set<string>();
@@ -557,10 +565,14 @@ export function registerContextFunction(
       const selectedCapsuleSessions = new Set<string>();
       const sortBlocks = (blocks: RankedContextBlock[]) =>
         blocks.sort((a, b) => {
-          const queryDelta =
-            scoreQueryOverlap(b.content, terms) -
-            scoreQueryOverlap(a.content, terms);
-          if (queryDelta !== 0) return queryDelta;
+          const aScore = scoreQueryOverlap(a.content, terms);
+          const bScore = scoreQueryOverlap(b.content, terms);
+          // Blocks with any query match always beat blocks with none
+          if (hasQuery && aScore !== bScore) {
+            if (bScore > 0 && aScore === 0) return 1;
+            if (aScore > 0 && bScore === 0) return -1;
+            return bScore - aScore;
+          }
           return b.recency - a.recency;
         });
 
