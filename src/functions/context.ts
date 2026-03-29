@@ -7,6 +7,7 @@ import type {
   ProjectProfile,
   ProceduralMemory,
   SemanticMemory,
+  Memory,
   TurnCapsule,
   SessionWorkingSet,
 } from "../types.js";
@@ -165,6 +166,15 @@ function formatSemantic(memory: SemanticMemory): string {
 
 function formatProcedural(memory: ProceduralMemory): string {
   return `## Procedural Memory\nName: ${memory.name}\nTrigger: ${memory.triggerCondition}\nSteps: ${memory.steps.slice(0, 4).join(" -> ")}`;
+}
+
+function formatMemory(memory: Memory): string {
+  const lines = [`## ${memory.type.charAt(0).toUpperCase() + memory.type.slice(1)} Memory: ${memory.title}`];
+  lines.push(memory.content);
+  if (memory.files.length > 0) {
+    lines.push(`Files: ${memory.files.slice(0, 5).join(", ")}`);
+  }
+  return lines.join("\n");
 }
 
 function makeBlock(
@@ -416,6 +426,28 @@ export function registerContextFunction(
         );
       }
 
+      const consolidatedMemories = await kv.list<Memory>(KV.memories).catch(() => []);
+      const latestMemories = consolidatedMemories
+        .filter((m) => m.isLatest)
+        .sort((a, b) => {
+          // Prefer higher strength, then recency
+          const strengthDelta = b.strength - a.strength;
+          if (strengthDelta !== 0) return strengthDelta;
+          return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+        })
+        .slice(0, 10);
+      for (const memory of latestMemories) {
+        coldBlocks.push(
+          makeBlock(
+            `memory:${memory.id}`,
+            "cold",
+            "memory",
+            formatMemory(memory),
+            new Date(memory.updatedAt).getTime(),
+          ),
+        );
+      }
+
       const recentSessions = allSessions
         .filter((session) => session.project === data.project)
         .sort(
@@ -620,6 +652,19 @@ export function registerContextFunction(
           selectedObservationIds.add(id);
           accessedIds.push(id);
         }
+      }
+
+      // Track which memories were injected for feedback loop
+      const injectedMemoryIds = [...selectedIds]
+        .filter(id => id.startsWith("memory:") || id.startsWith("semantic:") || id.startsWith("procedural:"))
+        .map(id => id.split(":").slice(1).join(":"));
+
+      if (injectedMemoryIds.length > 0) {
+        await kv.set(KV.contextInjections, data.sessionId, {
+          sessionId: data.sessionId,
+          memoryIds: injectedMemoryIds,
+          timestamp: new Date().toISOString(),
+        }).catch(() => {});
       }
 
       if (accessedIds.length > 0) {
