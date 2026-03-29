@@ -316,8 +316,13 @@ This work is done when:
 - turn-capsule storage exists in `mem:turn-capsules`
 - `TurnCapsule` is defined and used by retrieval
 - raw observations update capsules immediately during `mem::observe`
+- shipped prompt/tool/failure/stop hooks now propagate `turn_id` when the
+  host provides it
+- a shipped `assistant-result` hook entrypoint now exists for runtimes that
+  expose a dedicated final assistant-result event
 - compressed observations enrich capsules with files, concepts, failure/decision
   signals, and importance
+- the `stop` path now persists a final observation before summarization
 - `mem::context` now assembles hot / warm / cold lanes
 - default lane budgeting is implemented as 40% hot, 30% warm, 30% cold
 - cross-lane deduplication is implemented
@@ -331,15 +336,12 @@ This work is done when:
 
 ### Partially Implemented
 
-- `assistant_result` handling exists in observation parsing and capsule update
-  logic, but the shipped hook pipeline does not currently emit an
-  `assistant_result` event
-- `turn_id` extraction exists, but the shipped hooks do not consistently send
-  `turn_id`, so turn stitching depends on callers already providing it
-- completion semantics are only partially realized:
-  - capsule code can ingest `assistant_result` and `stop`
-  - the current `stop` hook triggers summarization, but does not persist a
-    final stop observation into the capsule path
+- end-to-end `assistant_result` capture now has a shipped hook entrypoint, but
+  host/runtime support still depends on whether the upstream agent exposes that
+  event
+- `turn_id` propagation now exists in the shipped hooks that matter for
+  freshness, but turn stitching still depends on the upstream host actually
+  providing `turn_id`
 
 ### Not Yet Implemented
 
@@ -356,15 +358,11 @@ This work is done when:
 
 ## Next Steps
 
-1. Add end-to-end hook support for `assistant_result`.
-2. Propagate `turn_id` through prompt, tool, and stop hook payloads.
-3. Update the `stop` path so it records a final observation for capsule
-   completion before or alongside summarization.
-4. Add a dedicated session-local working set store and retrieval path for
+1. Add a dedicated session-local working set store and retrieval path for
    immediate freshness.
-5. Integrate graph expansion and ranking into `mem::context` as a supporting
+2. Integrate graph expansion and ranking into `mem::context` as a supporting
    signal rather than the primary source.
-6. Extend regression coverage for:
+3. Extend regression coverage for:
    - stop-driven capsule completion
    - hook-provided `turn_id` stitching
    - graph-assisted freshness ranking when graph data exists
