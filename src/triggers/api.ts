@@ -273,6 +273,51 @@ export function registerApiTriggers(
     },
   });
 
+  sdk.registerFunction(
+    { id: "api::semantic" },
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const items = await kv.list(KV.semantic).catch(() => []);
+      return { status_code: 200, body: { semantic: items } };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::semantic",
+    config: { api_path: "/agentmemory/semantic", http_method: "GET" },
+  });
+
+  sdk.registerFunction(
+    { id: "api::procedural" },
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const items = await kv.list(KV.procedural).catch(() => []);
+      return { status_code: 200, body: { procedural: items } };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::procedural",
+    config: { api_path: "/agentmemory/procedural", http_method: "GET" },
+  });
+
+  sdk.registerFunction(
+    { id: "api::relations" },
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const items = await kv.list(KV.relations).catch(() => []);
+      return { status_code: 200, body: { relations: items } };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::relations",
+    config: { api_path: "/agentmemory/relations", http_method: "GET" },
+  });
+
   sdk.registerFunction("api::search", 
     async (
       req: ApiRequest<{
