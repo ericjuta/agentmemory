@@ -18,6 +18,7 @@ import {
   createEmbeddingProvider,
 } from "./providers/index.js";
 import { StateKV } from "./state/kv.js";
+import { KV } from "./state/schema.js";
 import { VectorIndex } from "./state/vector-index.js";
 import { HybridSearch } from "./state/hybrid-search.js";
 import { IndexPersistence } from "./state/index-persistence.js";
@@ -45,7 +46,7 @@ import { registerAutoForgetFunction } from "./functions/auto-forget.js";
 import { registerExportImportFunction } from "./functions/export-import.js";
 import { registerEnrichFunction } from "./functions/enrich.js";
 import { registerClaudeBridgeFunction } from "./functions/claude-bridge.js";
-import { registerGraphFunction } from "./functions/graph.js";
+import { registerGraphFunction, pruneGraphForObservation } from "./functions/graph.js";
 import { registerConsolidationPipelineFunction } from "./functions/consolidation-pipeline.js";
 import { registerTeamFunction } from "./functions/team.js";
 import { registerGovernanceFunction } from "./functions/governance.js";
@@ -148,6 +149,10 @@ async function main() {
   const onEvict = (obsId: string) => {
     getSearchIndex().remove(obsId);
     vectorIndex?.remove(obsId);
+    // Background graph cleanup - mark nodes stale when all source observations gone
+    if (isGraphExtractionEnabled()) {
+      pruneGraphForObservation(kv, obsId).catch(() => {});
+    }
   };
 
   const meterAccessor = hasGetMeter(sdk)
@@ -384,12 +389,21 @@ async function main() {
   if (isConsolidationEnabled()) {
     consolidationHandle = createAdaptiveTimer(
       async () => {
-        const result = await sdk.trigger<
+        const pipelineResult = await sdk.trigger<
           Record<string, never>,
           { results?: { semantic?: { newFacts?: number }; procedural?: { newProcedures?: number } } }
         >("mem::consolidate-pipeline", {});
-        const r = result?.results || {};
-        return ((r.semantic as any)?.newFacts || 0) + ((r.procedural as any)?.newProcedures || 0);
+
+        // Also run concept-grouped consolidation
+        const consolidateResult = await sdk.trigger<
+          { project?: string; minObservations?: number },
+          { consolidated?: number; totalObservations?: number }
+        >("mem::consolidate", {});
+
+        const r = pipelineResult?.results || {};
+        const pipelineWork = ((r.semantic as any)?.newFacts || 0) + ((r.procedural as any)?.newProcedures || 0);
+        const consolidateWork = consolidateResult?.consolidated || 0;
+        return pipelineWork + consolidateWork;
       },
       { baseMs: consolidationIntervalMs, minMs: 600_000, maxMs: 14_400_000, label: "Consolidation" },
     );
@@ -407,12 +421,75 @@ async function main() {
     { baseMs: 300_000, minMs: 60_000, maxMs: 900_000, label: "Compress retry" },
   );
 
+  const evictionHandle = createAdaptiveTimer(
+    async () => {
+      // Run retention scoring first
+      try {
+        await sdk.trigger("mem::retention-score", {});
+      } catch {}
+
+      // Then evict based on retention + age/importance
+      const retentionResult = await sdk.trigger<
+        { dryRun?: boolean },
+        { evicted?: number }
+      >("mem::retention-evict", { dryRun: false }).catch(() => ({ evicted: 0 }));
+
+      const evictResult = await sdk.trigger<
+        { dryRun?: boolean },
+        { staleSessions?: number; lowImportanceObs?: number; capEvictions?: number; expiredMemories?: number; nonLatestMemories?: number }
+      >("mem::evict", { dryRun: false }).catch(() => ({}));
+
+      const work = (retentionResult?.evicted || 0) +
+        ((evictResult as any)?.staleSessions || 0) +
+        ((evictResult as any)?.lowImportanceObs || 0) +
+        ((evictResult as any)?.capEvictions || 0) +
+        ((evictResult as any)?.expiredMemories || 0) +
+        ((evictResult as any)?.nonLatestMemories || 0);
+      return work;
+    },
+    { baseMs: 14_400_000, minMs: 3_600_000, maxMs: 43_200_000, label: "Eviction" },
+  );
+  console.log(`[agentmemory] Eviction: enabled (every 240m, adaptive)`);
+
+  const indexVerifyHandle = createAdaptiveTimer(
+    async () => {
+      const bm25Size = bm25Index.size;
+
+      // Count actual compressed observations across all sessions
+      const sessions = await kv.list<{ id: string }>(KV.sessions).catch(() => []);
+      let kvObsCount = 0;
+      for (const session of sessions) {
+        const obs = await kv.list(KV.observations(session.id)).catch(() => []);
+        kvObsCount += obs.filter((o: any) => o.title).length; // only compressed
+      }
+
+      const drift = Math.abs(bm25Size - kvObsCount);
+      const driftPct = kvObsCount > 0 ? drift / kvObsCount : 0;
+
+      if (driftPct > 0.1 && drift > 50) {
+        // More than 10% drift and at least 50 observations off
+        console.warn(`[agentmemory] Index drift detected: index=${bm25Size} kv=${kvObsCount} (${(driftPct * 100).toFixed(1)}%), rebuilding`);
+        const rebuilt = await rebuildIndex(kv).catch(() => 0);
+        if (rebuilt > 0) {
+          indexPersistence.scheduleSave();
+          console.log(`[agentmemory] Index rebuilt: ${rebuilt} observations`);
+        }
+        return 1;
+      }
+      return 0;
+    },
+    { baseMs: 7_200_000, minMs: 1_800_000, maxMs: 28_800_000, label: "Index verify" },
+  );
+  console.log(`[agentmemory] Index verify: enabled (every 120m, adaptive)`);
+
   const shutdown = async () => {
     console.log(`\n[agentmemory] Shutting down...`);
     healthMonitor.stop();
     autoForgetHandle?.stop();
     consolidationHandle?.stop();
     compressRetryHandle.stop();
+    evictionHandle.stop();
+    indexVerifyHandle.stop();
     dedupMap.stop();
     indexPersistence.stop();
     await new Promise<void>((resolve) => viewerServer.close(() => resolve()));
