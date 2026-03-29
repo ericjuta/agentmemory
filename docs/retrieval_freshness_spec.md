@@ -378,6 +378,32 @@ Status:
 - prompt similarity (embedding-based)
 - graph entity overlap boost
 
+## Autonomous Maintenance
+
+### Goal
+
+All memory lifecycle operations should run autonomously without manual triggers.
+
+### Requirements
+
+- `mem::consolidate` (concept-grouped memory creation) must run automatically,
+  not just `mem::consolidate-pipeline`
+- retention eviction (`mem::retention-evict`) must run on a timer to prune
+  low-retention memories
+- graph pruning must clean up stale nodes/edges when source observations are
+  evicted
+- search/vector index integrity must self-heal if indices drift from KV state
+
+### Implementation — Complete
+
+- `mem::consolidate` runs after each `mem::consolidate-pipeline` tick
+- `mem::retention-evict` + `mem::evict` run on adaptive timer (base 4hr,
+  min 1hr, max 12hr), with `mem::retention-score` preceding eviction
+- graph pruning fires on every observation eviction via `onEvict` callback,
+  marking nodes/edges `stale: true` when all source observations are gone
+- index verification runs on adaptive timer (base 2hr, min 30min, max 8hr),
+  triggers `rebuildIndex` when BM25/KV drift exceeds 10% and 50 observations
+
 ## Next Steps
 
 1. Validate host/runtime support for a real `assistant_result` event wherever
