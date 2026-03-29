@@ -327,6 +327,8 @@ Status:
 - compressed observations enrich capsules with files, concepts, failure/decision
   signals, and importance
 - the `stop` path now persists a final observation before summarization
+- Claude Code currently uses the `stop` path with `last_assistant_message`
+  as the supported final-turn completion signal
 - a dedicated session-local working set is maintained for the active session and
   injected into the hot lane
 - `mem::context` now assembles hot / warm / cold lanes
@@ -349,7 +351,8 @@ Status:
 
 - end-to-end `assistant_result` capture now has a shipped hook entrypoint, but
   host/runtime support still depends on whether the upstream agent exposes that
-  event
+  event; Claude Code does not currently appear to expose a dedicated
+  `assistant_result` hook and instead relies on `stop`
 - `turn_id` propagation now exists in the shipped hooks that matter for
   freshness, but turn stitching still depends on the upstream host actually
   providing `turn_id`
@@ -365,7 +368,7 @@ Status:
 ## Next Steps
 
 1. Validate host/runtime support for a real `assistant_result` event wherever
-   available.
+   available outside Claude Code.
 2. Extend regression coverage for hook-provided `turn_id` stitching with
    runtime-shaped payloads.
 3. Add query-aware ranking features only if `mem::context` evolves to accept
