@@ -186,7 +186,12 @@ export function registerApiTriggers(
 
   sdk.registerFunction("api::context",
     async (
-      req: ApiRequest<{ sessionId: string; project: string; budget?: number }>,
+      req: ApiRequest<{
+        sessionId: string;
+        project: string;
+        budget?: number;
+        query?: string;
+      }>,
     ): Promise<Response> => {
       const body = (req.body ?? {}) as Record<string, unknown>;
       const sessionId = asNonEmptyString(body.sessionId);

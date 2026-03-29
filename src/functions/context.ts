@@ -43,6 +43,24 @@ function normalizeFingerprint(text: string): string {
   return text.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+function queryTerms(query?: string): string[] {
+  if (!query) return [];
+  return query
+    .toLowerCase()
+    .split(/[^a-z0-9_./-]+/)
+    .filter((term) => term.length >= 3);
+}
+
+function scoreQueryOverlap(content: string, terms: string[]): number {
+  if (terms.length === 0) return 0;
+  const normalized = content.toLowerCase();
+  let score = 0;
+  for (const term of terms) {
+    if (normalized.includes(term)) score++;
+  }
+  return score;
+}
+
 function formatTurnCapsule(capsule: TurnCapsule, currentSession: boolean): string {
   const lines = [
     `## ${currentSession ? "Current Turn" : `Recent Turn ${capsule.turnId}`}`,
@@ -203,8 +221,10 @@ export function registerContextFunction(
       sessionId: string;
       project: string;
       budget?: number;
+      query?: string;
     }) => {
       const budget = data.budget || tokenBudget;
+      const terms = queryTerms(data.query);
       const hotBlocks: RankedContextBlock[] = [];
       const warmBlocks: RankedContextBlock[] = [];
       const coldBlocks: RankedContextBlock[] = [];
@@ -503,6 +523,14 @@ export function registerContextFunction(
       const fingerprints = new Set<string>();
       const selectedObservationIds = new Set<string>();
       const selectedCapsuleSessions = new Set<string>();
+      const sortBlocks = (blocks: RankedContextBlock[]) =>
+        blocks.sort((a, b) => {
+          const queryDelta =
+            scoreQueryOverlap(b.content, terms) -
+            scoreQueryOverlap(a.content, terms);
+          if (queryDelta !== 0) return queryDelta;
+          return b.recency - a.recency;
+        });
 
       const takeFromLane = (blocks: RankedContextBlock[], laneBudget: number) => {
         let laneUsed = 0;
@@ -541,21 +569,25 @@ export function registerContextFunction(
       };
 
       takeFromLane(
-        hotBlocks.sort((a, b) => b.recency - a.recency),
+        sortBlocks(hotBlocks),
         laneBudgets.hot,
       );
       takeFromLane(
-        warmBlocks.sort((a, b) => b.recency - a.recency),
+        sortBlocks(warmBlocks),
         laneBudgets.warm,
       );
       takeFromLane(
-        coldBlocks.sort((a, b) => b.recency - a.recency),
+        sortBlocks(coldBlocks),
         laneBudgets.cold,
       );
 
       const leftovers = [...hotBlocks, ...warmBlocks, ...coldBlocks]
         .filter((block) => !selectedIds.has(block.id))
         .sort((a, b) => {
+          const queryDelta =
+            scoreQueryOverlap(b.content, terms) -
+            scoreQueryOverlap(a.content, terms);
+          if (queryDelta !== 0) return queryDelta;
           const laneDelta = lanePriority(b.lane) - lanePriority(a.lane);
           if (laneDelta !== 0) return laneDelta;
           return b.recency - a.recency;

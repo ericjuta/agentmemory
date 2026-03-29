@@ -472,4 +472,70 @@ describe("context freshness", () => {
       "Graph: [concept] freshness seed [concept] freshness graph --related_to-->",
     );
   });
+
+  it("uses an optional query to rank matching context higher", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerContextFunction(sdk as never, kv as never, 900);
+
+    const currentSession: Session = {
+      id: "session-current",
+      project: "/project",
+      cwd: "/project",
+      startedAt: "2026-03-29T10:00:00.000Z",
+      status: "active",
+      observationCount: 2,
+    };
+    await kv.set(KV.sessions, currentSession.id, currentSession);
+
+    const matchingObservation: CompressedObservation = {
+      id: "obs-match",
+      sessionId: "session-current",
+      turnId: "turn-1",
+      timestamp: "2026-03-29T10:00:02.000Z",
+      type: "discovery",
+      title: "Graph retrieval implementation detail",
+      facts: [],
+      narrative: "Updated /project/src/functions/graph-retrieval.ts for Codex ranking.",
+      concepts: ["graph retrieval", "codex ranking"],
+      files: ["/project/src/functions/graph-retrieval.ts"],
+      importance: 6,
+    };
+    const otherObservation: CompressedObservation = {
+      id: "obs-other",
+      sessionId: "session-current",
+      turnId: "turn-2",
+      timestamp: "2026-03-29T10:00:03.000Z",
+      type: "task",
+      title: "General memory status update",
+      facts: [],
+      narrative: "Reviewed memory health and service status.",
+      concepts: ["service health"],
+      files: ["/project/README.md"],
+      importance: 6,
+    };
+    await kv.set(
+      KV.observations(currentSession.id),
+      matchingObservation.id,
+      matchingObservation,
+    );
+    await kv.set(
+      KV.observations(currentSession.id),
+      otherObservation.id,
+      otherObservation,
+    );
+
+    const result = (await sdk.trigger("mem::context", {
+      sessionId: currentSession.id,
+      project: "/project",
+      budget: 900,
+      query: "graph-retrieval.ts codex ranking",
+    })) as { context: string };
+
+    const matchIndex = result.context.indexOf("Graph retrieval implementation detail");
+    const otherIndex = result.context.indexOf("General memory status update");
+    expect(matchIndex).toBeGreaterThan(-1);
+    expect(otherIndex).toBeGreaterThan(-1);
+    expect(matchIndex).toBeLessThan(otherIndex);
+  });
 });
