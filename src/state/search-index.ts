@@ -46,6 +46,29 @@ export class SearchIndex {
     this.sortedTerms = null;
   }
 
+  remove(obsId: string): void {
+    const entry = this.entries.get(obsId);
+    if (!entry) return;
+
+    const docTerms = this.docTermCounts.get(obsId);
+    if (docTerms) {
+      for (const term of docTerms.keys()) {
+        const posting = this.invertedIndex.get(term);
+        if (posting) {
+          posting.delete(obsId);
+          if (posting.size === 0) {
+            this.invertedIndex.delete(term);
+          }
+        }
+      }
+    }
+
+    this.totalDocLength -= entry.termCount;
+    this.entries.delete(obsId);
+    this.docTermCounts.delete(obsId);
+    this.sortedTerms = null;
+  }
+
   search(
     query: string,
     limit = 20,
