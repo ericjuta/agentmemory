@@ -1,3 +1,4 @@
+// Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 import type { ISdk, ApiRequest } from "iii-sdk";
 import type { Session, CompressedObservation, HookPayload } from "../types.js";
 import { KV } from "../state/schema.js";

@@ -1,3 +1,5 @@
+<!-- Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE. -->
+
 ---
 name: session-history
 description: Show what happened in recent past sessions on this project. Use when user asks "what did we do last time", "session history", "past sessions", or wants an overview of previous work.

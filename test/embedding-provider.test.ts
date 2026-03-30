@@ -1,3 +1,4 @@
+// Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createEmbeddingProvider } from "../src/providers/embedding/index.js";
 import { GeminiEmbeddingProvider } from "../src/providers/embedding/gemini.js";

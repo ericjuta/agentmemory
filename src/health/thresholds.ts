@@ -1,3 +1,4 @@
+// Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 import type { HealthSnapshot } from "../types.js";
 
 interface ThresholdConfig {

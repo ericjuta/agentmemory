@@ -1,3 +1,4 @@
+// Fork note: added in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 import { describe, expect, it } from "vitest";
 import type { CompressedObservation, RawObservation } from "../src/types.js";
 import { KV } from "../src/state/schema.js";

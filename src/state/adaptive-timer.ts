@@ -1,3 +1,4 @@
+// Fork note: added in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 /**
  * Adaptive timer that adjusts interval based on workload.
  * Backs off when idle, speeds up when busy, doubles on error.

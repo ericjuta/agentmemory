@@ -1,3 +1,4 @@
+// Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 const BASE_URL = process.env["AGENTMEMORY_URL"] || "http://localhost:3111";

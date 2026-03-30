@@ -1,3 +1,4 @@
+// Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 import { registerWorker } from "iii-sdk";
 import {
   loadConfig,

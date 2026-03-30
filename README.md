@@ -852,4 +852,13 @@ npm run test:integration  # API tests (requires running services)
 
 <h2 id="license"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/tags/light/section-license.svg"><img src="assets/tags/section-license.svg" alt="License" height="32" /></picture></h2>
 
-[Apache-2.0](LICENSE)
+This repository is distributed under [Apache-2.0](LICENSE).
+
+If you publish or redistribute this fork:
+
+- keep the [LICENSE](LICENSE) file with the source or any redistributions
+- keep the [NOTICE](NOTICE) file with the source or any redistributions from this fork
+- retain upstream copyright and attribution notices that still apply
+- clearly mark any files you modify when redistributing source form under Apache-2.0 section 4(b)
+
+Original upstream project: [rohitg00/agentmemory](https://github.com/rohitg00/agentmemory)

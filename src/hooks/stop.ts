@@ -1,3 +1,4 @@
+// Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 #!/usr/bin/env node
 
 const REST_URL = process.env["AGENTMEMORY_URL"] || "http://127.0.0.1:3111";

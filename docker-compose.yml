@@ -1,3 +1,4 @@
+# Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 services:
   iii-data-perms:
     image: alpine:3.21

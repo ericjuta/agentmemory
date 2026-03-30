@@ -1,3 +1,5 @@
+<!-- Fork note: added in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE. -->
+
 # Retrieval Freshness Spec
 
 ## Goal

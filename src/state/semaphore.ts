@@ -1,3 +1,4 @@
+// Fork note: added in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 /**
  * Simple counting semaphore for bounding concurrency.
  * Callers that exceed the limit wait in FIFO order.

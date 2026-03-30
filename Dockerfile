@@ -1,3 +1,4 @@
+# Fork note: added in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 FROM node:22-bookworm-slim
 
 WORKDIR /app

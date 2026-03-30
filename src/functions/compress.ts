@@ -1,3 +1,4 @@
+// Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 import { TriggerAction, type ISdk } from "iii-sdk";
 import type {
   RawObservation,

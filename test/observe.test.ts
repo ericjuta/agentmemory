@@ -1,3 +1,4 @@
+// Fork note: added in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 import { describe, expect, it } from "vitest";
 import { registerObserveFunction } from "../src/functions/observe.js";
 import { KV } from "../src/state/schema.js";

@@ -1,3 +1,4 @@
+// Fork note: added in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 /**
  * Per-session inflight compression counter with drain support.
  * Used to ensure all compressions complete before summarization.
