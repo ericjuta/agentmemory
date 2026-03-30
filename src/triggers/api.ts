@@ -351,7 +351,7 @@ export function registerApiTriggers(
   sdk.registerTrigger({
     type: "http",
     function_id: "api::relations",
-    config: { api_path: "/agentmemory/relations/list", http_method: "GET" },
+    config: { api_path: "/agentmemory/memory-relations", http_method: "GET" },
   });
 
   sdk.registerFunction("api::search", 
