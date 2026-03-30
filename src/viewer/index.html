@@ -985,6 +985,18 @@
       state.dashboard.lessons = (results[8] && results[8].lessons) || [];
       state.dashboard.crystals = (results[9] && results[9].crystals) || [];
       state.dashboard.relations = (results[7] && results[7].relations) || [];
+      // Derive relation count from memory relatedIds if KV.relations is empty
+      if (state.dashboard.relations.length === 0 && state.dashboard.memories.length > 0) {
+        var relPairs = new Set();
+        state.dashboard.memories.forEach(function(m) {
+          (m.relatedIds || []).forEach(function(rid) {
+            relPairs.add([m.id, rid].sort().join('|'));
+          });
+        });
+        state.dashboard.relationCount = relPairs.size;
+      } else {
+        state.dashboard.relationCount = state.dashboard.relations.length;
+      }
       state.dashboard.loaded = true;
       renderDashboard();
     }
@@ -1215,7 +1227,7 @@
       html += '<div class="card" style="margin-top:16px;"><div class="card-title">Consolidation Status</div>';
       html += '<div class="consolidation-row"><span class="cl">Semantic facts</span><span class="cv">' + semFacts.length + '</span></div>';
       html += '<div class="consolidation-row"><span class="cl">Procedures</span><span class="cv">' + procItems.length + '</span></div>';
-      html += '<div class="consolidation-row"><span class="cl">Relations</span><span class="cv">' + relItems.length + '</span></div>';
+      html += '<div class="consolidation-row"><span class="cl">Relations</span><span class="cv">' + (d.relationCount || relItems.length) + '</span></div>';
       html += '<div class="consolidation-row"><span class="cl">Consolidated memories</span><span class="cv">' + d.memories.length + '</span></div>';
       html += '</div>';
 
