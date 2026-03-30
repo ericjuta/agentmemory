@@ -327,25 +327,8 @@ export function registerApiTriggers(
       if (items.length > 0) {
         return { status_code: 200, body: { relations: items } };
       }
-      // Fallback: derive from memory relatedIds if kv.list returns empty
-      const memories = await kv.list<import("../types.js").Memory>(KV.memories).catch(() => []);
-      const pairs = new Set<string>();
-      const derived: import("../types.js").MemoryRelation[] = [];
-      for (const m of memories) {
-        for (const rid of m.relatedIds || []) {
-          const key = [m.id, rid].sort().join("|");
-          if (pairs.has(key)) continue;
-          pairs.add(key);
-          derived.push({
-            type: "related",
-            sourceId: m.id,
-            targetId: rid,
-            createdAt: m.updatedAt || m.createdAt,
-            confidence: 0.5,
-          });
-        }
-      }
-      return { status_code: 200, body: { relations: derived } };
+      // Fallback: return empty and let viewer derive from memory relatedIds
+      return { status_code: 200, body: { relations: [] } };
     },
   );
   sdk.registerTrigger({
