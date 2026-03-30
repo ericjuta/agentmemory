@@ -17,24 +17,41 @@ async function main() {
 		return;
 	}
 	const sessionId = data.session_id || "unknown";
-	try {
-		await fetch(`${REST_URL}/agentmemory/observe`, {
+	const project = data.cwd || process.cwd();
+	const prompt = data.prompt || "";
+	const observePromise = fetch(`${REST_URL}/agentmemory/observe`, {
+		method: "POST",
+		headers: authHeaders(),
+		body: JSON.stringify({
+			hookType: "prompt_submit",
+			sessionId,
+			project,
+			cwd: project,
+			timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+			data: {
+				turn_id: data.turn_id ?? data.turnId,
+				prompt
+			}
+		}),
+		signal: AbortSignal.timeout(3e3)
+	}).catch(() => {});
+	if (prompt.trim().length > 10) try {
+		const res = await fetch(`${REST_URL}/agentmemory/context/refresh`, {
 			method: "POST",
 			headers: authHeaders(),
 			body: JSON.stringify({
-				hookType: "prompt_submit",
 				sessionId,
-				project: data.cwd || process.cwd(),
-				cwd: data.cwd || process.cwd(),
-				timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-				data: {
-					turn_id: data.turn_id ?? data.turnId,
-					prompt: data.prompt
-				}
+				project,
+				query: prompt
 			}),
-			signal: AbortSignal.timeout(3e3)
+			signal: AbortSignal.timeout(4e3)
 		});
+		if (res.ok) {
+			const result = await res.json();
+			if (result.context && !result.skipped) process.stdout.write(result.context);
+		}
 	} catch {}
+	await observePromise;
 }
 main();
 
