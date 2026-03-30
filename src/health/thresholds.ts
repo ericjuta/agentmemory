@@ -38,6 +38,32 @@ export function evaluateHealth(
     degraded = true;
   }
 
+  const kvFailureCount =
+    snapshot.kvConnectivity?.consecutiveFailures ??
+    (snapshot.kvConnectivity?.status === "error" ? 1 : 0);
+  if (snapshot.kvConnectivity?.status === "error") {
+    alerts.push(`kv_probe_error_streak_${kvFailureCount}`);
+    if (kvFailureCount >= 3) {
+      critical = true;
+    } else {
+      degraded = true;
+    }
+  }
+
+  const snapshotPersistFailureCount =
+    snapshot.snapshotPersistence?.consecutiveFailures ??
+    (snapshot.snapshotPersistence?.status === "error" ? 1 : 0);
+  if (snapshot.snapshotPersistence?.status === "error") {
+    alerts.push(
+      `health_snapshot_persist_error_streak_${snapshotPersistFailureCount}`,
+    );
+    if (snapshotPersistFailureCount >= 3) {
+      critical = true;
+    } else {
+      degraded = true;
+    }
+  }
+
   if (snapshot.eventLoopLagMs > cfg.eventLoopLagCriticalMs) {
     alerts.push(
       `event_loop_lag_critical_${Math.round(snapshot.eventLoopLagMs)}ms`,

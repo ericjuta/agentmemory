@@ -218,7 +218,21 @@ export interface HealthSnapshot {
   cpu: { userMicros: number; systemMicros: number; percent: number };
   eventLoopLagMs: number;
   uptimeSeconds: number;
-  kvConnectivity?: { status: string; latencyMs?: number; error?: string };
+  kvConnectivity?: {
+    status: string;
+    latencyMs?: number;
+    error?: string;
+    consecutiveFailures?: number;
+    lastSuccessAt?: string;
+    lastFailureAt?: string;
+  };
+  snapshotPersistence?: {
+    status: "ok" | "error";
+    consecutiveFailures: number;
+    lastSuccessAt?: string;
+    lastFailureAt?: string;
+    error?: string;
+  };
   pipeline?: {
     compressActive: number;
     compressPending: number;

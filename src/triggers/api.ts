@@ -21,6 +21,16 @@ function parseOptionalInt(raw: unknown): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
+function parsePositiveIntQuery(
+  value: unknown,
+  max: number,
+): number | undefined {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  return Math.min(parsed, max);
+}
+
 function checkAuth(
   req: ApiRequest,
   secret: string | undefined,
@@ -531,8 +541,13 @@ export function registerApiTriggers(
     async (req: ApiRequest): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
-      const sessions = await kv.list<Session>(KV.sessions);
-      return { status_code: 200, body: { sessions } };
+      const limit = parsePositiveIntQuery(req.query_params["limit"], 1000);
+      const sessions = (await kv.list<Session>(KV.sessions))
+        .sort((a, b) => (b.startedAt || "").localeCompare(a.startedAt || ""));
+      return {
+        status_code: 200,
+        body: { sessions: limit ? sessions.slice(0, limit) : sessions },
+      };
     },
   );
   sdk.registerTrigger({

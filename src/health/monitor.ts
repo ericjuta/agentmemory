@@ -4,6 +4,8 @@ import type { StateKV } from "../state/kv.js";
 import { KV } from "../state/schema.js";
 import { evaluateHealth } from "./thresholds.js";
 
+let latestHealthSnapshot: HealthSnapshot | null = null;
+
 export interface PipelineMetrics {
   compressActive: number;
   compressPending: number;
@@ -18,6 +20,13 @@ export function registerHealthMonitor(
   let connectionState = "connected";
   let prevCpuUsage = process.cpuUsage();
   let prevCpuTime = Date.now();
+  let kvFailureStreak = 0;
+  let kvLastSuccessAt: string | undefined;
+  let kvLastFailureAt: string | undefined;
+  let snapshotPersistFailureStreak = 0;
+  let snapshotPersistLastSuccessAt: string | undefined;
+  let snapshotPersistLastFailureAt: string | undefined;
+  let snapshotPersistError: string | undefined;
 
   if (typeof sdk.on === "function") {
     sdk.on("connection_state", (state?: unknown) => {
@@ -29,6 +38,7 @@ export function registerHealthMonitor(
     const mem = process.memoryUsage();
     const currentCpu = process.cpuUsage();
     const now = Date.now();
+    const nowIso = new Date(now).toISOString();
     const uptime = process.uptime();
 
     const elapsedMs = now - prevCpuTime;
@@ -53,7 +63,7 @@ export function registerHealthMonitor(
     } catch {}
 
     const KV_PROBE_TIMEOUT = 5000;
-    let kvConnectivity: { status: string; latencyMs?: number; error?: string };
+    let kvConnectivity: HealthSnapshot["kvConnectivity"];
     const kvStart = performance.now();
     try {
       await Promise.race([
@@ -65,9 +75,26 @@ export function registerHealthMonitor(
           setTimeout(() => reject(new Error("timeout")), KV_PROBE_TIMEOUT),
         ),
       ]);
-      kvConnectivity = { status: "ok", latencyMs: Math.round((performance.now() - kvStart) * 100) / 100 };
-    } catch {
-      kvConnectivity = { status: "error", error: "kv_probe_failed", latencyMs: Math.round((performance.now() - kvStart) * 100) / 100 };
+      kvFailureStreak = 0;
+      kvLastSuccessAt = nowIso;
+      kvConnectivity = {
+        status: "ok",
+        latencyMs: Math.round((performance.now() - kvStart) * 100) / 100,
+        consecutiveFailures: kvFailureStreak,
+        lastSuccessAt: kvLastSuccessAt,
+        lastFailureAt: kvLastFailureAt,
+      };
+    } catch (err) {
+      kvFailureStreak++;
+      kvLastFailureAt = nowIso;
+      kvConnectivity = {
+        status: "error",
+        error: err instanceof Error ? err.message : "kv_probe_failed",
+        latencyMs: Math.round((performance.now() - kvStart) * 100) / 100,
+        consecutiveFailures: kvFailureStreak,
+        lastSuccessAt: kvLastSuccessAt,
+        lastFailureAt: kvLastFailureAt,
+      };
     }
 
     const snapshot: HealthSnapshot = {
@@ -87,6 +114,13 @@ export function registerHealthMonitor(
       eventLoopLagMs,
       uptimeSeconds: uptime,
       kvConnectivity,
+      snapshotPersistence: {
+        status: snapshotPersistFailureStreak > 0 ? "error" : "ok",
+        consecutiveFailures: snapshotPersistFailureStreak,
+        lastSuccessAt: snapshotPersistLastSuccessAt,
+        lastFailureAt: snapshotPersistLastFailureAt,
+        error: snapshotPersistError,
+      },
       pipeline: getPipelineMetrics?.(),
       status: "healthy",
       alerts: [],
@@ -95,11 +129,39 @@ export function registerHealthMonitor(
     const evaluated = evaluateHealth(snapshot);
     snapshot.status = evaluated.status;
     snapshot.alerts = evaluated.alerts;
+    latestHealthSnapshot = snapshot;
 
-    await kv.set(KV.health, "latest", snapshot).catch((err) => {
+    try {
+      await kv.set(KV.health, "latest", snapshot);
+      snapshotPersistFailureStreak = 0;
+      snapshotPersistLastSuccessAt = nowIso;
+      snapshotPersistError = undefined;
+      latestHealthSnapshot = {
+        ...snapshot,
+        snapshotPersistence: {
+          status: "ok",
+          consecutiveFailures: 0,
+          lastSuccessAt: snapshotPersistLastSuccessAt,
+          lastFailureAt: snapshotPersistLastFailureAt,
+        },
+      };
+    } catch (err) {
+      snapshotPersistFailureStreak++;
+      snapshotPersistLastFailureAt = nowIso;
+      snapshotPersistError = err instanceof Error ? err.message : String(err);
+      latestHealthSnapshot = {
+        ...snapshot,
+        snapshotPersistence: {
+          status: "error",
+          consecutiveFailures: snapshotPersistFailureStreak,
+          lastSuccessAt: snapshotPersistLastSuccessAt,
+          lastFailureAt: snapshotPersistLastFailureAt,
+          error: snapshotPersistError,
+        },
+      };
       console.warn("[agentmemory] Health snapshot persist failed:", err);
-    });
-    return snapshot;
+    }
+    return latestHealthSnapshot;
   }
 
   collectHealth().catch(() => {});
@@ -116,5 +178,6 @@ export function registerHealthMonitor(
 export async function getLatestHealth(
   kv: StateKV,
 ): Promise<HealthSnapshot | null> {
+  if (latestHealthSnapshot) return latestHealthSnapshot;
   return kv.get<HealthSnapshot>(KV.health, "latest");
 }
