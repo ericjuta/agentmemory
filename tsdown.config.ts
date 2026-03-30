@@ -53,6 +53,7 @@ export default defineConfig([
     ...shared,
     clean: false,
     sourcemap: false,
+    banner: { js: "#!/usr/bin/env node" },
   },
   {
     entry: hookEntries,
@@ -60,5 +61,6 @@ export default defineConfig([
     ...shared,
     clean: false,
     sourcemap: false,
+    banner: { js: "#!/usr/bin/env node" },
   },
 ]);

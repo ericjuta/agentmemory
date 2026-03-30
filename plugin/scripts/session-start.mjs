@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-// Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 //#region src/hooks/session-start.ts
 const INJECT_CONTEXT = process.env["AGENTMEMORY_INJECT_CONTEXT"] === "true";
 const REST_URL = process.env["AGENTMEMORY_URL"] || "http://127.0.0.1:3111";
