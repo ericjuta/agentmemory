@@ -7,6 +7,8 @@ vi.mock("../src/logger.js", () => ({
 vi.mock("../src/config.js", () => ({
   getConsolidationDecayDays: () => 30,
   isConsolidationEnabled: vi.fn(() => true),
+  getEnvVar: (key: string) =>
+    key === "CONSOLIDATION_DECAY_MAX_ITEMS" ? "2" : undefined,
 }));
 
 import { registerConsolidationPipelineFunction } from "../src/functions/consolidation-pipeline.js";
@@ -248,5 +250,116 @@ describe("Consolidation Pipeline", () => {
     expect(result.success).toBe(true);
     expect(result.results).toBeDefined();
     vi.mocked(isConsolidationEnabled).mockReturnValue(true);
+  });
+
+  it("decay only persists changed items within the configured batch limit", async () => {
+    const provider = {
+      name: "test",
+      compress: vi.fn(),
+      summarize: vi.fn(),
+    };
+    registerConsolidationPipelineFunction(sdk as never, kv as never, provider as never);
+
+    const now = Date.now();
+    const old = (days: number) => new Date(now - days * 86400000).toISOString();
+
+    const semanticItems: SemanticMemory[] = [
+      {
+        id: "sem_1",
+        fact: "oldest fact",
+        confidence: 0.9,
+        sourceSessionIds: [],
+        sourceMemoryIds: [],
+        accessCount: 1,
+        lastAccessedAt: old(120),
+        strength: 1,
+        createdAt: old(150),
+        updatedAt: old(120),
+      },
+      {
+        id: "sem_2",
+        fact: "second fact",
+        confidence: 0.8,
+        sourceSessionIds: [],
+        sourceMemoryIds: [],
+        accessCount: 1,
+        lastAccessedAt: old(90),
+        strength: 1,
+        createdAt: old(120),
+        updatedAt: old(90),
+      },
+      {
+        id: "sem_3",
+        fact: "recent fact",
+        confidence: 0.7,
+        sourceSessionIds: [],
+        sourceMemoryIds: [],
+        accessCount: 1,
+        lastAccessedAt: old(5),
+        strength: 1,
+        createdAt: old(10),
+        updatedAt: old(5),
+      },
+    ];
+
+    const proceduralItems: ProceduralMemory[] = [
+      {
+        id: "proc_1",
+        name: "oldest proc",
+        steps: ["a"],
+        triggerCondition: "old",
+        frequency: 1,
+        sourceSessionIds: [],
+        strength: 1,
+        createdAt: old(150),
+        updatedAt: old(120),
+      },
+      {
+        id: "proc_2",
+        name: "recent proc",
+        steps: ["b"],
+        triggerCondition: "recent",
+        frequency: 1,
+        sourceSessionIds: [],
+        strength: 1,
+        createdAt: old(10),
+        updatedAt: old(5),
+      },
+    ];
+
+    for (const item of semanticItems) {
+      await kv.set("mem:semantic", item.id, item);
+    }
+    for (const item of proceduralItems) {
+      await kv.set("mem:procedural", item.id, item);
+    }
+
+    const beforeSemanticThird = await kv.get<SemanticMemory>("mem:semantic", "sem_3");
+    const beforeRecentProc = await kv.get<ProceduralMemory>("mem:procedural", "proc_2");
+
+    const result = (await sdk.trigger("mem::consolidate-pipeline", {
+      tier: "decay",
+    })) as { success: boolean; results: Record<string, unknown> };
+
+    expect(result.success).toBe(true);
+    expect(result.results.decay).toMatchObject({
+      semanticProcessed: 2,
+      semanticUpdated: 2,
+      proceduralProcessed: 2,
+      proceduralUpdated: 1,
+      maxItemsPerRun: 2,
+    });
+
+    const sem1 = await kv.get<SemanticMemory>("mem:semantic", "sem_1");
+    const sem2 = await kv.get<SemanticMemory>("mem:semantic", "sem_2");
+    const sem3 = await kv.get<SemanticMemory>("mem:semantic", "sem_3");
+    const proc1 = await kv.get<ProceduralMemory>("mem:procedural", "proc_1");
+    const proc2 = await kv.get<ProceduralMemory>("mem:procedural", "proc_2");
+
+    expect(sem1!.strength).toBeLessThan(1);
+    expect(sem2!.strength).toBeLessThan(1);
+    expect(sem3).toEqual(beforeSemanticThird);
+    expect(proc1!.strength).toBeLessThan(1);
+    expect(proc2).toEqual(beforeRecentProc);
   });
 });

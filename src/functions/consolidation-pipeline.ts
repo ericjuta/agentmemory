@@ -16,7 +16,7 @@ import {
   buildProceduralExtractionPrompt,
 } from "../prompts/consolidation.js";
 import { recordAudit } from "./audit.js";
-import { getConsolidationDecayDays, isConsolidationEnabled } from "../config.js";
+import { getConsolidationDecayDays, isConsolidationEnabled, getEnvVar } from "../config.js";
 import { logger } from "../logger.js";
 import { Semaphore } from "../state/semaphore.js";
 
@@ -24,15 +24,18 @@ const consolidationSemaphore = new Semaphore(2);
 
 function applyDecay(
   items: Array<{
+    id: string;
     strength: number;
     lastAccessedAt?: string;
     updatedAt: string;
   }>,
   decayDays: number,
-): void {
-  if (decayDays <= 0 || !Number.isFinite(decayDays)) return;
+): string[] {
+  if (decayDays <= 0 || !Number.isFinite(decayDays)) return [];
   const now = Date.now();
+  const changed: string[] = [];
   for (const item of items) {
+    const originalStrength = item.strength;
     const lastAccess = item.lastAccessedAt || item.updatedAt;
     const daysSince =
       (now - new Date(lastAccess).getTime()) / (1000 * 60 * 60 * 24);
@@ -42,8 +45,31 @@ function applyDecay(
         0.1,
         item.strength * Math.pow(0.9, decayPeriods),
       );
+      if (item.strength !== originalStrength) {
+        changed.push(item.id);
+      }
     }
   }
+  return changed;
+}
+
+function getDecayMaxItemsPerRun(): number {
+  const raw = parseInt(getEnvVar("CONSOLIDATION_DECAY_MAX_ITEMS") || "100", 10);
+  if (!Number.isFinite(raw) || raw <= 0) return 100;
+  return raw;
+}
+
+function selectDecayBatch<T extends {
+  lastAccessedAt?: string;
+  updatedAt: string;
+}>(items: T[], maxItems: number): T[] {
+  return [...items]
+    .sort((a, b) => {
+      const aTime = new Date(a.lastAccessedAt || a.updatedAt).getTime();
+      const bTime = new Date(b.lastAccessedAt || b.updatedAt).getTime();
+      return aTime - bTime;
+    })
+    .slice(0, maxItems);
 }
 
 export function registerConsolidationPipelineFunction(
@@ -58,6 +84,7 @@ export function registerConsolidationPipelineFunction(
       }
       const tier = data?.tier || "all";
       const decayDays = getConsolidationDecayDays();
+      const decayMaxItems = getDecayMaxItemsPerRun();
       const results: Record<string, unknown> = {};
 
       if (tier === "all" || tier === "semantic") {
@@ -231,21 +258,34 @@ export function registerConsolidationPipelineFunction(
       }
 
       if (tier === "all" || tier === "decay") {
-        const semantic = await kv.list<SemanticMemory>(KV.semantic);
-        applyDecay(semantic, decayDays);
+        const semantic = selectDecayBatch(
+          await kv.list<SemanticMemory>(KV.semantic),
+          decayMaxItems,
+        );
+        const changedSemanticIds = new Set(applyDecay(semantic, decayDays));
         for (const s of semantic) {
+          if (!changedSemanticIds.has(s.id)) continue;
           await kv.set(KV.semantic, s.id, s);
         }
 
-        const procedural = await kv.list<ProceduralMemory>(KV.procedural);
-        applyDecay(procedural, decayDays);
+        const procedural = selectDecayBatch(
+          await kv.list<ProceduralMemory>(KV.procedural),
+          decayMaxItems,
+        );
+        const changedProceduralIds = new Set(
+          applyDecay(procedural, decayDays),
+        );
         for (const p of procedural) {
+          if (!changedProceduralIds.has(p.id)) continue;
           await kv.set(KV.procedural, p.id, p);
         }
 
         results.decay = {
-          semantic: semantic.length,
-          procedural: procedural.length,
+          semanticProcessed: semantic.length,
+          semanticUpdated: changedSemanticIds.size,
+          proceduralProcessed: procedural.length,
+          proceduralUpdated: changedProceduralIds.size,
+          maxItemsPerRun: decayMaxItems,
         };
       }
 

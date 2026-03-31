@@ -31,6 +31,20 @@ import { logger } from "../logger.js";
 import { Semaphore } from "../state/semaphore.js";
 
 const consolidateLock = new Semaphore(1);
+const DEFAULT_MAX_SESSION_SCANS = 25;
+const DEFAULT_MAX_CANDIDATE_OBSERVATIONS = 50;
+const MAX_LLM_CALLS = 10;
+
+function prioritizeSessionsForConsolidation(sessions: Session[]): Session[] {
+  return [...sessions].sort((a, b) => {
+    if (b.observationCount !== a.observationCount) {
+      return b.observationCount - a.observationCount;
+    }
+    return (
+      new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()
+    );
+  });
+}
 
 function parseMemoryXml(
   xml: string,
@@ -72,38 +86,58 @@ export function registerConsolidateFunction(
   provider: MemoryProvider,
 ): void {
   sdk.registerFunction("mem::consolidate", 
-    async (data: { project?: string; minObservations?: number }) =>
+    async (data: {
+      project?: string;
+      minObservations?: number;
+      maxSessionsScanned?: number;
+      maxCandidateObservations?: number;
+    }) =>
       consolidateLock.run(async () => {
         const minObs = data.minObservations ?? 10;
+      const maxSessionsScanned = Math.max(
+        1,
+        data.maxSessionsScanned ?? DEFAULT_MAX_SESSION_SCANS,
+      );
+      const maxCandidateObservations = Math.max(
+        minObs,
+        data.maxCandidateObservations ?? DEFAULT_MAX_CANDIDATE_OBSERVATIONS,
+      );
 
       const sessions = await kv.list<Session>(KV.sessions);
-      const filtered = data.project
+      const filteredSessions = data.project
         ? sessions.filter((s) => s.project === data.project)
         : sessions;
+      const sessionsToScan = prioritizeSessionsForConsolidation(
+        filteredSessions.filter((s) => s.observationCount > 0),
+      ).slice(0, maxSessionsScanned);
 
       const allObs: Array<CompressedObservation & { sid: string }> = [];
-      const obsPerSession: CompressedObservation[][] = [];
-      for (let batch = 0; batch < filtered.length; batch += 10) {
-        const chunk = filtered.slice(batch, batch + 10);
-        const results = await Promise.all(
-          chunk.map((s) =>
-            kv
-              .list<CompressedObservation>(KV.observations(s.id))
-              .catch(() => [] as CompressedObservation[]),
-          ),
-        );
-        obsPerSession.push(...results);
-      }
-      for (let i = 0; i < filtered.length; i++) {
-        for (const obs of obsPerSession[i]) {
-          if (obs.title && obs.importance >= 5) {
-            allObs.push({ ...obs, sid: filtered[i].id });
-          }
+      let scannedSessions = 0;
+      for (const session of sessionsToScan) {
+        if (allObs.length >= maxCandidateObservations) break;
+
+        scannedSessions++;
+        const observations = await kv
+          .list<CompressedObservation>(KV.observations(session.id))
+          .catch(() => [] as CompressedObservation[]);
+        const remainingBudget = maxCandidateObservations - allObs.length;
+        const importantObservations = observations
+          .filter((obs) => obs.title && obs.importance >= 5)
+          .sort((a, b) => b.importance - a.importance)
+          .slice(0, remainingBudget);
+
+        for (const obs of importantObservations) {
+          allObs.push({ ...obs, sid: session.id });
         }
       }
 
       if (allObs.length < minObs) {
-        return { consolidated: 0, reason: "insufficient_observations" };
+        return {
+          consolidated: 0,
+          reason: "insufficient_observations",
+          scannedSessions,
+          totalObservations: allObs.length,
+        };
       }
 
       const conceptGroups = new Map<string, typeof allObs>();
@@ -121,7 +155,6 @@ export function registerConsolidateFunction(
         existingMemories.map((m) => m.title.toLowerCase()),
       );
 
-      const MAX_LLM_CALLS = 10;
       let llmCallCount = 0;
 
       const sortedGroups = [...conceptGroups.entries()]
@@ -223,8 +256,14 @@ export function registerConsolidateFunction(
       logger.info("Consolidation complete", {
         consolidated,
         totalObs: allObs.length,
+        scannedSessions,
+        availableSessions: filteredSessions.length,
       });
-      return { consolidated, totalObservations: allObs.length };
+      return {
+        consolidated,
+        totalObservations: allObs.length,
+        scannedSessions,
+      };
     }),
   );
 }
