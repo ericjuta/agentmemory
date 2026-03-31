@@ -11,7 +11,7 @@ services:
     restart: "no"
 
   iii-engine:
-    image: iiidev/iii:latest
+    image: docker.io/iiidev/iii:latest
     depends_on:
       iii-data-perms:
         condition: service_completed_successfully
