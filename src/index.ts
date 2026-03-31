@@ -87,6 +87,11 @@ import { DedupMap } from "./functions/dedup.js";
 import { CompressionTracker } from "./state/compression-tracker.js";
 import { createAdaptiveTimer, type AdaptiveTimerHandle } from "./state/adaptive-timer.js";
 import { registerHealthMonitor } from "./health/monitor.js";
+import { getLatestHealth } from "./health/monitor.js";
+import {
+  getMaintenancePauseReason,
+  shouldPauseMaintenance,
+} from "./health/maintenance-gate.js";
 import { initMetrics, OTEL_CONFIG } from "./telemetry/setup.js";
 import { VERSION } from "./version.js";
 
@@ -351,18 +356,40 @@ async function main() {
 
   const autoForgetIntervalMs = parseInt(process.env.AUTO_FORGET_INTERVAL_MS || "3600000", 10);
   const consolidationIntervalMs = parseInt(process.env.CONSOLIDATION_INTERVAL_MS || "7200000", 10);
+  const lastMaintenancePauseLog = new Map<string, string>();
+
+  const runMaintenanceTask = async (
+    label: string,
+    fn: () => Promise<number>,
+  ): Promise<number> => {
+    const health = await getLatestHealth(kv).catch(() => null);
+    if (shouldPauseMaintenance(health)) {
+      const reason = getMaintenancePauseReason(health) || "unhealthy";
+      if (lastMaintenancePauseLog.get(label) !== reason) {
+        console.warn(
+          `[agentmemory] ${label} paused while health is unhealthy: ${reason}`,
+        );
+        lastMaintenancePauseLog.set(label, reason);
+      }
+      return 0;
+    }
+
+    lastMaintenancePauseLog.delete(label);
+    return fn();
+  };
 
   let autoForgetHandle: AdaptiveTimerHandle | undefined;
   let consolidationHandle: AdaptiveTimerHandle | undefined;
   if (process.env.AUTO_FORGET_ENABLED !== "false") {
     autoForgetHandle = createAdaptiveTimer(
-      async () => {
+      async () =>
+        runMaintenanceTask("Auto-forget", async () => {
         const result = await sdk.trigger<
           { dryRun: boolean },
           { ttlExpired: string[]; contradictions: unknown[]; lowValueObs: string[] }
         >("mem::auto-forget", { dryRun: false });
         return (result?.ttlExpired?.length || 0) + (result?.contradictions?.length || 0) + (result?.lowValueObs?.length || 0);
-      },
+        }),
       { baseMs: autoForgetIntervalMs, minMs: 900_000, maxMs: 14_400_000, label: "Auto-forget" },
     );
     console.log(`[agentmemory] Auto-forget: enabled (every ${autoForgetIntervalMs / 60000}m, adaptive)`);
@@ -389,7 +416,8 @@ async function main() {
 
   if (isConsolidationEnabled()) {
     consolidationHandle = createAdaptiveTimer(
-      async () => {
+      async () =>
+        runMaintenanceTask("Consolidation", async () => {
         const pipelineResult = await sdk.trigger<
           Record<string, never>,
           { results?: { semantic?: { newFacts?: number }; procedural?: { newProcedures?: number } } }
@@ -412,7 +440,7 @@ async function main() {
         const consolidateWork = consolidateResult?.consolidated || 0;
         const relateWork = relateResult?.created || 0;
         return pipelineWork + consolidateWork + relateWork;
-      },
+        }),
       { baseMs: consolidationIntervalMs, minMs: 600_000, maxMs: 14_400_000, label: "Consolidation" },
     );
     console.log(`[agentmemory] Auto-consolidation: enabled (every ${consolidationIntervalMs / 60000}m, adaptive)`);
