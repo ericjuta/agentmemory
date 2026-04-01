@@ -722,7 +722,7 @@ agentmemory auto-detects from your environment. No API key needed if you have a 
 
 ### Environment Variables
 
-Create `~/.agentmemory/.env`:
+Create `.env.local` in the repo root:
 
 ```env
 # LLM provider (pick one, or leave empty for Claude subscription)

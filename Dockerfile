@@ -6,6 +6,7 @@ WORKDIR /app
 COPY package.json package-lock.json tsconfig.json tsdown.config.ts iii-config.yaml iii-config.docker.yaml docker-compose.yml ./
 COPY src ./src
 COPY assets ./assets
+COPY healthcheck.mjs ./healthcheck.mjs
 
 RUN npm ci --legacy-peer-deps
 RUN npm run build
