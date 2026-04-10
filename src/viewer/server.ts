@@ -91,6 +91,11 @@ export function startViewerServer(
       return;
     }
 
+    if (method === "GET" && pathname === "/agentmemory/livez") {
+      json(res, 200, { status: "ok", service: "agentmemory" }, req);
+      return;
+    }
+
     if (
       method === "GET" &&
       (pathname === "/" ||
