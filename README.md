@@ -44,7 +44,8 @@
   <a href="#mcp-server">MCP</a> &bull;
   <a href="#real-time-viewer">Viewer</a> &bull;
   <a href="#configuration">Config</a> &bull;
-  <a href="#api">API</a>
+  <a href="#api">API</a> &bull;
+  <a href="#operations">Operations</a>
 </p>
 
 ---
@@ -839,7 +840,169 @@ Built on [iii-engine](https://iii.dev)'s three primitives — no Express, no Pos
 
 </details>
 
+<<<<<<< HEAD
 <h2 id="development"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/tags/light/section-development.svg"><img src="assets/tags/section-development.svg" alt="Development" height="32" /></picture></h2>
+||||||| parent of 1061623 (docs(README): add Operations section with operational guidance)
+### Functions (123 mem:: functions)
+
+| Category | Functions | Purpose |
+|----------|-----------|---------|
+| **Core Memory** | `observe`, `compress`, `search`, `smart-search` | Capture, compress, and search observations |
+| | `context`, `summarize`, `remember`, `forget` | Build context, generate summaries, save/delete memories |
+| | `file-context`, `enrich`, `patterns`, `generate-rules` | File history, enrichment, pattern detection, rule generation |
+| | `migrate`, `export`, `import` | SQLite migration, JSON round-trip (v0.3.0–v0.7.2) |
+| **Search** | `expand-query`, `sliding-window`, `graph-retrieval` | Query reformulations, context enrichment, entity-based retrieval |
+| | `retention-score`, `retention-evict` | Ebbinghaus decay with tiered storage (hot/warm/cold) |
+| **Memory Evolution** | `evolve`, `auto-forget`, `evict` | Version memories, TTL expiry, importance-based eviction |
+| | `consolidate`, `consolidate-pipeline` | Merge duplicates, 4-tier consolidation (working→episodic→semantic→procedural) |
+| | `verify`, `cascade-update` | Citation chain provenance, staleness propagation |
+| **Knowledge Graph** | `graph-extract`, `graph-query`, `graph-stats` | LLM entity extraction, BFS traversal, statistics |
+| | `temporal-graph-extract`, `temporal-query` | Temporal knowledge extraction + point-in-time queries |
+| **Relationships** | `relate`, `get-related`, `timeline`, `profile` | Memory relations, chronological view, project profiles |
+| **Claude Bridge** | `claude-bridge-read`, `claude-bridge-sync` | Bi-directional sync with MEMORY.md |
+| **Actions** | `action-create`, `action-update`, `action-get`, `action-list` | Dependency-aware work items with typed edges |
+| | `action-edge-create` | Create typed edges between actions (requires, unlocks, gated_by) |
+| | `frontier`, `next` | Priority-ranked unblocked action queue |
+| **Leases** | `lease-acquire`, `lease-release`, `lease-renew`, `lease-cleanup` | TTL-based atomic agent claims with auto-cleanup |
+| **Routines** | `routine-create`, `routine-freeze`, `routine-list`, `routine-run`, `routine-status` | Frozen workflow templates instantiated into action chains |
+| **Signals** | `signal-send`, `signal-read`, `signal-threads`, `signal-cleanup` | Threaded inter-agent messaging with read receipts |
+| **Checkpoints** | `checkpoint-create`, `checkpoint-resolve`, `checkpoint-list`, `checkpoint-expire` | External condition gates (CI, approval, deploy) |
+| **Mesh** | `mesh-register`, `mesh-sync`, `mesh-receive`, `mesh-list`, `mesh-remove` | P2P sync between agentmemory instances |
+| **Sentinels** | `sentinel-create`, `sentinel-trigger`, `sentinel-check`, `sentinel-cancel`, `sentinel-list`, `sentinel-expire` | Event-driven condition watchers |
+| **Sketches** | `sketch-create`, `sketch-add`, `sketch-promote`, `sketch-discard`, `sketch-list`, `sketch-gc` | Ephemeral action graphs with auto-expiry |
+| **Crystals** | `crystallize`, `auto-crystallize`, `crystal-list`, `crystal-get` | LLM-powered compaction of action chains into digests |
+| **Lessons** | `lesson-save`, `lesson-recall`, `lesson-list`, `lesson-strengthen`, `lesson-decay-sweep` | Confidence-scored lessons with dedup, reinforcement, and decay |
+| **Facets** | `facet-tag`, `facet-untag`, `facet-query`, `facet-get`, `facet-stats`, `facet-dimensions` | Multi-dimensional tagging with AND/OR queries |
+| **Diagnostics** | `diagnose`, `heal` | Self-diagnosis across 8 categories with auto-fix |
+| **Flow** | `flow-compress` | LLM summarization of completed action chains |
+| **Branch** | `detect-worktree`, `list-worktrees`, `branch-sessions` | Git worktree detection for shared memory |
+| **Team** | `team-share`, `team-feed`, `team-profile` | Namespaced shared + private team memory |
+| **Governance** | `governance-delete`, `governance-bulk`, `audit-query` | Delete with audit trail, bulk operations |
+| **Snapshots** | `snapshot-create`, `snapshot-list`, `snapshot-restore` | Git-versioned memory state |
+| **Export** | `obsidian-export` | Obsidian-compatible Markdown with YAML frontmatter + wikilinks |
+
+### Data Model (34 KV scopes)
+
+| Scope | Stores |
+|-------|--------|
+| `mem:sessions` | Session metadata, project, timestamps |
+| `mem:obs:{session_id}` | Compressed observations with embeddings |
+| `mem:summaries` | End-of-session summaries |
+| `mem:memories` | Long-term memories (versioned, with relationships) |
+| `mem:relations` | Memory relationship graph |
+| `mem:profiles` | Aggregated project profiles |
+| `mem:emb:{obs_id}` | Vector embeddings |
+| `mem:index:bm25` | Persisted BM25 index |
+| `mem:metrics` | Per-function metrics |
+| `mem:health` | Health snapshots |
+| `mem:config` | Runtime configuration overrides |
+| `mem:confidence` | Confidence scores for memories |
+| `mem:claude-bridge` | Claude Code MEMORY.md bridge state |
+| `mem:graph:nodes` | Knowledge graph entities |
+| `mem:graph:edges` | Knowledge graph relationships |
+| `mem:semantic` | Semantic memories (consolidated facts) |
+| `mem:procedural` | Procedural memories (extracted workflows) |
+| `mem:team:{id}:shared` | Team shared items |
+| `mem:team:{id}:users:{uid}` | Per-user team state |
+| `mem:team:{id}:profile` | Aggregated team profile |
+| `mem:audit` | Audit trail for all operations |
+| `mem:actions` | Dependency-aware work items |
+| `mem:action-edges` | Typed edges (requires, unlocks, gated_by, etc.) |
+| `mem:leases` | TTL-based agent work claims |
+| `mem:routines` | Frozen workflow templates |
+| `mem:routine-runs` | Instantiated routine execution tracking |
+| `mem:signals` | Inter-agent messages with threading |
+| `mem:checkpoints` | External condition gates |
+| `mem:mesh` | Registered P2P sync peers |
+| `mem:sentinels` | Event-driven condition watchers |
+| `mem:sketches` | Ephemeral action graphs |
+| `mem:crystals` | Compacted action chain digests |
+| `mem:facets` | Multi-dimensional tags |
+| `mem:lessons` | Confidence-scored lessons with decay |
+
+## Operations
+
+### Health checks
+
+The worker exposes two health endpoints:
+
+| Endpoint | What it checks | Auth |
+|----------|---------------|------|
+| `GET /agentmemory/livez` | Process liveness (served directly from the viewer HTTP server, no engine dependency) | Public |
+| `GET /agentmemory/health` | Full runtime health — heap, CPU, event loop lag, connection state, function metrics | Requires `AGENTMEMORY_SECRET` when set |
+
+Docker healthcheck uses `/agentmemory/livez` on port 3113. This endpoint never touches the iii-engine, so the container stays healthy even when the engine is temporarily unresponsive.
+
+### Common failure: StateKV timeouts after long engine uptime
+
+The iii-engine's internal websocket channels can go stale after 12–24+ hours of continuous operation. When this happens:
+
+**Symptoms:**
+- `docker ps` shows the worker as `unhealthy`
+- Worker logs show `StateKV state::set timed out after 5000ms` or `StateKV temporarily unavailable`
+- `/agentmemory/health` returns 503 or times out
+- `/agentmemory/livez` should still return 200 (it bypasses the engine)
+
+**Fix:**
+```bash
+docker compose restart
+```
+
+This restarts both the engine and worker, clearing stale channels. Data is preserved in the `iii-data` volume.
+
+**Mitigation already in place:**
+- Maintenance loops (consolidation, auto-forget, eviction, index verify) pause automatically when health is degraded via the maintenance gate
+- KV calls use short timeouts with cooldown periods instead of blocking on long SDK waits
+- Consolidation scans are bounded per run to avoid saturating the engine
+- Healthcheck tolerances: 10s timeout, 5 retries, 30s start period
+
+### Restarting and rebuilding
+
+```bash
+# Restart without rebuilding (clears stale engine state)
+docker compose restart
+
+# Rebuild after code changes
+docker compose up -d --build
+
+# Rebuild only the worker (faster, keeps engine running)
+docker compose up -d --build agentmemory-worker
+
+# View worker logs
+docker compose logs -f agentmemory-worker
+
+# Check container health
+docker compose ps
+```
+
+### Launch Agent (macOS)
+
+agentmemory is registered as a Launch Agent (`com.agentmemory`) that starts on login. The startup script is at `~/Projects/agentmemory/start.sh`. Logs go to `/tmp/agentmemory.log`.
+
+```bash
+# Check if running
+launchctl list | grep agentmemory
+
+# Restart via launchctl
+launchctl kickstart -k gui/$(id -u)/com.agentmemory
+
+# Or restart docker directly
+cd ~/Projects/agentmemory && docker compose restart
+```
+
+### Key tuning variables
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `CONSOLIDATION_ENABLED` | `true` | Enable/disable the 4-tier consolidation pipeline |
+| `AUTO_FORGET_ENABLED` | `true` | Enable/disable automatic memory eviction |
+| `LESSON_DECAY_ENABLED` | `true` | Enable/disable lesson confidence decay |
+| `TOKEN_BUDGET` | `8000` | Max tokens injected at session start |
+| `MAX_OBS_PER_SESSION` | `500` | Cap on observations per session |
+
+When diagnosing stability issues, disable `AUTO_FORGET_ENABLED` and `CONSOLIDATION_ENABLED` first to isolate whether maintenance loops are contributing to engine saturation.
+
+## Development
 
 ```bash
 npm run dev               # Hot reload
