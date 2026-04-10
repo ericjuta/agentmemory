@@ -1,4 +1,5 @@
-const HEALTH_URL = "http://127.0.0.1:3113/agentmemory/health";
+// Docker health should reflect service liveness; detailed runtime health stays on /agentmemory/health.
+const HEALTH_URL = "http://127.0.0.1:3113/agentmemory/livez";
 
 try {
   const response = await fetch(HEALTH_URL, {
