@@ -62,4 +62,5 @@ reasons:
 - [`README.md`](../README.md)
 - [`NOTICE`](../NOTICE)
 - [`docs/codex_followups_spec.md`](./codex_followups_spec.md)
+- [`docs/openclaw_full_replace_spec.md`](./openclaw_full_replace_spec.md)
 - [`docs/retrieval_freshness_spec.md`](./retrieval_freshness_spec.md)
