@@ -29,9 +29,12 @@ describe("StateKV", () => {
 
     await assertion;
     expect(sdk.trigger).toHaveBeenCalledTimes(1);
-    expect(sdk.trigger).toHaveBeenCalledWith("state::get", {
-      scope: "mem:test",
-      key: "key",
+    expect(sdk.trigger).toHaveBeenCalledWith({
+      function_id: "state::get",
+      payload: {
+        scope: "mem:test",
+        key: "key",
+      },
     });
   });
 

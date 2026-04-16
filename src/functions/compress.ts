@@ -204,9 +204,12 @@ export function registerCompressFunction(
             }
 
             if (graphEnabled) {
-              sdk.triggerVoid("mem::graph-extract", {
-                observations: [compressed],
-              });
+              void sdk.trigger({
+                function_id: "mem::graph-extract",
+                payload: {
+                  observations: [compressed],
+                },
+              }).catch(() => {});
             }
 
             logger.info("Observation compressed", {
@@ -276,11 +279,14 @@ export function registerCompressFunction(
         }
 
         // Re-trigger compression (will go through semaphore)
-        sdk.triggerVoid("mem::compress", {
-          observationId: entry.obsId,
-          sessionId: entry.sessionId,
-          raw,
-        });
+        void sdk.trigger({
+          function_id: "mem::compress",
+          payload: {
+            observationId: entry.obsId,
+            sessionId: entry.sessionId,
+            raw,
+          },
+        }).catch(() => {});
 
         // Update retry count
         await kv

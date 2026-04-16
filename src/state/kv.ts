@@ -126,7 +126,10 @@ export class StateKV {
     try {
       const result = await this.withTimeout(
         operation,
-        this.sdk.trigger<TInput, TOutput>(operation, data),
+        this.sdk.trigger<TInput, TOutput>({
+          function_id: operation,
+          payload: data,
+        }),
       )
       this.resetFailures()
       return result

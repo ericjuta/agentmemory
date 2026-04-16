@@ -387,7 +387,7 @@ async function main() {
         const result = await sdk.trigger<
           { dryRun: boolean },
           { ttlExpired: string[]; contradictions: unknown[]; lowValueObs: string[] }
-        >("mem::auto-forget", { dryRun: false });
+        >({ function_id: "mem::auto-forget", payload: { dryRun: false } });
         return (result?.ttlExpired?.length || 0) + (result?.contradictions?.length || 0) + (result?.lowValueObs?.length || 0);
         }),
       { baseMs: autoForgetIntervalMs, minMs: 900_000, maxMs: 14_400_000, label: "Auto-forget" },
@@ -421,19 +421,19 @@ async function main() {
         const pipelineResult = await sdk.trigger<
           Record<string, never>,
           { results?: { semantic?: { newFacts?: number }; procedural?: { newProcedures?: number } } }
-        >("mem::consolidate-pipeline", {});
+        >({ function_id: "mem::consolidate-pipeline", payload: {} });
 
         // Also run concept-grouped consolidation
         const consolidateResult = await sdk.trigger<
           { project?: string; minObservations?: number },
           { consolidated?: number; totalObservations?: number }
-        >("mem::consolidate", {});
+        >({ function_id: "mem::consolidate", payload: {} });
 
         // Discover relations between memories
         const relateResult = await sdk.trigger<
           Record<string, never>,
           { created?: number }
-        >("mem::auto-relate", {}).catch(() => ({ created: 0 }));
+        >({ function_id: "mem::auto-relate", payload: {} }).catch(() => ({ created: 0 }));
 
         const r = pipelineResult?.results || {};
         const pipelineWork = ((r.semantic as any)?.newFacts || 0) + ((r.procedural as any)?.newProcedures || 0);
@@ -451,7 +451,7 @@ async function main() {
       const result = await sdk.trigger<
         Record<string, never>,
         { retried?: number; removed?: number }
-      >("mem::compress-retry", {});
+      >({ function_id: "mem::compress-retry", payload: {} });
       return (result?.retried || 0) + (result?.removed || 0);
     },
     { baseMs: 300_000, minMs: 60_000, maxMs: 900_000, label: "Compress retry" },
@@ -461,19 +461,19 @@ async function main() {
     async () => {
       // Run retention scoring first
       try {
-        await sdk.trigger("mem::retention-score", {});
+        await sdk.trigger({ function_id: "mem::retention-score", payload: {} });
       } catch {}
 
       // Then evict based on retention + age/importance
       const retentionResult = await sdk.trigger<
         { dryRun?: boolean },
         { evicted?: number }
-      >("mem::retention-evict", { dryRun: false }).catch(() => ({ evicted: 0 }));
+      >({ function_id: "mem::retention-evict", payload: { dryRun: false } }).catch(() => ({ evicted: 0 }));
 
       const evictResult = await sdk.trigger<
         { dryRun?: boolean },
         { staleSessions?: number; lowImportanceObs?: number; capEvictions?: number; expiredMemories?: number; nonLatestMemories?: number }
-      >("mem::evict", { dryRun: false }).catch(() => ({}));
+      >({ function_id: "mem::evict", payload: { dryRun: false } }).catch(() => ({}));
 
       const work = (retentionResult?.evicted || 0) +
         ((evictResult as any)?.staleSessions || 0) +

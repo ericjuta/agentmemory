@@ -267,10 +267,13 @@ export function registerApiTriggers(
           body: { context: "", blocks: 0, tokens: 0, skipped: true },
         };
       }
-      const result = await sdk.trigger("mem::context", {
-        sessionId: req.body.sessionId,
-        project: req.body.project,
-        query: req.body.query,
+      const result = await sdk.trigger({
+        function_id: "mem::context",
+        payload: {
+          sessionId: req.body.sessionId,
+          project: req.body.project,
+          query: req.body.query,
+        },
       });
       return { status_code: 200, body: result };
     },
@@ -319,7 +322,10 @@ export function registerApiTriggers(
     async (req: ApiRequest): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
-      const result = await sdk.trigger("mem::auto-relate", {});
+      const result = await sdk.trigger({
+        function_id: "mem::auto-relate",
+        payload: {},
+      });
       return { status_code: 200, body: result };
     },
   );
@@ -1114,7 +1120,7 @@ export function registerApiTriggers(
           const result = await sdk.trigger<
             { observations: CompressedObservation[] },
             { success: boolean; nodesAdded?: number; edgesAdded?: number; error?: string }
-          >("mem::graph-extract", { observations: batch });
+          >({ function_id: "mem::graph-extract", payload: { observations: batch } });
           if (!result.success) {
             return {
               status_code: 500,
