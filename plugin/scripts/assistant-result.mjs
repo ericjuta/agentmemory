@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-//#region src/hooks/task-completed.ts
+//#region src/hooks/assistant-result.ts
 const REST_URL = process.env["AGENTMEMORY_URL"] || "http://127.0.0.1:3111";
 const SECRET = process.env["AGENTMEMORY_SECRET"] || "";
 function authHeaders() {
@@ -22,20 +22,18 @@ async function main() {
 			method: "POST",
 			headers: authHeaders(),
 			body: JSON.stringify({
-				hookType: "task_completed",
+				hookType: "assistant_result",
 				sessionId,
 				project: data.cwd || process.cwd(),
 				cwd: data.cwd || process.cwd(),
 				timestamp: (/* @__PURE__ */ new Date()).toISOString(),
 				data: {
-					task_id: data.task_id,
-					task_subject: data.task_subject,
-					task_description: typeof data.task_description === "string" ? data.task_description.slice(0, 2e3) : "",
-					teammate_name: data.teammate_name,
-					team_name: data.team_name
+					turn_id: data.turn_id ?? data.turnId,
+					assistant_text: typeof data.assistant_text === "string" ? data.assistant_text.slice(0, 4e3) : typeof data.assistant_message === "string" ? data.assistant_message.slice(0, 4e3) : typeof data.message === "string" ? data.message.slice(0, 4e3) : "",
+					is_final: data.is_final ?? true
 				}
 			}),
-			signal: AbortSignal.timeout(2e3)
+			signal: AbortSignal.timeout(3e3)
 		});
 	} catch {}
 }
@@ -43,4 +41,4 @@ main();
 
 //#endregion
 export {  };
-//# sourceMappingURL=task-completed.mjs.map
+//# sourceMappingURL=assistant-result.mjs.map

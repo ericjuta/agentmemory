@@ -1,6 +1,20 @@
+# Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 services:
+  iii-data-perms:
+    image: alpine:3.21
+    command:
+      - sh
+      - -lc
+      - chown -R 65532:65532 /data && chmod 775 /data
+    volumes:
+      - iii-data:/data
+    restart: "no"
+
   iii-engine:
-    image: iiidev/iii:latest
+    image: docker.io/iiidev/iii:latest
+    depends_on:
+      iii-data-perms:
+        condition: service_completed_successfully
     ports:
       - "127.0.0.1:49134:49134"
       - "127.0.0.1:3111:3111"
@@ -9,6 +23,31 @@ services:
     volumes:
       - iii-data:/data
       - ./iii-config.docker.yaml:/app/config.yaml:ro
+    restart: unless-stopped
+
+  agentmemory-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      iii-engine:
+        condition: service_started
+    env_file:
+      - ./.env.local
+    environment:
+      AGENTMEMORY_URL: http://iii-engine:3111
+      VIEWER_UPSTREAM_URL: http://iii-engine:3111
+      III_ENGINE_URL: ws://iii-engine:49134
+      III_REST_PORT: "3111"
+      III_STREAMS_PORT: "3112"
+    ports:
+      - "127.0.0.1:3113:3113"
+    healthcheck:
+      test: ["CMD", "node", "/app/healthcheck.mjs"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
 
 volumes:

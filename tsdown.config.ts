@@ -1,8 +1,10 @@
+// Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 import { defineConfig } from "tsdown";
 
 const hookEntries = [
   "src/hooks/session-start.ts",
   "src/hooks/prompt-submit.ts",
+  "src/hooks/assistant-result.ts",
   "src/hooks/pre-tool-use.ts",
   "src/hooks/post-tool-use.ts",
   "src/hooks/post-tool-failure.ts",
@@ -51,6 +53,7 @@ export default defineConfig([
     ...shared,
     clean: false,
     sourcemap: false,
+    banner: { js: "#!/usr/bin/env node" },
   },
   {
     entry: hookEntries,
@@ -58,5 +61,6 @@ export default defineConfig([
     ...shared,
     clean: false,
     sourcemap: false,
+    banner: { js: "#!/usr/bin/env node" },
   },
 ]);

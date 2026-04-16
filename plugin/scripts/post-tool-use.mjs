@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 //#region src/hooks/post-tool-use.ts
-const REST_URL = process.env["AGENTMEMORY_URL"] || "http://localhost:3111";
+const REST_URL = process.env["AGENTMEMORY_URL"] || "http://127.0.0.1:3111";
 const SECRET = process.env["AGENTMEMORY_SECRET"] || "";
 function authHeaders() {
 	const h = { "Content-Type": "application/json" };
@@ -28,6 +28,7 @@ async function main() {
 				cwd: data.cwd || process.cwd(),
 				timestamp: (/* @__PURE__ */ new Date()).toISOString(),
 				data: {
+					turn_id: data.turn_id ?? data.turnId,
 					tool_name: data.tool_name,
 					tool_input: data.tool_input,
 					tool_output: truncate(data.tool_output, 8e3)

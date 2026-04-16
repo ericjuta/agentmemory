@@ -1,10 +1,11 @@
+<!-- Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE. -->
+
 ---
 name: forget
 description: Delete specific observations or sessions from agentmemory. Use when user says "forget this", "delete memory", or wants to remove specific data for privacy.
 argument-hint: "[what to forget - session ID, file path, or search term]"
 user-invocable: true
 ---
-
 The user wants to remove data from agentmemory: $ARGUMENTS
 
 **IMPORTANT**: This is a destructive operation. Always confirm with the user before deleting.

@@ -1,10 +1,11 @@
+<!-- Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE. -->
+
 ---
 name: recall
 description: Search agentmemory for past observations, sessions, and learnings about a topic. Use when the user says "recall", "remember", "what did we do", or needs context from past sessions.
 argument-hint: "[search query]"
 user-invocable: true
 ---
-
 The user wants to recall past context about: $ARGUMENTS
 
 Use the `memory_smart_search` MCP tool (provided by the agentmemory server that this plugin wires up automatically via `.mcp.json`) with the user's query as the `query` argument and `limit: 10`. The tool runs hybrid BM25 + vector + graph-expanded search over captured observations and returns ranked results.

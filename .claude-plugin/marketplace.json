@@ -1,14 +1,19 @@
 {
-  "name": "agentmemory",
+  "name": "agentmemory-local",
   "owner": {
     "name": "Rohit Ghumare",
     "github": "rohitg00"
   },
+  "metadata": {
+    "description": "Local marketplace for the agentmemory Claude Code plugin.",
+    "version": "1.0.0"
+  },
   "plugins": [
     {
       "name": "agentmemory",
-      "description": "Persistent memory for AI coding agents -- captures tool usage, compresses via LLM, injects context into future sessions",
-      "source": "./plugin"
+      "description": "Persistent memory for AI coding agents with hooks, skills, and MCP-backed retrieval.",
+      "source": "./plugin",
+      "category": "development"
     }
   ]
 }

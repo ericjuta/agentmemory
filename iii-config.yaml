@@ -1,8 +1,11 @@
+# Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 workers:
+  
+
   - name: iii-http
     config:
       port: 3111
-      host: 127.0.0.1
+      host: 0.0.0.0
       default_timeout: 180000
       cors:
         allowed_origins: ["http://localhost:3111", "http://localhost:3113", "http://127.0.0.1:3111", "http://127.0.0.1:3113"]
@@ -13,7 +16,7 @@ workers:
         name: kv
         config:
           store_method: file_based
-          file_path: ./data/state_store.db
+          file_path: /data/state_store.db
   - name: iii-queue
     config:
       adapter:
@@ -29,7 +32,7 @@ workers:
   - name: iii-stream
     config:
       port: 3112
-      host: 127.0.0.1
+      host: 0.0.0.0
       adapter:
         name: kv
         config:

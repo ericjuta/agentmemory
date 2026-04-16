@@ -1,9 +1,10 @@
+<!-- Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE. -->
+
 ---
 name: session-history
 description: Show what happened in recent past sessions on this project. Use when user asks "what did we do last time", "session history", "past sessions", or wants an overview of previous work.
 user-invocable: true
 ---
-
 Fetch recent session history using the `memory_sessions` MCP tool (provided by the agentmemory server that this plugin wires up automatically via `.mcp.json`). Pass `limit: 20` to get a meaningful window.
 
 Present the returned sessions in reverse chronological order:
