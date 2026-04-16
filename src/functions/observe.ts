@@ -1,4 +1,5 @@
-import { TriggerAction, type ISdk } from "iii-sdk";
+// Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
+import type { ISdk } from "iii-sdk";
 import type { RawObservation, HookPayload } from "../types.js";
 import { KV, STREAM, generateId } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
@@ -9,12 +10,26 @@ import { isAutoCompressEnabled } from "../config.js";
 import { buildSyntheticCompression } from "./compress-synthetic.js";
 import { getSearchIndex } from "./search.js";
 import { logger } from "../logger.js";
+import { upsertTurnCapsuleFromRaw } from "./turn-capsules.js";
+import type { CompressionTracker } from "../state/compression-tracker.js";
+
+function bestEffortTrigger(
+  sdk: ISdk,
+  functionId: string,
+  payload: unknown,
+): void {
+  void sdk.trigger({
+    function_id: functionId,
+    payload,
+  }).catch(() => {});
+}
 
 export function registerObserveFunction(
   sdk: ISdk,
   kv: StateKV,
   dedupMap?: DedupMap,
   maxObservationsPerSession?: number,
+  tracker?: CompressionTracker,
 ): void {
   sdk.registerFunction("mem::observe", 
     async (payload: HookPayload) => {
@@ -72,6 +87,7 @@ export function registerObserveFunction(
 
       if (typeof sanitizedRaw === "object" && sanitizedRaw !== null) {
         const d = sanitizedRaw as Record<string, unknown>;
+        raw.turnId = d["turn_id"] as string | undefined;
         if (
           payload.hookType === "post_tool_use" ||
           payload.hookType === "post_tool_failure"
@@ -82,6 +98,13 @@ export function registerObserveFunction(
         }
         if (payload.hookType === "prompt_submit") {
           raw.userPrompt = d["prompt"] as string | undefined;
+        }
+        if (payload.hookType === "assistant_result") {
+          raw.assistantResponse = d["assistant_text"] as string | undefined;
+        }
+        if (payload.hookType === "stop") {
+          raw.assistantResponse =
+            d["last_assistant_message"] as string | undefined;
         }
       }
 
@@ -98,30 +121,31 @@ export function registerObserveFunction(
 
         await kv.set(KV.observations(payload.sessionId), obsId, raw);
 
+        await upsertTurnCapsuleFromRaw(
+          kv,
+          payload.sessionId,
+          payload.project,
+          payload.cwd,
+          raw,
+        );
+
         if (dedupMap && dedupHash) {
           dedupMap.record(dedupHash);
         }
 
-        await sdk.trigger({
-          function_id: "stream::set",
-          payload: {
+        bestEffortTrigger(sdk, "stream::set", {
           stream_name: STREAM.name,
           group_id: STREAM.group(payload.sessionId),
           item_id: obsId,
           data: { type: "raw", observation: raw },
-          },
         });
 
-        await sdk.trigger({
-          function_id: "stream::send",
-          payload: {
+        bestEffortTrigger(sdk, "stream::send", {
             stream_name: STREAM.name,
             group_id: STREAM.viewerGroup,
             id: `raw-${obsId}`,
             type: "raw_observation",
             data: { type: "raw", observation: raw, sessionId: payload.sessionId },
-          },
-          action: TriggerAction.Void(),
         });
 
         const session = await kv.get<{ observationCount?: number }>(
@@ -129,14 +153,23 @@ export function registerObserveFunction(
           payload.sessionId,
         );
         if (session) {
-          await kv.update(KV.sessions, payload.sessionId, [
-            { type: "set", path: "updatedAt", value: new Date().toISOString() },
-            {
-              type: "set",
-              path: "observationCount",
-              value: (session.observationCount || 0) + 1,
-            },
-          ]);
+          const nextUpdatedAt = new Date().toISOString();
+          if (typeof kv.update === "function") {
+            await kv.update(KV.sessions, payload.sessionId, [
+              { type: "set", path: "updatedAt", value: nextUpdatedAt },
+              {
+                type: "set",
+                path: "observationCount",
+                value: (session.observationCount || 0) + 1,
+              },
+            ]);
+          } else {
+            await kv.set(KV.sessions, payload.sessionId, {
+              ...session,
+              updatedAt: nextUpdatedAt,
+              observationCount: (session.observationCount || 0) + 1,
+            });
+          }
         }
 
         // Per-observation LLM compression is opt-in as of 0.8.8 (#138).
@@ -144,43 +177,45 @@ export function registerObserveFunction(
         // and BM25 search still work without burning the user's Claude
         // token allocation on every tool invocation.
         if (isAutoCompressEnabled()) {
-          await sdk.trigger({
+          tracker?.increment(payload.sessionId);
+          void sdk.trigger({
             function_id: "mem::compress",
             payload: {
               observationId: obsId,
               sessionId: payload.sessionId,
               raw,
             },
-            action: TriggerAction.Void(),
+          }).catch(() => {
+            tracker?.decrement(payload.sessionId);
           });
         } else {
           const synthetic = buildSyntheticCompression(raw);
+          const storedSynthetic = {
+            ...synthetic,
+            turnId: raw.turnId,
+            userPrompt: raw.userPrompt,
+            assistantResponse: raw.assistantResponse,
+          };
           await kv.set(
             KV.observations(payload.sessionId),
             obsId,
-            synthetic,
+            storedSynthetic,
           );
           getSearchIndex().add(synthetic);
-          await sdk.trigger({
-            function_id: "stream::set",
-            payload: {
-              stream_name: STREAM.name,
-              group_id: STREAM.group(payload.sessionId),
-              item_id: obsId,
-              data: { type: "compressed", observation: synthetic },
-            },
+          bestEffortTrigger(sdk, "stream::set", {
+            stream_name: STREAM.name,
+            group_id: STREAM.group(payload.sessionId),
+            item_id: obsId,
+            data: { type: "compressed", observation: synthetic },
           });
-          await sdk.trigger({
-            function_id: "stream::set",
-            payload: {
-              stream_name: STREAM.name,
-              group_id: STREAM.viewerGroup,
-              item_id: obsId,
-              data: {
-                type: "compressed",
-                observation: synthetic,
-                sessionId: payload.sessionId,
-              },
+          bestEffortTrigger(sdk, "stream::set", {
+            stream_name: STREAM.name,
+            group_id: STREAM.viewerGroup,
+            item_id: obsId,
+            data: {
+              type: "compressed",
+              observation: synthetic,
+              sessionId: payload.sessionId,
             },
           });
         }

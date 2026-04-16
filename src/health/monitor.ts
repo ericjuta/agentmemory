@@ -1,16 +1,46 @@
+// Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 import type { ISdk } from "iii-sdk";
 import type { HealthSnapshot } from "../types.js";
 import type { StateKV } from "../state/kv.js";
 import { KV } from "../state/schema.js";
 import { evaluateHealth } from "./thresholds.js";
+import { CircuitBreaker } from "../providers/circuit-breaker.js";
+
+let latestHealthSnapshot: HealthSnapshot | null = null;
+
+const BASE_INTERVAL_MS = 30_000;
+const MAX_INTERVAL_MS = 300_000; // 5 min cap when backing off
+
+export interface PipelineMetrics {
+  compressActive: number;
+  compressPending: number;
+  totalInflight: number;
+}
 
 export function registerHealthMonitor(
   sdk: ISdk,
   kv: StateKV,
+  getPipelineMetrics?: () => PipelineMetrics,
 ): { stop: () => void } {
   let connectionState = "connected";
   let prevCpuUsage = process.cpuUsage();
   let prevCpuTime = Date.now();
+  let kvFailureStreak = 0;
+  let kvLastSuccessAt: string | undefined;
+  let kvLastFailureAt: string | undefined;
+  let snapshotPersistFailureStreak = 0;
+  let snapshotPersistLastSuccessAt: string | undefined;
+  let snapshotPersistLastFailureAt: string | undefined;
+  let snapshotPersistError: string | undefined;
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout>;
+  let interval = BASE_INTERVAL_MS;
+
+  const persistCircuit = new CircuitBreaker({
+    failureThreshold: 3,
+    failureWindowMs: 120_000,
+    recoveryTimeoutMs: 60_000,
+  });
 
   if (typeof sdk.on === "function") {
     sdk.on("connection_state", (state?: unknown) => {
@@ -22,6 +52,7 @@ export function registerHealthMonitor(
     const mem = process.memoryUsage();
     const currentCpu = process.cpuUsage();
     const now = Date.now();
+    const nowIso = new Date(now).toISOString();
     const uptime = process.uptime();
 
     const elapsedMs = now - prevCpuTime;
@@ -45,22 +76,51 @@ export function registerHealthMonitor(
       if (result?.workers) workers = result.workers;
     } catch {}
 
-    const KV_PROBE_TIMEOUT = 5000;
-    let kvConnectivity: { status: string; latencyMs?: number; error?: string };
-    const kvStart = performance.now();
-    try {
-      await Promise.race([
-        (async () => {
-          await kv.set(KV.health, "_probe", { ts: Date.now() });
-          await kv.get(KV.health, "_probe");
-        })(),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("timeout")), KV_PROBE_TIMEOUT),
-        ),
-      ]);
-      kvConnectivity = { status: "ok", latencyMs: Math.round((performance.now() - kvStart) * 100) / 100 };
-    } catch {
-      kvConnectivity = { status: "error", error: "kv_probe_failed", latencyMs: Math.round((performance.now() - kvStart) * 100) / 100 };
+    // Skip KV probe when persist circuit is open — engine is already struggling
+    let kvConnectivity: HealthSnapshot["kvConnectivity"];
+    if (!persistCircuit.isAllowed) {
+      kvConnectivity = {
+        status: "error",
+        error: "skipped_circuit_open",
+        latencyMs: 0,
+        consecutiveFailures: kvFailureStreak,
+        lastSuccessAt: kvLastSuccessAt,
+        lastFailureAt: kvLastFailureAt,
+      };
+    } else {
+      const KV_PROBE_TIMEOUT = 5000;
+      const kvStart = performance.now();
+      try {
+        await Promise.race([
+          (async () => {
+            await kv.set(KV.health, "_probe", { ts: Date.now() });
+            await kv.get(KV.health, "_probe");
+          })(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("timeout")), KV_PROBE_TIMEOUT),
+          ),
+        ]);
+        kvFailureStreak = 0;
+        kvLastSuccessAt = nowIso;
+        kvConnectivity = {
+          status: "ok",
+          latencyMs: Math.round((performance.now() - kvStart) * 100) / 100,
+          consecutiveFailures: kvFailureStreak,
+          lastSuccessAt: kvLastSuccessAt,
+          lastFailureAt: kvLastFailureAt,
+        };
+      } catch (err) {
+        kvFailureStreak++;
+        kvLastFailureAt = nowIso;
+        kvConnectivity = {
+          status: "error",
+          error: err instanceof Error ? err.message : "kv_probe_failed",
+          latencyMs: Math.round((performance.now() - kvStart) * 100) / 100,
+          consecutiveFailures: kvFailureStreak,
+          lastSuccessAt: kvLastSuccessAt,
+          lastFailureAt: kvLastFailureAt,
+        };
+      }
     }
 
     const snapshot: HealthSnapshot = {
@@ -80,6 +140,14 @@ export function registerHealthMonitor(
       eventLoopLagMs,
       uptimeSeconds: uptime,
       kvConnectivity,
+      snapshotPersistence: {
+        status: snapshotPersistFailureStreak > 0 ? "error" : "ok",
+        consecutiveFailures: snapshotPersistFailureStreak,
+        lastSuccessAt: snapshotPersistLastSuccessAt,
+        lastFailureAt: snapshotPersistLastFailureAt,
+        error: snapshotPersistError,
+      },
+      pipeline: getPipelineMetrics?.(),
       status: "healthy",
       alerts: [],
     };
@@ -87,24 +155,89 @@ export function registerHealthMonitor(
     const evaluated = evaluateHealth(snapshot);
     snapshot.status = evaluated.status;
     snapshot.alerts = evaluated.alerts;
+    latestHealthSnapshot = snapshot;
 
-    await kv.set(KV.health, "latest", snapshot).catch(() => {});
-    return snapshot;
+    if (!persistCircuit.isAllowed) {
+      // Circuit open — skip persist, keep in-memory snapshot only
+      snapshotPersistError = "circuit_open";
+      latestHealthSnapshot = {
+        ...snapshot,
+        snapshotPersistence: {
+          status: "error",
+          consecutiveFailures: snapshotPersistFailureStreak,
+          lastSuccessAt: snapshotPersistLastSuccessAt,
+          lastFailureAt: snapshotPersistLastFailureAt,
+          error: snapshotPersistError,
+        },
+      };
+    } else {
+      try {
+        await kv.set(KV.health, "latest", snapshot);
+        persistCircuit.recordSuccess();
+        snapshotPersistFailureStreak = 0;
+        snapshotPersistLastSuccessAt = nowIso;
+        snapshotPersistError = undefined;
+        latestHealthSnapshot = {
+          ...snapshot,
+          snapshotPersistence: {
+            status: "ok",
+            consecutiveFailures: 0,
+            lastSuccessAt: snapshotPersistLastSuccessAt,
+            lastFailureAt: snapshotPersistLastFailureAt,
+          },
+        };
+      } catch (err) {
+        persistCircuit.recordFailure();
+        snapshotPersistFailureStreak++;
+        snapshotPersistLastFailureAt = nowIso;
+        snapshotPersistError = err instanceof Error ? err.message : String(err);
+        latestHealthSnapshot = {
+          ...snapshot,
+          snapshotPersistence: {
+            status: "error",
+            consecutiveFailures: snapshotPersistFailureStreak,
+            lastSuccessAt: snapshotPersistLastSuccessAt,
+            lastFailureAt: snapshotPersistLastFailureAt,
+            error: snapshotPersistError,
+          },
+        };
+        console.warn("[agentmemory] Health snapshot persist failed:", err);
+      }
+    }
+    return latestHealthSnapshot;
   }
 
-  collectHealth().catch(() => {});
-  const interval = setInterval(() => {
-    collectHealth().catch(() => {});
-  }, 30_000);
-  interval.unref();
+  const tick = async () => {
+    if (stopped) return;
+    try {
+      await collectHealth();
+      // Success — ease back to base interval
+      interval = Math.max(BASE_INTERVAL_MS, interval * 0.75);
+    } catch {
+      // Backoff on failure
+      interval = Math.min(MAX_INTERVAL_MS, interval * 2);
+    }
+    if (!stopped) {
+      timer = setTimeout(tick, interval);
+      timer.unref();
+    }
+  };
+
+  // Initial collection after short delay
+  timer = setTimeout(tick, 5_000);
+  timer.unref();
 
   return {
-    stop: () => clearInterval(interval),
+    stop: () => {
+      stopped = true;
+      clearTimeout(timer);
+    },
   };
 }
 
 export async function getLatestHealth(
   kv: StateKV,
 ): Promise<HealthSnapshot | null> {
+  if (latestHealthSnapshot) return latestHealthSnapshot;
   return kv.get<HealthSnapshot>(KV.health, "latest");
 }

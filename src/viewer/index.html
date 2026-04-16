@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE. -->
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -781,6 +782,7 @@
     <button data-tab="crystals">Crystals</button>
     <button data-tab="audit">Audit</button>
     <button data-tab="activity">Activity</button>
+    <button data-tab="operations">Operations</button>
     <button data-tab="profile">Profile</button>
   </div>
 
@@ -794,6 +796,7 @@
   <div id="view-sessions" class="view"></div>
   <div id="view-audit" class="view"></div>
   <div id="view-activity" class="view"></div>
+  <div id="view-operations" class="view"></div>
   <div id="view-profile" class="view"></div>
 
   <div id="modal-overlay" class="modal-overlay">
@@ -870,6 +873,16 @@
       lessons: { loaded: false, items: [], search: '' },
       actions: { loaded: false, items: [], frontier: [], statusFilter: '', search: '' },
       crystals: { loaded: false, items: [], search: '' },
+      operations: {
+        loaded: false,
+        diagnostics: null,
+        actions: [],
+        frontier: [],
+        next: null,
+        checkpoints: [],
+        snapshots: [],
+        facetStats: null
+      },
       profile: { loaded: false, projects: [], selectedProject: '', data: null },
       ws: null
     };
@@ -956,6 +969,7 @@
         case 'crystals': if (!state.crystals.loaded) await loadCrystals(); break;
         case 'audit': if (!state.audit.loaded) await loadAudit(); break;
         case 'activity': if (!state.activity.loaded) await loadActivity(); break;
+        case 'operations': if (!state.operations.loaded) await loadOperations(); break;
         case 'profile': if (!state.profile.loaded) await loadProfile(); break;
       }
     }
@@ -965,13 +979,13 @@
       el.innerHTML = '<div class="loading">Loading dashboard...</div>';
       var results = await Promise.all([
         apiGet('health'),
-        apiGet('sessions'),
+        apiGet('sessions?limit=100'),
         apiGet('memories?latest=true'),
         apiGet('graph/stats'),
         apiGet('audit?limit=5'),
         apiGet('semantic'),
         apiGet('procedural'),
-        apiGet('relations'),
+        apiGet('memory-relations'),
         apiGet('lessons'),
         apiGet('crystals')
       ]);
@@ -985,6 +999,18 @@
       state.dashboard.lessons = (results[8] && results[8].lessons) || [];
       state.dashboard.crystals = (results[9] && results[9].crystals) || [];
       state.dashboard.relations = (results[7] && results[7].relations) || [];
+      // Derive relation count from memory relatedIds if KV.relations is empty
+      if (state.dashboard.relations.length === 0 && state.dashboard.memories.length > 0) {
+        var relPairs = new Set();
+        state.dashboard.memories.forEach(function(m) {
+          (m.relatedIds || []).forEach(function(rid) {
+            relPairs.add([m.id, rid].sort().join('|'));
+          });
+        });
+        state.dashboard.relationCount = relPairs.size;
+      } else {
+        state.dashboard.relationCount = state.dashboard.relations.length;
+      }
       state.dashboard.loaded = true;
       renderDashboard();
     }
@@ -1067,6 +1093,51 @@
           html += '<div style="font-size:10px;color:var(--ink-faint);margin-top:6px;font-family:var(--font-mono);letter-spacing:0.04em;">UPTIME: ' + upStr + '</div>';
         }
         html += '</div>';
+      }
+
+      if (snap.pipeline) {
+        var p = snap.pipeline;
+        html += '<div class="card" style="margin-bottom:16px"><div class="card-title">Compression Pipeline</div>';
+        html += '<div class="stats-grid" style="grid-template-columns:repeat(3,1fr)">';
+        html += '<div class="stat-card"><div class="label">Active</div><div class="value">' + (p.compressActive || 0) + '</div><div class="sub">concurrent LLM calls</div></div>';
+        html += '<div class="stat-card"><div class="label">Pending</div><div class="value">' + (p.compressPending || 0) + '</div><div class="sub">queued in semaphore</div></div>';
+        html += '<div class="stat-card"><div class="label">Inflight</div><div class="value">' + (p.totalInflight || 0) + '</div><div class="sub">total across sessions</div></div>';
+        html += '</div></div>';
+      }
+
+      if (snap.kvConnectivity || snap.snapshotPersistence) {
+        var kvConn = snap.kvConnectivity || null;
+        var snapshotPersist = snap.snapshotPersistence || null;
+        html += '<div class="card" style="margin-bottom:16px"><div class="card-title">Runtime Diagnostics</div>';
+        html += '<div class="stats-grid" style="grid-template-columns:repeat(2,1fr)">';
+        if (kvConn) {
+          var kvStatusClass = kvConn.status === 'ok' ? 'badge-green' : 'badge-red';
+          var kvSub = (kvConn.latencyMs !== undefined ? kvConn.latencyMs.toFixed(2) + ' ms' : 'no latency');
+          kvSub += ' · streak ' + (kvConn.consecutiveFailures || 0);
+          html += '<div class="stat-card"><div class="label">KV Probe</div><div class="value"><span class="badge ' + kvStatusClass + '">' + esc(kvConn.status) + '</span></div><div class="sub">' + esc(kvSub) + '</div>';
+          if (kvConn.lastSuccessAt || kvConn.lastFailureAt || kvConn.error) {
+            html += '<div style="margin-top:8px;font-size:11px;color:var(--ink-faint);font-family:var(--font-mono);line-height:1.5;">';
+            if (kvConn.lastSuccessAt) html += 'last ok ' + esc(shortTime(kvConn.lastSuccessAt)) + '<br>';
+            if (kvConn.lastFailureAt) html += 'last fail ' + esc(shortTime(kvConn.lastFailureAt)) + '<br>';
+            if (kvConn.error) html += esc(kvConn.error);
+            html += '</div>';
+          }
+          html += '</div>';
+        }
+        if (snapshotPersist) {
+          var persistStatusClass = snapshotPersist.status === 'ok' ? 'badge-green' : 'badge-red';
+          var persistSub = 'streak ' + (snapshotPersist.consecutiveFailures || 0);
+          html += '<div class="stat-card"><div class="label">Health Snapshot</div><div class="value"><span class="badge ' + persistStatusClass + '">' + esc(snapshotPersist.status) + '</span></div><div class="sub">' + esc(persistSub) + '</div>';
+          if (snapshotPersist.lastSuccessAt || snapshotPersist.lastFailureAt || snapshotPersist.error) {
+            html += '<div style="margin-top:8px;font-size:11px;color:var(--ink-faint);font-family:var(--font-mono);line-height:1.5;">';
+            if (snapshotPersist.lastSuccessAt) html += 'last ok ' + esc(shortTime(snapshotPersist.lastSuccessAt)) + '<br>';
+            if (snapshotPersist.lastFailureAt) html += 'last fail ' + esc(shortTime(snapshotPersist.lastFailureAt)) + '<br>';
+            if (snapshotPersist.error) html += esc(snapshotPersist.error);
+            html += '</div>';
+          }
+          html += '</div>';
+        }
+        html += '</div></div>';
       }
 
       if (snap.alerts && snap.alerts.length > 0) {
@@ -1205,8 +1276,40 @@
       html += '<div class="card" style="margin-top:16px;"><div class="card-title">Consolidation Status</div>';
       html += '<div class="consolidation-row"><span class="cl">Semantic facts</span><span class="cv">' + semFacts.length + '</span></div>';
       html += '<div class="consolidation-row"><span class="cl">Procedures</span><span class="cv">' + procItems.length + '</span></div>';
-      html += '<div class="consolidation-row"><span class="cl">Relations</span><span class="cv">' + relItems.length + '</span></div>';
+      html += '<div class="consolidation-row"><span class="cl">Relations</span><span class="cv">' + (d.relationCount || relItems.length) + '</span></div>';
+      html += '<div class="consolidation-row"><span class="cl">Consolidated memories</span><span class="cv">' + d.memories.length + '</span></div>';
       html += '</div>';
+
+      if (d.memories.length > 0) {
+        html += '<div class="card" style="margin-top:16px;"><div class="card-title">Consolidated Memories (' + d.memories.length + ')</div>';
+        var typeGroups = {};
+        d.memories.forEach(function(m) {
+          var t = m.type || 'other';
+          if (!typeGroups[t]) typeGroups[t] = [];
+          typeGroups[t].push(m);
+        });
+        Object.keys(typeGroups).sort().forEach(function(type) {
+          var items = typeGroups[type];
+          html += '<div style="margin-bottom:12px;">';
+          html += '<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:var(--ink-faint);margin-bottom:4px;font-family:var(--font-ui);">' + esc(type) + ' (' + items.length + ')</div>';
+          items.sort(function(a, b) { return (b.strength || 0) - (a.strength || 0); }).slice(0, 5).forEach(function(m) {
+            var str = typeof m.strength === 'number' ? m.strength : 5;
+            var strPct = Math.round((str / 10) * 100);
+            var barColor = strPct > 70 ? 'var(--green)' : strPct > 40 ? 'var(--yellow)' : 'var(--red)';
+            html += '<div class="memory-fact">';
+            html += '<span style="color:var(--ink);" title="' + esc(m.content || '') + '">' + esc(m.title || m.id) + '</span>';
+            html += '<span style="display:flex;align-items:center;gap:6px;">';
+            html += '<span class="strength-bar" style="width:40px;"><span class="fill" style="width:' + strPct + '%;background:' + barColor + '"></span></span>';
+            html += '<span style="font-size:10px;font-family:var(--font-mono);color:var(--ink-faint);">v' + (m.version || 1) + '</span>';
+            html += '</span></div>';
+          });
+          if (items.length > 5) {
+            html += '<div style="font-size:10px;color:var(--ink-faint);font-style:italic;padding:2px 0;">+ ' + (items.length - 5) + ' more</div>';
+          }
+          html += '</div>';
+        });
+        html += '</div>';
+      }
 
       if (relItems.length > 0) {
         html += '<div class="card" style="margin-top:16px;"><div class="card-title">Memory Relations</div>';
@@ -1980,7 +2083,7 @@
     async function loadTimeline() {
       var el = document.getElementById('view-timeline');
       el.innerHTML = '<div class="loading">Loading timeline...</div>';
-      var sessResult = await apiGet('sessions');
+      var sessResult = await apiGet('sessions?limit=200');
       var sessions = (sessResult && sessResult.sessions) || [];
       state.timeline.loaded = true;
 
@@ -2205,7 +2308,7 @@
       var el = document.getElementById('view-activity');
       el.innerHTML = '<div class="loading">Loading activity...</div>';
       var results = await Promise.all([
-        apiGet('sessions'),
+        apiGet('sessions?limit=100'),
         apiGet('audit?limit=200')
       ]);
       var sessions = (results[0] && results[0].sessions) || [];
@@ -2341,7 +2444,7 @@
     async function loadSessions() {
       var el = document.getElementById('view-sessions');
       el.innerHTML = '<div class="loading">Loading sessions...</div>';
-      var result = await apiGet('sessions');
+      var result = await apiGet('sessions?limit=500');
       state.sessions.items = (result && result.sessions) || [];
       state.sessions.loaded = true;
       renderSessions();
@@ -2443,7 +2546,7 @@
       }
 
       var html = '<div style="display:flex;gap:8px;margin-bottom:12px;">';
-      html += '<input class="search-input" type="text" placeholder="Search lessons..." value="' + esc(state.lessons.search) + '" oninput="state.lessons.search=this.value;renderLessons()" style="flex:1" />';
+      html += '<input class="search-input" id="lessons-search" type="text" placeholder="Search lessons..." value="' + esc(state.lessons.search) + '" style="flex:1" />';
       html += '<span style="font-size:12px;color:var(--ink-faint);align-self:center;">' + items.length + ' lessons</span>';
       html += '</div>';
 
@@ -2467,6 +2570,13 @@
       }
 
       el.innerHTML = html;
+      var lessonsSearch = document.getElementById('lessons-search');
+      if (lessonsSearch) {
+        lessonsSearch.addEventListener('input', function() {
+          state.lessons.search = this.value;
+          renderLessons();
+        });
+      }
     }
 
     async function loadActions() {
@@ -2496,8 +2606,8 @@
       }
 
       var html = '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">';
-      html += '<input class="search-input" type="text" placeholder="Search actions..." value="' + esc(state.actions.search) + '" oninput="state.actions.search=this.value;renderActions()" style="flex:1;min-width:200px" />';
-      html += '<select style="padding:4px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--ink);" onchange="state.actions.statusFilter=this.value;renderActions()">';
+      html += '<input class="search-input" id="actions-search" type="text" placeholder="Search actions..." value="' + esc(state.actions.search) + '" style="flex:1;min-width:200px" />';
+      html += '<select id="actions-status-filter" style="padding:4px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--ink);">';
       html += '<option value="">All statuses</option>';
       ['pending','active','done','blocked','cancelled'].forEach(function(s) {
         html += '<option value="' + s + '"' + (statusFilter === s ? ' selected' : '') + '>' + s + '</option>';
@@ -2529,6 +2639,20 @@
       }
 
       el.innerHTML = html;
+      var actionsSearch = document.getElementById('actions-search');
+      if (actionsSearch) {
+        actionsSearch.addEventListener('input', function() {
+          state.actions.search = this.value;
+          renderActions();
+        });
+      }
+      var actionsStatusFilter = document.getElementById('actions-status-filter');
+      if (actionsStatusFilter) {
+        actionsStatusFilter.addEventListener('change', function() {
+          state.actions.statusFilter = this.value;
+          renderActions();
+        });
+      }
     }
 
     async function loadCrystals() {
@@ -2558,7 +2682,7 @@
       }
 
       var html = '<div style="display:flex;gap:8px;margin-bottom:12px;">';
-      html += '<input class="search-input" type="text" placeholder="Search crystals..." value="' + esc(state.crystals.search) + '" oninput="state.crystals.search=this.value;renderCrystals()" style="flex:1" />';
+      html += '<input class="search-input" id="crystals-search" type="text" placeholder="Search crystals..." value="' + esc(state.crystals.search) + '" style="flex:1" />';
       html += '<span style="font-size:12px;color:var(--ink-faint);align-self:center;">' + items.length + ' crystals</span>';
       html += '</div>';
 
@@ -2605,6 +2729,13 @@
       }
 
       el.innerHTML = html;
+      var crystalsSearch = document.getElementById('crystals-search');
+      if (crystalsSearch) {
+        crystalsSearch.addEventListener('input', function() {
+          state.crystals.search = this.value;
+          renderCrystals();
+        });
+      }
     }
 
     async function loadAudit() {
@@ -2669,10 +2800,240 @@
       if (el) el.classList.toggle('open');
     }
 
+    async function loadOperations() {
+      var el = document.getElementById('view-operations');
+      el.innerHTML = '<div class="loading">Loading operations...</div>';
+      var results = await Promise.all([
+        apiPost('diagnostics', {}),
+        apiGet('actions'),
+        apiGet('frontier?limit=8'),
+        apiGet('next'),
+        apiGet('checkpoints'),
+        apiGet('snapshots'),
+        apiGet('facets/stats')
+      ]);
+      state.operations.diagnostics = results[0] || { checks: [], summary: { pass: 0, warn: 0, fail: 0, fixable: 0 } };
+      state.operations.actions = (results[1] && results[1].actions) || [];
+      state.operations.frontier = (results[2] && results[2].frontier) || [];
+      state.operations.next = results[3] || { success: false, suggestion: null, message: 'No suggestion available' };
+      state.operations.checkpoints = (results[4] && results[4].checkpoints) || [];
+      state.operations.snapshots = (results[5] && results[5].snapshots) || [];
+      state.operations.facetStats = results[6] || { dimensions: [], totalFacets: 0 };
+      state.operations.loaded = true;
+      renderOperations();
+    }
+
+    function renderOperations() {
+      var el = document.getElementById('view-operations');
+      var o = state.operations;
+      var diagnostics = o.diagnostics || {};
+      var checks = diagnostics.checks || [];
+      var summary = diagnostics.summary || { pass: 0, warn: 0, fail: 0, fixable: 0 };
+      var actions = o.actions || [];
+      var frontier = o.frontier || [];
+      var next = o.next || {};
+      var checkpoints = o.checkpoints || [];
+      var snapshots = o.snapshots || [];
+      var facetStats = o.facetStats || { dimensions: [], totalFacets: 0 };
+
+      var statusCounts = { pending: 0, blocked: 0, active: 0, done: 0, cancelled: 0 };
+      actions.forEach(function(a) {
+        var key = a.status || 'pending';
+        statusCounts[key] = (statusCounts[key] || 0) + 1;
+      });
+
+      var checkpointCounts = { pending: 0, passed: 0, failed: 0, expired: 0 };
+      checkpoints.forEach(function(cp) {
+        var key = cp.status || 'pending';
+        checkpointCounts[key] = (checkpointCounts[key] || 0) + 1;
+      });
+
+      var groupedChecks = {};
+      checks.forEach(function(check) {
+        var category = check.category || 'other';
+        if (!groupedChecks[category]) {
+          groupedChecks[category] = { pass: 0, warn: 0, fail: 0, fixable: 0 };
+        }
+        groupedChecks[category][check.status] = (groupedChecks[category][check.status] || 0) + 1;
+        if (check.fixable) groupedChecks[category].fixable += 1;
+      });
+
+      var issueChecks = checks.filter(function(check) { return check.status !== 'pass'; });
+      issueChecks.sort(function(a, b) {
+        var rank = { fail: 0, warn: 1 };
+        var ar = rank[a.status] !== undefined ? rank[a.status] : 2;
+        var br = rank[b.status] !== undefined ? rank[b.status] : 2;
+        return ar - br;
+      });
+
+      var html = '<div class="stats-grid">';
+      html += '<div class="stat-card"><div class="label">Diagnostic Fails</div><div class="value">' + (summary.fail || 0) + '</div><div class="sub">' + (summary.fixable || 0) + ' fixable</div></div>';
+      html += '<div class="stat-card"><div class="label">Warnings</div><div class="value">' + (summary.warn || 0) + '</div><div class="sub">' + (summary.pass || 0) + ' passing checks</div></div>';
+      html += '<div class="stat-card"><div class="label">Open Actions</div><div class="value">' + ((statusCounts.pending || 0) + (statusCounts.blocked || 0) + (statusCounts.active || 0)) + '</div><div class="sub">' + actions.length + ' tracked</div></div>';
+      html += '<div class="stat-card"><div class="label">Frontier</div><div class="value">' + frontier.length + '</div><div class="sub">' + (next && next.suggestion ? 'next suggested' : 'no suggestion') + '</div></div>';
+      html += '<div class="stat-card"><div class="label">Checkpoints</div><div class="value">' + checkpoints.length + '</div><div class="sub">' + (checkpointCounts.pending || 0) + ' pending</div></div>';
+      html += '<div class="stat-card"><div class="label">Snapshots</div><div class="value">' + snapshots.length + '</div><div class="sub">' + (snapshots.length > 0 ? 'history available' : 'not enabled or empty') + '</div></div>';
+      html += '<div class="stat-card"><div class="label">Facets</div><div class="value">' + (facetStats.totalFacets || 0) + '</div><div class="sub">' + (((facetStats.dimensions || []).length) || 0) + ' dimensions</div></div>';
+      html += '</div>';
+
+      if (next && next.suggestion) {
+        html += '<div class="card" style="margin-bottom:16px;border-width:2px;"><div class="card-title">Suggested Next Work</div>';
+        html += '<div style="font-size:24px;color:var(--ink);font-family:var(--font-display);font-weight:700;line-height:1.2;margin-bottom:8px;">' + esc(next.suggestion.title || 'Untitled action') + '</div>';
+        if (next.suggestion.description) {
+          html += '<p style="font-size:14px;color:var(--ink-muted);line-height:1.7;margin-bottom:12px;">' + esc(next.suggestion.description) + '</p>';
+        }
+        html += '<div class="detail-row"><div class="dl">Priority</div><div class="dv" style="font-family:var(--font-mono);">' + esc(next.suggestion.priority || '-') + '</div></div>';
+        html += '<div class="detail-row"><div class="dl">Score</div><div class="dv" style="font-family:var(--font-mono);">' + esc(next.suggestion.score || '-') + '</div></div>';
+        html += '<div class="detail-row"><div class="dl">Action ID</div><div class="dv" style="font-family:var(--font-mono);font-size:12px;">' + esc(next.suggestion.actionId || '') + '</div></div>';
+        if (next.suggestion.tags && next.suggestion.tags.length) {
+          html += '<div style="margin-top:10px;">' + next.suggestion.tags.map(function(tag) {
+            return '<span class="badge badge-muted" style="margin-right:4px;">' + esc(tag) + '</span>';
+          }).join('') + '</div>';
+        }
+        if (next.message) {
+          html += '<div style="margin-top:12px;font-size:11px;color:var(--ink-faint);font-family:var(--font-mono);">' + esc(next.message) + '</div>';
+        }
+        html += '</div>';
+      } else if (next && next.message) {
+        html += '<div class="card" style="margin-bottom:16px;"><div class="card-title">Suggested Next Work</div><div class="empty-state"><p>' + esc(next.message) + '</p></div></div>';
+      }
+
+      html += '<div class="two-col">';
+
+      html += '<div class="card"><div class="card-title">Diagnostic Coverage</div>';
+      var categories = Object.keys(groupedChecks).sort();
+      if (categories.length === 0) {
+        html += '<div class="empty-state"><p>No diagnostic data available yet</p></div>';
+      } else {
+        html += '<table><tr><th>Category</th><th>Fail</th><th>Warn</th><th>Pass</th><th>Fixable</th></tr>';
+        categories.forEach(function(category) {
+          var row = groupedChecks[category];
+          html += '<tr><td style="color:var(--ink);font-weight:600;">' + esc(category) + '</td>';
+          html += '<td style="color:' + ((row.fail || 0) > 0 ? 'var(--red)' : 'var(--ink-faint)') + ';font-family:var(--font-mono);">' + (row.fail || 0) + '</td>';
+          html += '<td style="color:' + ((row.warn || 0) > 0 ? 'var(--yellow)' : 'var(--ink-faint)') + ';font-family:var(--font-mono);">' + (row.warn || 0) + '</td>';
+          html += '<td style="color:' + ((row.pass || 0) > 0 ? 'var(--green)' : 'var(--ink-faint)') + ';font-family:var(--font-mono);">' + (row.pass || 0) + '</td>';
+          html += '<td style="font-family:var(--font-mono);">' + (row.fixable || 0) + '</td></tr>';
+        });
+        html += '</table>';
+      }
+      html += '</div>';
+
+      html += '<div class="card"><div class="card-title">Action Inventory</div>';
+      html += '<div class="detail-row"><div class="dl">Pending</div><div class="dv" style="font-family:var(--font-mono);">' + (statusCounts.pending || 0) + '</div></div>';
+      html += '<div class="detail-row"><div class="dl">Blocked</div><div class="dv" style="font-family:var(--font-mono);">' + (statusCounts.blocked || 0) + '</div></div>';
+      html += '<div class="detail-row"><div class="dl">Active</div><div class="dv" style="font-family:var(--font-mono);">' + (statusCounts.active || 0) + '</div></div>';
+      html += '<div class="detail-row"><div class="dl">Done</div><div class="dv" style="font-family:var(--font-mono);">' + (statusCounts.done || 0) + '</div></div>';
+      html += '<div class="detail-row"><div class="dl">Cancelled</div><div class="dv" style="font-family:var(--font-mono);">' + (statusCounts.cancelled || 0) + '</div></div>';
+      html += '<div class="detail-row"><div class="dl">Tracked</div><div class="dv" style="font-family:var(--font-mono);">' + actions.length + '</div></div>';
+      html += '</div>';
+
+      html += '</div>';
+
+      html += '<div class="two-col" style="margin-top:16px;">';
+
+      html += '<div class="card"><div class="card-title">Attention Needed</div>';
+      if (issueChecks.length === 0) {
+        html += '<div class="empty-state"><p>No current warnings or failures</p></div>';
+      } else {
+        issueChecks.slice(0, 12).forEach(function(check) {
+          var badgeClass = check.status === 'fail' ? 'badge-red' : 'badge-yellow';
+          html += '<div style="padding:8px 0;border-bottom:1px solid var(--border-light);">';
+          html += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;"><span class="badge ' + badgeClass + '">' + esc(check.status) + '</span>';
+          html += '<span class="badge badge-muted">' + esc(check.category || 'other') + '</span>';
+          if (check.fixable) html += '<span class="badge badge-green">fixable</span>';
+          html += '</div>';
+          html += '<div style="font-size:13px;color:var(--ink);line-height:1.5;">' + esc(check.message || check.name || 'Issue') + '</div>';
+          html += '</div>';
+        });
+      }
+      html += '</div>';
+
+      html += '<div class="card"><div class="card-title">Frontier</div>';
+      if (frontier.length === 0) {
+        html += '<div class="empty-state"><p>No unblocked actions available</p></div>';
+      } else {
+        html += '<table><tr><th>Action</th><th>Priority</th><th>Score</th><th>Lease</th></tr>';
+        frontier.forEach(function(item) {
+          var action = item.action || {};
+          html += '<tr><td><div style="color:var(--ink);font-weight:600;">' + esc(action.title || action.id || 'Action') + '</div>';
+          if (action.project) html += '<div style="font-size:10px;color:var(--ink-faint);font-family:var(--font-mono);margin-top:2px;">' + esc(action.project) + '</div>';
+          html += '</td>';
+          html += '<td style="font-family:var(--font-mono);">' + esc(action.priority || '-') + '</td>';
+          html += '<td style="font-family:var(--font-mono);">' + esc(item.score || '-') + '</td>';
+          html += '<td>' + (item.leased ? '<span class="badge badge-yellow">leased</span>' : '<span class="badge badge-green">free</span>') + '</td></tr>';
+        });
+        html += '</table>';
+      }
+      html += '</div>';
+
+      html += '</div>';
+
+      html += '<div class="two-col" style="margin-top:16px;">';
+
+      html += '<div class="card"><div class="card-title">Checkpoints</div>';
+      if (checkpoints.length === 0) {
+        html += '<div class="empty-state"><p>No checkpoints recorded</p></div>';
+      } else {
+        html += '<div class="detail-row"><div class="dl">Pending</div><div class="dv" style="font-family:var(--font-mono);">' + (checkpointCounts.pending || 0) + '</div></div>';
+        html += '<div class="detail-row"><div class="dl">Passed</div><div class="dv" style="font-family:var(--font-mono);">' + (checkpointCounts.passed || 0) + '</div></div>';
+        html += '<div class="detail-row"><div class="dl">Failed</div><div class="dv" style="font-family:var(--font-mono);">' + (checkpointCounts.failed || 0) + '</div></div>';
+        html += '<div class="detail-row"><div class="dl">Expired</div><div class="dv" style="font-family:var(--font-mono);">' + (checkpointCounts.expired || 0) + '</div></div>';
+        html += '<table style="margin-top:12px;"><tr><th>Name</th><th>Type</th><th>Status</th></tr>';
+        checkpoints.slice(0, 8).forEach(function(cp) {
+          var cpBadge = cp.status === 'passed' ? 'badge-green' : cp.status === 'failed' ? 'badge-red' : cp.status === 'expired' ? 'badge-yellow' : 'badge-muted';
+          html += '<tr><td><div style="color:var(--ink);font-weight:600;">' + esc(cp.name || cp.id) + '</div>';
+          if (cp.linkedActionIds && cp.linkedActionIds.length) html += '<div style="font-size:10px;color:var(--ink-faint);font-family:var(--font-mono);margin-top:2px;">' + cp.linkedActionIds.length + ' linked action(s)</div>';
+          html += '</td><td>' + esc(cp.type || 'external') + '</td><td><span class="badge ' + cpBadge + '">' + esc(cp.status || 'pending') + '</span></td></tr>';
+        });
+        html += '</table>';
+      }
+      html += '</div>';
+
+      html += '<div class="card"><div class="card-title">Snapshots & Facets</div>';
+      html += '<div style="margin-bottom:14px;">';
+      html += '<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:var(--ink-faint);margin-bottom:6px;font-family:var(--font-ui);">Snapshots</div>';
+      if (snapshots.length === 0) {
+        html += '<div style="font-size:13px;color:var(--ink-faint);font-style:italic;">Snapshot history is empty or snapshots are not enabled.</div>';
+      } else {
+        snapshots.slice(0, 5).forEach(function(snapshot) {
+          html += '<div style="padding:6px 0;border-bottom:1px solid var(--border-light);">';
+          html += '<div style="font-size:12px;color:var(--ink);font-weight:600;">' + esc(snapshot.message || 'Snapshot') + '</div>';
+          html += '<div style="font-size:10px;color:var(--ink-faint);font-family:var(--font-mono);">' + esc(truncate(snapshot.commitHash || '', 12)) + ' · ' + esc(formatTime(snapshot.createdAt)) + '</div>';
+          html += '</div>';
+        });
+      }
+      html += '</div>';
+      html += '<div>';
+      html += '<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:var(--ink-faint);margin-bottom:6px;font-family:var(--font-ui);">Facet Coverage</div>';
+      if (!facetStats.dimensions || facetStats.dimensions.length === 0) {
+        html += '<div style="font-size:13px;color:var(--ink-faint);font-style:italic;">No facet tags recorded yet.</div>';
+      } else {
+        facetStats.dimensions.slice(0, 6).forEach(function(dim) {
+          var topValues = (dim.values || []).slice().sort(function(a, b) { return (b.count || 0) - (a.count || 0); }).slice(0, 3);
+          html += '<div style="padding:6px 0;border-bottom:1px solid var(--border-light);">';
+          html += '<div style="font-size:12px;color:var(--ink);font-weight:600;">' + esc(dim.dimension) + '</div>';
+          html += '<div style="font-size:11px;color:var(--ink-faint);">' + topValues.map(function(v) { return esc(v.value) + ' (' + (v.count || 0) + ')'; }).join(' · ') + '</div>';
+          html += '</div>';
+        });
+      }
+      html += '</div>';
+      html += '</div>';
+
+      html += '</div>';
+
+      html += '<div style="text-align:center;margin-top:20px;"><button class="btn btn-primary" data-action="refresh-operations">Refresh</button></div>';
+      el.innerHTML = html;
+    }
+
+    function refreshOperations() {
+      state.operations.loaded = false;
+      loadOperations();
+    }
+
     async function loadProfile() {
       var el = document.getElementById('view-profile');
       el.innerHTML = '<div class="loading">Loading profile...</div>';
-      var sessResult = await apiGet('sessions');
+      var sessResult = await apiGet('sessions?limit=200');
       var sessions = (sessResult && sessResult.sessions) || [];
 
       var projects = {};
@@ -2943,6 +3304,10 @@
       }
       if (action === 'refresh-dashboard') {
         refreshDashboard();
+        return;
+      }
+      if (action === 'refresh-operations') {
+        refreshOperations();
         return;
       }
       if (action === 'zoom-graph') {

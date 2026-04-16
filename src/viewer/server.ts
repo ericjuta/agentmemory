@@ -1,3 +1,4 @@
+// Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 import {
   createServer,
   type Server,
@@ -58,6 +59,13 @@ function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
+function getViewerUpstreamBase(restPort: number): string {
+  return (
+    process.env.VIEWER_UPSTREAM_URL ||
+    process.env.AGENTMEMORY_URL ||
+    `http://127.0.0.1:${restPort}`
+  ).replace(/\/$/, "");
+}
 export function startViewerServer(
   port: number,
   _kv: unknown,
@@ -83,6 +91,11 @@ export function startViewerServer(
       return;
     }
 
+    if (method === "GET" && pathname === "/agentmemory/livez") {
+      json(res, 200, { status: "ok", service: "agentmemory" }, req);
+      return;
+    }
+
     if (
       method === "GET" &&
       (pathname === "/" ||
@@ -105,7 +118,15 @@ export function startViewerServer(
     }
 
     try {
-      await proxyToRestApi(resolvedRestPort, pathname, qs, method, req, res, secret);
+      await proxyToRestApi(
+        getViewerUpstreamBase(resolvedRestPort),
+        pathname,
+        qs,
+        method,
+        req,
+        res,
+        secret,
+      );
     } catch (err) {
       console.error(`[viewer] proxy error on ${method} ${pathname}:`, err);
       json(res, 502, { error: "upstream error" }, req);
@@ -120,7 +141,9 @@ export function startViewerServer(
     }
   });
 
-  server.listen(port, "127.0.0.1", () => {
+  // Listen on the IPv6 unspecified address so Docker/OrbStack can accept both
+  // localhost (::1) and 127.0.0.1 connections on the published port.
+  server.listen(port, "::", () => {
     console.log(`[agentmemory] Viewer: http://localhost:${port}`);
   });
 
@@ -128,7 +151,7 @@ export function startViewerServer(
 }
 
 async function proxyToRestApi(
-  restPort: number,
+  upstreamBase: string,
   pathname: string,
   qs: string,
   method: string,
@@ -140,7 +163,7 @@ async function proxyToRestApi(
     ? pathname
     : `/agentmemory${pathname.startsWith("/") ? pathname : "/" + pathname}`;
 
-  const upstreamUrl = `http://127.0.0.1:${restPort}${upstreamPath}${qs ? "?" + qs : ""}`;
+  const upstreamUrl = `${upstreamBase}${upstreamPath}${qs ? "?" + qs : ""}`;
 
   const headers: Record<string, string> = {};
   if (secret) {

@@ -1,6 +1,7 @@
+// Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 import type { ISdk } from "iii-sdk";
 import type { Memory, MemoryRelation } from "../types.js";
-import { KV, generateId } from "../state/schema.js";
+import { KV, generateId, jaccardSimilarity } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
 import { safeAudit } from "./audit.js";
@@ -273,6 +274,95 @@ export function registerRelationsFunction(sdk: ISdk, kv: StateKV): void {
         found: result.length,
       });
       return { results: result };
+    },
+  );
+
+  sdk.registerFunction(
+    "mem::auto-relate",
+    async () => {
+      const ctx = getContext();
+      const memories = await kv.list<Memory>(KV.memories).catch(() => []);
+      const latest = memories.filter((m) => m.isLatest);
+      if (latest.length < 2) return { created: 0, skipped: "insufficient_memories" };
+
+      const existingRelations = await kv.list<MemoryRelation>(KV.relations).catch(() => []);
+      const existingPairs = new Set(
+        existingRelations.map((r) => [r.sourceId, r.targetId].sort().join("|")),
+      );
+
+      let created = 0;
+      const MAX_RELATIONS = 20;
+
+      for (let i = 0; i < latest.length && created < MAX_RELATIONS; i++) {
+        for (let j = i + 1; j < latest.length && created < MAX_RELATIONS; j++) {
+          const a = latest[i];
+          const b = latest[j];
+          const pairKey = [a.id, b.id].sort().join("|");
+          if (existingPairs.has(pairKey)) continue;
+
+          // Check shared concepts
+          const aConcepts = new Set(a.concepts || []);
+          const bConcepts = new Set(b.concepts || []);
+          let sharedConcepts = 0;
+          for (const c of aConcepts) {
+            if (bConcepts.has(c)) sharedConcepts++;
+          }
+
+          // Check shared files
+          const aFiles = new Set(a.files || []);
+          const bFiles = new Set(b.files || []);
+          let sharedFiles = 0;
+          for (const f of aFiles) {
+            if (bFiles.has(f)) sharedFiles++;
+          }
+
+          // Check content similarity
+          const contentSim = jaccardSimilarity(a.content, b.content);
+
+          // Determine relation type
+          let relationType: MemoryRelation["type"] | null = null;
+          if (a.type === b.type && sharedConcepts >= 3 && contentSim > 0.4) {
+            relationType = "extends";
+          } else if (sharedConcepts >= 2 || sharedFiles >= 2) {
+            relationType = "related";
+          } else if (contentSim > 0.5) {
+            relationType = "related";
+          }
+
+          if (!relationType) continue;
+
+          const confidence = computeConfidence(a, b, relationType);
+          if (confidence < 0.3) continue;
+
+          const relation: MemoryRelation = {
+            type: relationType,
+            sourceId: a.id,
+            targetId: b.id,
+            createdAt: new Date().toISOString(),
+            confidence,
+          };
+          await kv.set(KV.relations, generateId("rel"), relation);
+          existingPairs.add(pairKey);
+
+          if (!a.relatedIds) a.relatedIds = [];
+          if (!a.relatedIds.includes(b.id)) {
+            a.relatedIds.push(b.id);
+            await kv.set(KV.memories, a.id, a);
+          }
+          if (!b.relatedIds) b.relatedIds = [];
+          if (!b.relatedIds.includes(a.id)) {
+            b.relatedIds.push(a.id);
+            await kv.set(KV.memories, b.id, b);
+          }
+
+          created++;
+        }
+      }
+
+      if (created > 0) {
+        ctx.logger.info("Auto-relate complete", { created });
+      }
+      return { created };
     },
   );
 }

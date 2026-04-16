@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import type {
   AgentMemoryConfig,
@@ -18,10 +18,11 @@ function safeParseInt(value: string | undefined, fallback: number): number {
 
 const DATA_DIR = join(homedir(), ".agentmemory");
 const ENV_FILE = join(DATA_DIR, ".env");
+const REPO_ENV_FILE = resolve(process.cwd(), ".env.local");
+const LOCAL_ENV_FILE = resolve(process.cwd(), ".env");
 
-function loadEnvFile(): Record<string, string> {
-  if (!existsSync(ENV_FILE)) return {};
-  const content = readFileSync(ENV_FILE, "utf-8");
+function parseEnvFile(path: string): Record<string, string> {
+  const content = readFileSync(path, "utf-8");
   const vars: Record<string, string> = {};
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
@@ -39,6 +40,13 @@ function loadEnvFile(): Record<string, string> {
     vars[key] = val;
   }
   return vars;
+}
+
+function loadEnvFile(): Record<string, string> {
+  for (const path of [REPO_ENV_FILE, LOCAL_ENV_FILE, ENV_FILE]) {
+    if (existsSync(path)) return parseEnvFile(path);
+  }
+  return {};
 }
 
 function detectProvider(env: Record<string, string>): ProviderConfig {

@@ -1,3 +1,4 @@
+// Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 export const COMPRESSION_SYSTEM = `You are a memory compression engine for an AI coding agent. Your job is to extract the essential information from a tool usage observation and compress it into structured data.
 
 Output EXACTLY this XML format with no additional text:
@@ -33,6 +34,7 @@ export function buildCompressionPrompt(observation: {
   toolInput?: unknown;
   toolOutput?: unknown;
   userPrompt?: string;
+  assistantResponse?: string;
   timestamp: string;
 }): string {
   const parts = [
@@ -57,6 +59,11 @@ export function buildCompressionPrompt(observation: {
   }
   if (observation.userPrompt) {
     parts.push(`User prompt:\n${truncate(observation.userPrompt, 2000)}`);
+  }
+  if (observation.assistantResponse) {
+    parts.push(
+      `Assistant response:\n${truncate(observation.assistantResponse, 2000)}`,
+    );
   }
 
   return parts.join("\n\n");

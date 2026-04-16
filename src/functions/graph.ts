@@ -1,3 +1,4 @@
+// Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 import type { ISdk } from "iii-sdk";
 import type {
   GraphNode,
@@ -14,6 +15,41 @@ import {
 } from "../prompts/graph-extraction.js";
 import { recordAudit } from "./audit.js";
 import { logger } from "../logger.js";
+import { Semaphore } from "../state/semaphore.js";
+
+const graphSemaphore = new Semaphore(2);
+
+/**
+ * Prune graph nodes and edges when a source observation is evicted.
+ * Removes the obsId from sourceObservationIds; marks stale when empty.
+ */
+export async function pruneGraphForObservation(kv: StateKV, obsId: string): Promise<void> {
+  const nodes = await kv.list<GraphNode>(KV.graphNodes);
+  for (const node of nodes) {
+    if (!node.sourceObservationIds?.includes(obsId)) continue;
+    const filtered = node.sourceObservationIds.filter(id => id !== obsId);
+    if (filtered.length === 0) {
+      node.stale = true;
+      await kv.set(KV.graphNodes, node.id, node);
+    } else {
+      node.sourceObservationIds = filtered;
+      await kv.set(KV.graphNodes, node.id, node);
+    }
+  }
+
+  const edges = await kv.list<GraphEdge>(KV.graphEdges);
+  for (const edge of edges) {
+    if (!edge.sourceObservationIds?.includes(obsId)) continue;
+    const filtered = edge.sourceObservationIds.filter(id => id !== obsId);
+    if (filtered.length === 0) {
+      edge.stale = true;
+      await kv.set(KV.graphEdges, edge.id, edge);
+    } else {
+      edge.sourceObservationIds = filtered;
+      await kv.set(KV.graphEdges, edge.id, edge);
+    }
+  }
+}
 
 function parseGraphXml(
   xml: string,
@@ -101,9 +137,8 @@ export function registerGraphFunction(
       );
 
       try {
-        const response = await provider.compress(
-          GRAPH_EXTRACTION_SYSTEM,
-          prompt,
+        const response = await graphSemaphore.run(() =>
+          provider.compress(GRAPH_EXTRACTION_SYSTEM, prompt),
         );
 
         const obsIds = data.observations.map((o) => o.id);

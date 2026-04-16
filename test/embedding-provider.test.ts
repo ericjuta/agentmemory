@@ -1,3 +1,4 @@
+// Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createEmbeddingProvider } from "../src/providers/embedding/index.js";
 import { GeminiEmbeddingProvider } from "../src/providers/embedding/gemini.js";
@@ -8,12 +9,12 @@ describe("createEmbeddingProvider", () => {
 
   beforeEach(() => {
     process.env = { ...originalEnv };
-    delete process.env["GEMINI_API_KEY"];
-    delete process.env["OPENAI_API_KEY"];
-    delete process.env["VOYAGE_API_KEY"];
-    delete process.env["COHERE_API_KEY"];
-    delete process.env["OPENROUTER_API_KEY"];
-    delete process.env["EMBEDDING_PROVIDER"];
+    process.env["GEMINI_API_KEY"] = "";
+    process.env["OPENAI_API_KEY"] = "";
+    process.env["VOYAGE_API_KEY"] = "";
+    process.env["COHERE_API_KEY"] = "";
+    process.env["OPENROUTER_API_KEY"] = "";
+    process.env["EMBEDDING_PROVIDER"] = "";
   });
 
   afterEach(() => {

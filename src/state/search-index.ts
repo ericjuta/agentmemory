@@ -1,3 +1,4 @@
+// Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 import type { CompressedObservation } from "../types.js";
 import { stem } from "./stemmer.js";
 import { getSynonyms } from "./synonyms.js";
@@ -43,6 +44,29 @@ export class SearchIndex {
       this.invertedIndex.get(term)!.add(obs.id);
     }
 
+    this.sortedTerms = null;
+  }
+
+  remove(obsId: string): void {
+    const entry = this.entries.get(obsId);
+    if (!entry) return;
+
+    const docTerms = this.docTermCounts.get(obsId);
+    if (docTerms) {
+      for (const term of docTerms.keys()) {
+        const posting = this.invertedIndex.get(term);
+        if (posting) {
+          posting.delete(obsId);
+          if (posting.size === 0) {
+            this.invertedIndex.delete(term);
+          }
+        }
+      }
+    }
+
+    this.totalDocLength -= entry.termCount;
+    this.entries.delete(obsId);
+    this.docTermCounts.delete(obsId);
     this.sortedTerms = null;
   }
 

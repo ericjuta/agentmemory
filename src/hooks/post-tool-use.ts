@@ -1,6 +1,6 @@
-#!/usr/bin/env node
+// Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 
-const REST_URL = process.env["AGENTMEMORY_URL"] || "http://localhost:3111";
+const REST_URL = process.env["AGENTMEMORY_URL"] || "http://127.0.0.1:3111";
 const SECRET = process.env["AGENTMEMORY_SECRET"] || "";
 
 function authHeaders(): Record<string, string> {
@@ -35,6 +35,7 @@ async function main() {
         cwd: data.cwd || process.cwd(),
         timestamp: new Date().toISOString(),
         data: {
+          turn_id: data.turn_id ?? data.turnId,
           tool_name: data.tool_name,
           tool_input: data.tool_input,
           tool_output: truncate(data.tool_output, 8000),

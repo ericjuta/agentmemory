@@ -1,3 +1,4 @@
+// Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 const BASE_URL = process.env["AGENTMEMORY_URL"] || "http://localhost:3111";
@@ -205,6 +206,60 @@ describe("agentmemory integration", () => {
         body: JSON.stringify({ query: "test" }),
       });
       expect(res.status).toBe(200);
+    });
+  });
+
+  describe("consolidate", () => {
+    it("handles an empty request body", async () => {
+      const res = await fetch(url("/agentmemory/consolidate"), {
+        method: "POST",
+        headers: authHeaders(),
+      });
+      expect(res.status).toBe(200);
+      const body = (await json(res)) as {
+        consolidated: number;
+        reason?: string;
+      };
+      expect(typeof body.consolidated).toBe("number");
+    });
+  });
+
+  describe("graph", () => {
+    it("builds graph state for an empty scoped session without error", async () => {
+      const sessionId = `test_graph_${Date.now()}`;
+      const startRes = await fetch(url("/agentmemory/session/start"), {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({
+          sessionId,
+          project: PROJECT,
+          cwd: PROJECT,
+        }),
+      });
+      expect(startRes.status).toBe(200);
+
+      const res = await fetch(url("/agentmemory/graph/build"), {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ sessionId }),
+      });
+      expect(res.status).toBe(200);
+      const body = (await json(res)) as {
+        success: boolean;
+        observations: number;
+        nodes: number;
+        edges: number;
+      };
+      expect(body.success).toBe(true);
+      expect(body.observations).toBe(0);
+      expect(body.nodes).toBe(0);
+      expect(body.edges).toBe(0);
+
+      await fetch(url("/agentmemory/session/end"), {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ sessionId }),
+      });
     });
   });
 

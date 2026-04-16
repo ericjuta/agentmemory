@@ -1,3 +1,4 @@
+// Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 import type { ISdk } from "iii-sdk";
 import type { StateKV } from "../state/kv.js";
 import { KV } from "../state/schema.js";
@@ -280,6 +281,18 @@ export function registerDiagnosticsFunction(sdk: ISdk, kv: StateKV): void {
         let sessionIssues = 0;
 
         for (const session of sessions) {
+          if (session.status === "active" && session.endedAt) {
+            checks.push({
+              name: `active-session-ended:${session.id}`,
+              category: "sessions",
+              status: "fail",
+              message: `Session ${session.id} is marked active but already has endedAt=${session.endedAt}`,
+              fixable: true,
+            });
+            sessionIssues++;
+            continue;
+          }
+
           if (
             session.status === "active" &&
             now - new Date(session.startedAt).getTime() > TWENTY_FOUR_HOURS_MS
@@ -289,7 +302,19 @@ export function registerDiagnosticsFunction(sdk: ISdk, kv: StateKV): void {
               category: "sessions",
               status: "warn",
               message: `Session ${session.id} has been active for over 24 hours`,
-              fixable: false,
+              fixable: true,
+            });
+            sessionIssues++;
+            continue;
+          }
+
+          if (session.status !== "active" && !session.endedAt) {
+            checks.push({
+              name: `session-missing-endedAt:${session.id}`,
+              category: "sessions",
+              status: "warn",
+              message: `Session ${session.id} is ${session.status} but has no endedAt timestamp`,
+              fixable: true,
             });
             sessionIssues++;
           }
@@ -780,6 +805,76 @@ export function registerDiagnosticsFunction(sdk: ISdk, kv: StateKV): void {
             });
             details.push(`Deleted expired signal ${signal.id}`);
             fixed++;
+          }
+        }
+      }
+
+      if (categories.includes("sessions")) {
+        const sessions = await kv.list<Session>(KV.sessions);
+
+        for (const session of sessions) {
+          const isStaleActive =
+            session.status === "active" &&
+            now - new Date(session.startedAt).getTime() > TWENTY_FOUR_HOURS_MS;
+          const isActiveWithEndedAt =
+            session.status === "active" && Boolean(session.endedAt);
+          const isMissingEndedAt =
+            session.status !== "active" && !session.endedAt;
+
+          if (!isStaleActive && !isActiveWithEndedAt && !isMissingEndedAt) {
+            continue;
+          }
+
+          const endedAt = session.endedAt || new Date().toISOString();
+          const nextStatus =
+            session.status === "active" ? "abandoned" : session.status;
+
+          if (dryRun) {
+            details.push(
+              `[dry-run] Would update session ${session.id} to status=${nextStatus} endedAt=${endedAt}`,
+            );
+            fixed++;
+            continue;
+          }
+
+          const didFix = await withKeyedLock(
+            `mem:session:${session.id}`,
+            async () => {
+              const fresh = await kv.get<Session>(KV.sessions, session.id);
+              if (!fresh) return false;
+
+              const freshIsStaleActive =
+                fresh.status === "active" &&
+                Date.now() - new Date(fresh.startedAt).getTime() >
+                  TWENTY_FOUR_HOURS_MS;
+              const freshIsActiveWithEndedAt =
+                fresh.status === "active" && Boolean(fresh.endedAt);
+              const freshIsMissingEndedAt =
+                fresh.status !== "active" && !fresh.endedAt;
+
+              if (
+                !freshIsStaleActive &&
+                !freshIsActiveWithEndedAt &&
+                !freshIsMissingEndedAt
+              ) {
+                return false;
+              }
+
+              fresh.status =
+                fresh.status === "active" ? "abandoned" : fresh.status;
+              fresh.endedAt = fresh.endedAt || new Date().toISOString();
+              await kv.set(KV.sessions, fresh.id, fresh);
+              return true;
+            },
+          );
+
+          if (didFix) {
+            details.push(
+              `Updated session ${session.id} to status=${nextStatus} endedAt=${endedAt}`,
+            );
+            fixed++;
+          } else {
+            skipped++;
           }
         }
       }

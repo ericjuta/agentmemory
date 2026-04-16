@@ -1,3 +1,4 @@
+// Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 import type { ISdk } from "iii-sdk";
 import type {
   Session,
@@ -36,7 +37,7 @@ interface EvictionStats {
   dryRun: boolean;
 }
 
-export function registerEvictFunction(sdk: ISdk, kv: StateKV): void {
+export function registerEvictFunction(sdk: ISdk, kv: StateKV, onEvict?: (obsId: string) => void): void {
   sdk.registerFunction("mem::evict", 
     async (data: { dryRun?: boolean }): Promise<EvictionStats> => {
       const dryRun = data?.dryRun ?? false;
@@ -109,6 +110,7 @@ export function registerEvictFunction(sdk: ISdk, kv: StateKV): void {
               stats.lowImportanceObs++;
             } else {
               try {
+                onEvict?.(o.id);
                 await kv.delete(KV.observations(session.id), o.id);
                 stats.lowImportanceObs++;
               } catch (err) {
@@ -150,6 +152,7 @@ export function registerEvictFunction(sdk: ISdk, kv: StateKV): void {
           } else {
             for (const o of toEvict) {
               try {
+                onEvict?.(o.id);
                 await kv.delete(KV.observations(o.sessionId), o.id);
                 stats.capEvictions++;
               } catch (err) {

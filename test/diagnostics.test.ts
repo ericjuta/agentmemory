@@ -1,3 +1,4 @@
+// Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 vi.mock("../src/logger.js", () => ({
@@ -398,7 +399,7 @@ describe("Diagnostics Functions", () => {
       );
       expect(check).toBeDefined();
       expect(check!.status).toBe("warn");
-      expect(check!.fixable).toBe(false);
+      expect(check!.fixable).toBe(true);
     });
 
     it("memory with stale isLatest produces fail (fixable)", async () => {
@@ -634,6 +635,26 @@ describe("Diagnostics Functions", () => {
 
       const unchanged = await kv.get<Action>(KV.actions, blocked.id);
       expect(unchanged!.status).toBe("blocked");
+    });
+
+    it("abandons stale active sessions", async () => {
+      const session = makeSession({
+        status: "active",
+        startedAt: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
+      });
+      await kv.set(KV.sessions, session.id, session);
+
+      const result = (await sdk.trigger("mem::heal", {
+        categories: ["sessions"],
+      })) as { success: boolean; fixed: number; details: string[] };
+
+      expect(result.success).toBe(true);
+      expect(result.fixed).toBe(1);
+      expect(result.details[0]).toContain("Updated session");
+
+      const updated = await kv.get<Session>(KV.sessions, session.id);
+      expect(updated!.status).toBe("abandoned");
+      expect(updated!.endedAt).toBeTruthy();
     });
   });
 });

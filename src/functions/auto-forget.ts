@@ -1,3 +1,4 @@
+// Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 import type { ISdk } from "iii-sdk";
 import type { Memory, CompressedObservation, Session } from "../types.js";
 import { KV, jaccardSimilarity } from "../state/schema.js";
@@ -20,7 +21,7 @@ interface AutoForgetResult {
   dryRun: boolean;
 }
 
-export function registerAutoForgetFunction(sdk: ISdk, kv: StateKV): void {
+export function registerAutoForgetFunction(sdk: ISdk, kv: StateKV, onEvict?: (obsId: string) => void): void {
   sdk.registerFunction("mem::auto-forget", 
     async (data: { dryRun?: boolean }): Promise<AutoForgetResult> => {
       const dryRun = data?.dryRun ?? false;
@@ -157,6 +158,7 @@ export function registerAutoForgetFunction(sdk: ISdk, kv: StateKV): void {
           if (age > 180 * MS_PER_DAY && (obs.importance ?? 5) <= 2) {
             result.lowValueObs.push(obs.id);
             if (!dryRun) {
+              onEvict?.(obs.id);
               await kv
                 .delete(KV.observations(sessions[i].id), obs.id)
                 .catch(() => {});

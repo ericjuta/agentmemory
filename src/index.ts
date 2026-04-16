@@ -1,3 +1,4 @@
+// Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 import { registerWorker } from "iii-sdk";
 import {
   loadConfig,
@@ -18,12 +19,13 @@ import {
   createEmbeddingProvider,
 } from "./providers/index.js";
 import { StateKV } from "./state/kv.js";
+import { KV } from "./state/schema.js";
 import { VectorIndex } from "./state/vector-index.js";
 import { HybridSearch } from "./state/hybrid-search.js";
 import { IndexPersistence } from "./state/index-persistence.js";
 import { registerPrivacyFunction } from "./functions/privacy.js";
 import { registerObserveFunction } from "./functions/observe.js";
-import { registerCompressFunction } from "./functions/compress.js";
+import { registerCompressFunction, getCompressMetrics } from "./functions/compress.js";
 import {
   registerSearchFunction,
   rebuildIndex,
@@ -45,7 +47,7 @@ import { registerAutoForgetFunction } from "./functions/auto-forget.js";
 import { registerExportImportFunction } from "./functions/export-import.js";
 import { registerEnrichFunction } from "./functions/enrich.js";
 import { registerClaudeBridgeFunction } from "./functions/claude-bridge.js";
-import { registerGraphFunction } from "./functions/graph.js";
+import { registerGraphFunction, pruneGraphForObservation } from "./functions/graph.js";
 import { registerConsolidationPipelineFunction } from "./functions/consolidation-pipeline.js";
 import { registerTeamFunction } from "./functions/team.js";
 import { registerGovernanceFunction } from "./functions/governance.js";
@@ -82,7 +84,14 @@ import { registerMcpEndpoints } from "./mcp/server.js";
 import { startViewerServer } from "./viewer/server.js";
 import { MetricsStore } from "./eval/metrics-store.js";
 import { DedupMap } from "./functions/dedup.js";
+import { CompressionTracker } from "./state/compression-tracker.js";
+import { createAdaptiveTimer, type AdaptiveTimerHandle } from "./state/adaptive-timer.js";
 import { registerHealthMonitor } from "./health/monitor.js";
+import { getLatestHealth } from "./health/monitor.js";
+import {
+  getMaintenancePauseReason,
+  shouldPauseMaintenance,
+} from "./health/maintenance-gate.js";
 import { initMetrics, OTEL_CONFIG } from "./telemetry/setup.js";
 import { VERSION } from "./version.js";
 
@@ -139,8 +148,18 @@ async function main() {
   const secret = getEnvVar("AGENTMEMORY_SECRET");
   const metricsStore = new MetricsStore(kv);
   const dedupMap = new DedupMap();
+  const compressionTracker = new CompressionTracker();
 
   const vectorIndex = embeddingProvider ? new VectorIndex() : null;
+
+  const onEvict = (obsId: string) => {
+    getSearchIndex().remove(obsId);
+    vectorIndex?.remove(obsId);
+    // Background graph cleanup - mark nodes stale when all source observations gone
+    if (isGraphExtractionEnabled()) {
+      pruneGraphForObservation(kv, obsId).catch(() => {});
+    }
+  };
 
   const meterAccessor = hasGetMeter(sdk)
     ? (sdk.getMeter.bind(sdk) as (name: string) => unknown)
@@ -149,8 +168,8 @@ async function main() {
   initMetrics(meterAccessor as ((name: string) => import("@opentelemetry/api").Meter) | undefined);
 
   registerPrivacyFunction(sdk);
-  registerObserveFunction(sdk, kv, dedupMap, config.maxObservationsPerSession);
-  registerCompressFunction(sdk, kv, provider, metricsStore);
+  registerObserveFunction(sdk, kv, dedupMap, config.maxObservationsPerSession, compressionTracker);
+  registerCompressFunction(sdk, kv, provider, metricsStore, compressionTracker, isGraphExtractionEnabled());
   registerSearchFunction(sdk, kv);
   registerContextFunction(sdk, kv, config.tokenBudget);
   registerSummarizeFunction(sdk, kv, provider, metricsStore);
@@ -159,12 +178,12 @@ async function main() {
   registerConsolidateFunction(sdk, kv, provider);
   registerPatternsFunction(sdk, kv);
   registerRememberFunction(sdk, kv);
-  registerEvictFunction(sdk, kv);
+  registerEvictFunction(sdk, kv, onEvict);
 
   registerRelationsFunction(sdk, kv);
   registerTimelineFunction(sdk, kv);
   registerProfileFunction(sdk, kv);
-  registerAutoForgetFunction(sdk, kv);
+  registerAutoForgetFunction(sdk, kv, onEvict);
   registerExportImportFunction(sdk, kv);
   registerEnrichFunction(sdk, kv);
 
@@ -273,10 +292,17 @@ async function main() {
   );
 
   registerApiTriggers(sdk, kv, secret, metricsStore, provider);
-  registerEventTriggers(sdk, kv);
+  registerEventTriggers(sdk, kv, compressionTracker);
   registerMcpEndpoints(sdk, kv, secret);
 
-  const healthMonitor = registerHealthMonitor(sdk, kv);
+  const healthMonitor = registerHealthMonitor(sdk, kv, () => {
+    const cm = getCompressMetrics();
+    return {
+      compressActive: cm.active,
+      compressPending: cm.pending,
+      totalInflight: compressionTracker.totalInflight(),
+    };
+  });
 
   const indexPersistence = new IndexPersistence(kv, bm25Index, vectorIndex);
 
@@ -330,15 +356,43 @@ async function main() {
 
   const autoForgetIntervalMs = parseInt(process.env.AUTO_FORGET_INTERVAL_MS || "3600000", 10);
   const consolidationIntervalMs = parseInt(process.env.CONSOLIDATION_INTERVAL_MS || "7200000", 10);
+  const lastMaintenancePauseLog = new Map<string, string>();
 
+  const runMaintenanceTask = async (
+    label: string,
+    fn: () => Promise<number>,
+  ): Promise<number> => {
+    const health = await getLatestHealth(kv).catch(() => null);
+    if (shouldPauseMaintenance(health)) {
+      const reason = getMaintenancePauseReason(health) || "unhealthy";
+      if (lastMaintenancePauseLog.get(label) !== reason) {
+        console.warn(
+          `[agentmemory] ${label} paused while health is unhealthy: ${reason}`,
+        );
+        lastMaintenancePauseLog.set(label, reason);
+      }
+      return 0;
+    }
+
+    lastMaintenancePauseLog.delete(label);
+    return fn();
+  };
+
+  let autoForgetHandle: AdaptiveTimerHandle | undefined;
+  let consolidationHandle: AdaptiveTimerHandle | undefined;
   if (process.env.AUTO_FORGET_ENABLED !== "false") {
-    const autoForgetTimer = setInterval(async () => {
-      try {
-        await sdk.trigger({ function_id: "mem::auto-forget", payload: { dryRun: false } });
-      } catch {}
-    }, autoForgetIntervalMs);
-    autoForgetTimer.unref();
-    console.log(`[agentmemory] Auto-forget: enabled (every ${autoForgetIntervalMs / 60000}m)`);
+    autoForgetHandle = createAdaptiveTimer(
+      async () =>
+        runMaintenanceTask("Auto-forget", async () => {
+        const result = await sdk.trigger<
+          { dryRun: boolean },
+          { ttlExpired: string[]; contradictions: unknown[]; lowValueObs: string[] }
+        >({ function_id: "mem::auto-forget", payload: { dryRun: false } });
+        return (result?.ttlExpired?.length || 0) + (result?.contradictions?.length || 0) + (result?.lowValueObs?.length || 0);
+        }),
+      { baseMs: autoForgetIntervalMs, minMs: 900_000, maxMs: 14_400_000, label: "Auto-forget" },
+    );
+    console.log(`[agentmemory] Auto-forget: enabled (every ${autoForgetIntervalMs / 60000}m, adaptive)`);
   }
 
   if (process.env.LESSON_DECAY_ENABLED !== "false") {
@@ -361,18 +415,117 @@ async function main() {
   }
 
   if (isConsolidationEnabled()) {
-    const consolidationTimer = setInterval(async () => {
-      try {
-        await sdk.trigger({ function_id: "mem::consolidate-pipeline", payload: {} });
-      } catch {}
-    }, consolidationIntervalMs);
-    consolidationTimer.unref();
-    console.log(`[agentmemory] Auto-consolidation: enabled (every ${consolidationIntervalMs / 60000}m)`);
+    consolidationHandle = createAdaptiveTimer(
+      async () =>
+        runMaintenanceTask("Consolidation", async () => {
+        const pipelineResult = await sdk.trigger<
+          Record<string, never>,
+          { results?: { semantic?: { newFacts?: number }; procedural?: { newProcedures?: number } } }
+        >({ function_id: "mem::consolidate-pipeline", payload: {} });
+
+        // Also run concept-grouped consolidation
+        const consolidateResult = await sdk.trigger<
+          { project?: string; minObservations?: number },
+          { consolidated?: number; totalObservations?: number }
+        >({ function_id: "mem::consolidate", payload: {} });
+
+        // Discover relations between memories
+        const relateResult = await sdk.trigger<
+          Record<string, never>,
+          { created?: number }
+        >({ function_id: "mem::auto-relate", payload: {} }).catch(() => ({ created: 0 }));
+
+        const r = pipelineResult?.results || {};
+        const pipelineWork = ((r.semantic as any)?.newFacts || 0) + ((r.procedural as any)?.newProcedures || 0);
+        const consolidateWork = consolidateResult?.consolidated || 0;
+        const relateWork = relateResult?.created || 0;
+        return pipelineWork + consolidateWork + relateWork;
+        }),
+      { baseMs: consolidationIntervalMs, minMs: 600_000, maxMs: 14_400_000, label: "Consolidation" },
+    );
+    console.log(`[agentmemory] Auto-consolidation: enabled (every ${consolidationIntervalMs / 60000}m, adaptive)`);
   }
+
+  const compressRetryHandle = createAdaptiveTimer(
+    async () => {
+      const result = await sdk.trigger<
+        Record<string, never>,
+        { retried?: number; removed?: number }
+      >({ function_id: "mem::compress-retry", payload: {} });
+      return (result?.retried || 0) + (result?.removed || 0);
+    },
+    { baseMs: 300_000, minMs: 60_000, maxMs: 900_000, label: "Compress retry" },
+  );
+
+  const evictionHandle = createAdaptiveTimer(
+    async () => {
+      // Run retention scoring first
+      try {
+        await sdk.trigger({ function_id: "mem::retention-score", payload: {} });
+      } catch {}
+
+      // Then evict based on retention + age/importance
+      const retentionResult = await sdk.trigger<
+        { dryRun?: boolean },
+        { evicted?: number }
+      >({ function_id: "mem::retention-evict", payload: { dryRun: false } }).catch(() => ({ evicted: 0 }));
+
+      const evictResult = await sdk.trigger<
+        { dryRun?: boolean },
+        { staleSessions?: number; lowImportanceObs?: number; capEvictions?: number; expiredMemories?: number; nonLatestMemories?: number }
+      >({ function_id: "mem::evict", payload: { dryRun: false } }).catch(() => ({}));
+
+      const work = (retentionResult?.evicted || 0) +
+        ((evictResult as any)?.staleSessions || 0) +
+        ((evictResult as any)?.lowImportanceObs || 0) +
+        ((evictResult as any)?.capEvictions || 0) +
+        ((evictResult as any)?.expiredMemories || 0) +
+        ((evictResult as any)?.nonLatestMemories || 0);
+      return work;
+    },
+    { baseMs: 14_400_000, minMs: 3_600_000, maxMs: 43_200_000, label: "Eviction" },
+  );
+  console.log(`[agentmemory] Eviction: enabled (every 240m, adaptive)`);
+
+  const indexVerifyHandle = createAdaptiveTimer(
+    async () => {
+      const bm25Size = bm25Index.size;
+
+      // Count actual compressed observations across all sessions
+      const sessions = await kv.list<{ id: string }>(KV.sessions).catch(() => []);
+      let kvObsCount = 0;
+      for (const session of sessions) {
+        const obs = await kv.list(KV.observations(session.id)).catch(() => []);
+        kvObsCount += obs.filter((o: any) => o.title).length; // only compressed
+      }
+
+      const drift = Math.abs(bm25Size - kvObsCount);
+      const driftPct = kvObsCount > 0 ? drift / kvObsCount : 0;
+
+      if (driftPct > 0.1 && drift > 50) {
+        // More than 10% drift and at least 50 observations off
+        console.warn(`[agentmemory] Index drift detected: index=${bm25Size} kv=${kvObsCount} (${(driftPct * 100).toFixed(1)}%), rebuilding`);
+        const rebuilt = await rebuildIndex(kv).catch(() => 0);
+        if (rebuilt > 0) {
+          indexPersistence.scheduleSave();
+          console.log(`[agentmemory] Index rebuilt: ${rebuilt} observations`);
+        }
+        return 1;
+      }
+      return 0;
+    },
+    { baseMs: 7_200_000, minMs: 1_800_000, maxMs: 28_800_000, label: "Index verify" },
+  );
+  console.log(`[agentmemory] Index verify: enabled (every 120m, adaptive)`);
 
   const shutdown = async () => {
     console.log(`\n[agentmemory] Shutting down...`);
     healthMonitor.stop();
+    autoForgetHandle?.stop();
+    consolidationHandle?.stop();
+    compressRetryHandle.stop();
+    evictionHandle.stop();
+    indexVerifyHandle.stop();
     dedupMap.stop();
     indexPersistence.stop();
     await new Promise<void>((resolve) => viewerServer.close(() => resolve()));

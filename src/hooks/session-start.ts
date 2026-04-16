@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+// Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 
 // Session-start hook.
 //
@@ -9,7 +9,7 @@
 // (#143); see pre-tool-use.ts for the full explanation.
 const INJECT_CONTEXT = process.env["AGENTMEMORY_INJECT_CONTEXT"] === "true";
 
-const REST_URL = process.env["AGENTMEMORY_URL"] || "http://localhost:3111";
+const REST_URL = process.env["AGENTMEMORY_URL"] || "http://127.0.0.1:3111";
 const SECRET = process.env["AGENTMEMORY_SECRET"] || "";
 
 function authHeaders(): Record<string, string> {

@@ -1,3 +1,4 @@
+// Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 import { createHash } from "node:crypto";
 
 export const KV = {
@@ -15,6 +16,8 @@ export const KV = {
   claudeBridge: "mem:claude-bridge",
   graphNodes: "mem:graph:nodes",
   graphEdges: "mem:graph:edges",
+  turnCapsules: "mem:turn-capsules",
+  workingSets: "mem:working-sets",
   semantic: "mem:semantic",
   procedural: "mem:procedural",
   teamShared: (teamId: string) => `mem:team:${teamId}:shared`,
@@ -41,6 +44,8 @@ export const KV = {
   latentEmbeddings: (obsId: string) => `mem:latent:${obsId}`,
   retentionScores: "mem:retention",
   accessLog: "mem:access",
+  compressRetry: "mem:compress-retry",
+  contextInjections: "mem:context-injections",
 } as const;
 
 export const STREAM = {

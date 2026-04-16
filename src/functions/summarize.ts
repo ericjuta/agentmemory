@@ -1,3 +1,4 @@
+// Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 import type { ISdk } from "iii-sdk";
 import type {
   CompressedObservation,
@@ -125,6 +126,55 @@ export function registerSummarizeFunction(
           title: summary.title,
           observationCount: compressed.length,
         });
+
+        // Memory usefulness feedback loop
+        const injections = await kv.get<{
+          sessionId: string;
+          memoryIds: string[];
+          timestamp: string;
+        }>(KV.contextInjections, data.sessionId).catch(() => null);
+
+        if (injections && injections.memoryIds.length > 0) {
+          const sessionQuality = compressed.length >= 3 ? "good" : "low";
+          const strengthDelta = sessionQuality === "good" ? 0.2 : -0.1;
+
+          for (const memId of injections.memoryIds) {
+            // Try Memory store
+            const mem = await kv.get<any>(KV.memories, memId).catch(() => null);
+            if (mem && typeof mem.strength === "number") {
+              mem.strength = Math.max(1, Math.min(10, mem.strength + strengthDelta));
+              mem.lastAccessedAt = new Date().toISOString();
+              await kv.set(KV.memories, memId, mem).catch(() => {});
+              continue;
+            }
+            // Try Semantic store
+            const sem = await kv.get<any>(KV.semantic, memId).catch(() => null);
+            if (sem && typeof sem.strength === "number") {
+              sem.strength = Math.max(0.1, Math.min(1, sem.strength + strengthDelta / 10));
+              sem.accessCount = (sem.accessCount || 0) + 1;
+              sem.lastAccessedAt = new Date().toISOString();
+              await kv.set(KV.semantic, memId, sem).catch(() => {});
+              continue;
+            }
+            // Try Procedural store
+            const proc = await kv.get<any>(KV.procedural, memId).catch(() => null);
+            if (proc && typeof proc.strength === "number") {
+              proc.strength = Math.max(0.1, Math.min(1, proc.strength + strengthDelta / 10));
+              proc.frequency = (proc.frequency || 0) + 1;
+              await kv.set(KV.procedural, memId, proc).catch(() => {});
+            }
+          }
+
+          // Cleanup injection record
+          await kv.delete(KV.contextInjections, data.sessionId).catch(() => {});
+
+          ctx.logger.info("Memory feedback applied", {
+            sessionId: data.sessionId,
+            memoriesAdjusted: injections.memoryIds.length,
+            sessionQuality,
+            strengthDelta,
+          });
+        }
 
         const latencyMs = Date.now() - startMs;
         if (metricsStore) {

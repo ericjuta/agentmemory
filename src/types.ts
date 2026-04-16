@@ -1,3 +1,4 @@
+// Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 export interface Session {
   id: string;
   project: string;
@@ -15,6 +16,7 @@ export interface RawObservation {
   sessionId: string;
   timestamp: string;
   hookType: HookType;
+  turnId?: string;
   toolName?: string;
   toolInput?: unknown;
   toolOutput?: unknown;
@@ -27,6 +29,7 @@ export interface CompressedObservation {
   id: string;
   sessionId: string;
   timestamp: string;
+  turnId?: string;
   type: ObservationType;
   title: string;
   subtitle?: string;
@@ -72,6 +75,7 @@ export interface Memory {
   sourceObservationIds?: string[];
   isLatest: boolean;
   forgetAfter?: string;
+  lastAccessedAt?: string;
 }
 
 export interface SessionSummary {
@@ -92,6 +96,7 @@ export type HookType =
   | "pre_tool_use"
   | "post_tool_use"
   | "post_tool_failure"
+  | "assistant_result"
   | "pre_compact"
   | "subagent_start"
   | "subagent_stop"
@@ -99,6 +104,41 @@ export type HookType =
   | "task_completed"
   | "stop"
   | "session_end";
+
+export interface TurnCapsule {
+  id: string;
+  sessionId: string;
+  turnId: string;
+  project: string;
+  cwd: string;
+  createdAt: string;
+  updatedAt: string;
+  userPrompt?: string;
+  assistantConclusion?: string;
+  files: string[];
+  concepts: string[];
+  hadFailure: boolean;
+  hadDecision: boolean;
+  sourceObservationIds: string[];
+  importantObservationIds: string[];
+  maxImportance: number;
+}
+
+export interface SessionWorkingSet {
+  sessionId: string;
+  project: string;
+  cwd: string;
+  updatedAt: string;
+  latestTurnId?: string;
+  latestCompletedTurnId?: string;
+  latestCompletedCapsule?: TurnCapsule;
+  latestAssistantConclusion?: string;
+  latestImportantFiles: string[];
+  latestImportantConcepts: string[];
+  latestImportantObservationIds: string[];
+  latestHadFailure: boolean;
+  latestHadDecision: boolean;
+}
 
 export interface HookPayload {
   hookType: HookType;
@@ -179,7 +219,26 @@ export interface HealthSnapshot {
   cpu: { userMicros: number; systemMicros: number; percent: number };
   eventLoopLagMs: number;
   uptimeSeconds: number;
-  kvConnectivity?: { status: string; latencyMs?: number; error?: string };
+  kvConnectivity?: {
+    status: string;
+    latencyMs?: number;
+    error?: string;
+    consecutiveFailures?: number;
+    lastSuccessAt?: string;
+    lastFailureAt?: string;
+  };
+  snapshotPersistence?: {
+    status: "ok" | "error";
+    consecutiveFailures: number;
+    lastSuccessAt?: string;
+    lastFailureAt?: string;
+    error?: string;
+  };
+  pipeline?: {
+    compressActive: number;
+    compressPending: number;
+    totalInflight: number;
+  };
   status: "healthy" | "degraded" | "critical";
   alerts: string[];
 }
