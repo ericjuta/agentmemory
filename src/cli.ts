@@ -383,25 +383,44 @@ async function runStatus() {
   }
 
   try {
-    const [healthRes, sessionsRes, graphRes, memoriesRes] = await Promise.all([
+    const [
+      healthRes,
+      sessionsRes,
+      graphRes,
+      memoriesRes,
+      lessonsRes,
+      actionsRes,
+      crystalsRes,
+    ] = await Promise.all([
       fetch(`${base}/agentmemory/health`, { signal: AbortSignal.timeout(5000) }).then((r) => r.json()).catch(() => null),
       fetch(`${base}/agentmemory/sessions`, { signal: AbortSignal.timeout(5000) }).then((r) => r.json()).catch(() => null),
       fetch(`${base}/agentmemory/graph/stats`, { signal: AbortSignal.timeout(5000) }).then((r) => r.json()).catch(() => null),
-      fetch(`${base}/agentmemory/export`, { signal: AbortSignal.timeout(5000) }).then((r) => r.json()).catch(() => null),
+      fetch(`${base}/agentmemory/memories`, { signal: AbortSignal.timeout(5000) }).then((r) => r.json()).catch(() => null),
+      fetch(`${base}/agentmemory/lessons`, { signal: AbortSignal.timeout(5000) }).then((r) => r.json()).catch(() => null),
+      fetch(`${base}/agentmemory/actions`, { signal: AbortSignal.timeout(5000) }).then((r) => r.json()).catch(() => null),
+      fetch(`${base}/agentmemory/crystals`, { signal: AbortSignal.timeout(5000) }).then((r) => r.json()).catch(() => null),
     ]);
 
     const h = healthRes?.health;
     const status = healthRes?.status || "unknown";
     const version = healthRes?.version || "?";
-    const sessions = Array.isArray(sessionsRes?.sessions) ? sessionsRes.sessions.length : 0;
-    const nodes = graphRes?.nodes || 0;
-    const edges = graphRes?.edges || 0;
+    const sessionList = Array.isArray(sessionsRes?.sessions) ? sessionsRes.sessions : [];
+    const sessions = sessionList.length;
+    const nodes = graphRes?.nodes || graphRes?.totalNodes || 0;
+    const edges = graphRes?.edges || graphRes?.totalEdges || 0;
     const cb = healthRes?.circuitBreaker?.state || "closed";
     const heapMB = h?.memory ? Math.round(h.memory.heapUsed / 1048576) : 0;
     const uptime = h?.uptimeSeconds ? Math.round(h.uptimeSeconds) : 0;
 
-    const obsCount = memoriesRes?.observations?.length || 0;
-    const memCount = memoriesRes?.memories?.length || 0;
+    const obsCount = sessionList.reduce(
+      (sum: number, session: { observationCount?: number }) =>
+        sum + (session.observationCount || 0),
+      0,
+    );
+    const memCount = Array.isArray(memoriesRes?.memories) ? memoriesRes.memories.length : 0;
+    const lessonCount = Array.isArray(lessonsRes?.lessons) ? lessonsRes.lessons.length : 0;
+    const actionCount = Array.isArray(actionsRes?.actions) ? actionsRes.actions.length : 0;
+    const crystalCount = Array.isArray(crystalsRes?.crystals) ? crystalsRes.crystals.length : 0;
     const estFullTokens = obsCount * 80;
     const estInjectedTokens = Math.min(obsCount, 50) * 38;
     const tokensSaved = estFullTokens - estInjectedTokens;
@@ -414,6 +433,9 @@ async function runStatus() {
       `Sessions:     ${sessions}`,
       `Observations: ${obsCount}`,
       `Memories:     ${memCount}`,
+      `Lessons:      ${lessonCount}`,
+      `Actions:      ${actionCount}`,
+      `Crystals:     ${crystalCount}`,
       `Graph:        ${nodes} nodes, ${edges} edges`,
       `Circuit:      ${cb}`,
       `Heap:         ${heapMB} MB`,
