@@ -1,6 +1,6 @@
 name: agentmemory
-version: 0.8.1
-description: "Persistent cross-session memory for OpenClaw via agentmemory. 95.2% retrieval accuracy on LongMemEval-S."
+version: 0.8.12
+description: "Persistent cross-session memory for OpenClaw via agentmemory with startup injection, query-aware refresh, tool capture, and session-end maintenance."
 author: "Rohit Ghumare"
 homepage: "https://github.com/rohitg00/agentmemory"
 license: Apache-2.0
@@ -22,6 +22,10 @@ config:
   enabled: true
   base_url: http://localhost:3111
   token_budget: 2000
+  inject_context: true
+  query_aware_refresh: true
+  run_session_end_maintenance: true
   min_confidence: 0.5
   fallback_on_error: true
   timeout_ms: 5000
+  maintenance_timeout_ms: 30000

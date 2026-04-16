@@ -327,7 +327,7 @@ Install agentmemory: run `npx @agentmemory/agentmemory` in a separate terminal t
 <summary><b>OpenClaw (paste this prompt)</b></summary>
 
 ```
-Install agentmemory for OpenClaw. Run `npx @agentmemory/agentmemory` in a separate terminal to start the memory server on localhost:3111. Then add this to my OpenClaw MCP config so agentmemory is available with all 43 memory tools:
+Install agentmemory for OpenClaw. Run `npx @agentmemory/agentmemory` in a separate terminal to start the memory server on localhost:3111. Then add this to my OpenClaw MCP config so agentmemory is available with all 44 memory tools:
 
 {
   "mcpServers": {
@@ -338,7 +338,7 @@ Install agentmemory for OpenClaw. Run `npx @agentmemory/agentmemory` in a separa
   }
 }
 
-Restart OpenClaw. Verify with `curl http://localhost:3111/agentmemory/health`. Open http://localhost:3113 for the real-time viewer. For deeper 4-hook gateway integration, see integrations/openclaw in the agentmemory repo.
+Restart OpenClaw. Verify with `curl http://localhost:3111/agentmemory/health`. Open http://localhost:3113 for the real-time viewer. For deeper 4-hook gateway integration with startup injection, query-aware refresh, tool capture, and session-end maintenance, see integrations/openclaw in the agentmemory repo.
 ```
 
 Full guide: [`integrations/openclaw/`](integrations/openclaw/)

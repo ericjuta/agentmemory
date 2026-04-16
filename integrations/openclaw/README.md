@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/MCP-43_tools-1f6feb?style=flat-square" alt="43 MCP tools" />
+  <img src="https://img.shields.io/badge/MCP-44_tools-1f6feb?style=flat-square" alt="44 MCP tools" />
   <img src="https://img.shields.io/badge/Hooks-4_lifecycle-1f6feb?style=flat-square" alt="4 lifecycle hooks" />
   <img src="https://img.shields.io/badge/R@5-95.2%25-00875f?style=flat-square" alt="95.2% R@5" />
   <img src="https://img.shields.io/badge/Self--hosted-yes-00875f?style=flat-square" alt="Self-hosted" />
@@ -30,7 +30,7 @@
 Install agentmemory for OpenClaw. Run `npx @agentmemory/agentmemory` in a
 separate terminal to start the memory server on localhost:3111. Then add
 this to my OpenClaw MCP config so agentmemory is available as an MCP
-server with all 43 memory tools (memory_recall, memory_save,
+server with all 44 memory tools (memory_recall, memory_save,
 memory_smart_search, memory_timeline, memory_profile, etc.):
 
 {
@@ -50,7 +50,9 @@ http://localhost:3113 to watch memories being captured live.
 If I want deeper integration with pre-LLM context injection and
 automatic tool-use capture, copy `integrations/openclaw` from the
 agentmemory repo to `~/.openclaw/plugins/memory/agentmemory` — that
-gives me the 4-hook gateway plugin instead of just the MCP server.
+gives me the 4-hook gateway plugin instead of just the MCP server,
+including startup injection, query-aware prompt refresh, tool capture,
+and session-end summarization/consolidation.
 ```
 
 That's it. OpenClaw handles the rest.
@@ -87,7 +89,7 @@ Then add to your OpenClaw MCP config:
 }
 ```
 
-OpenClaw now has access to all 43 MCP tools including `memory_recall`, `memory_save`, `memory_smart_search`, `memory_timeline`, `memory_profile`, and more.
+OpenClaw now has access to all 44 MCP tools including `memory_recall`, `memory_save`, `memory_smart_search`, `memory_timeline`, `memory_profile`, and more.
 
 ### Option 2: Gateway plugin (deeper integration)
 
@@ -106,9 +108,9 @@ npx @agentmemory/agentmemory
 The plugin auto-detects the running server and hooks into the OpenClaw agent loop:
 
 - `onSessionStart` starts a new session on the agentmemory server and injects any returned context
-- `onPreLlmCall` injects token-budgeted memories before each LLM call (BM25 + vector + graph fusion)
-- `onPostToolUse` records every tool use, error, and decision after execution
-- `onSessionEnd` marks the session complete so raw observations can be compressed into structured memory
+- `onPreLlmCall` captures new prompt submissions, runs query-aware `/agentmemory/context/refresh` when possible, and falls back to token-budgeted `/agentmemory/context`
+- `onPostToolUse` records both successful tool use and tool failures with the required workspace/session metadata
+- `onSessionEnd` summarizes the session, closes it, and runs `crystals/auto` plus `consolidate-pipeline` so the backend can distill what the session produced
 
 Configure via `~/.openclaw/plugins/memory/agentmemory/config.yaml`:
 
@@ -116,7 +118,11 @@ Configure via `~/.openclaw/plugins/memory/agentmemory/config.yaml`:
 enabled: true
 base_url: http://localhost:3111
 token_budget: 2000
+inject_context: true
+query_aware_refresh: true
+run_session_end_maintenance: true
 min_confidence: 0.5
+maintenance_timeout_ms: 30000
 ```
 
 ## What your agent gets
