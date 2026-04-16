@@ -58,6 +58,8 @@ Out of scope:
   indexes, and lifecycle state own memory behavior.
 - Markdown artifacts are views, projections, sync targets, or ingest sources,
   not the primary runtime database.
+- The target is a semantic superset of the current OpenClaw memory stack at the
+  agent and operator contract level, not a storage-format superset.
 - Preserve semantics, not implementation trivia. Matching the user and operator
   experience matters; copying OpenClaw file layouts and lock mechanics does not.
 - Do not recreate `memory-core` internals such as `.dreams` storage formats,
