@@ -251,7 +251,6 @@ export function registerCompressFunction(
   sdk.registerFunction(
     "mem::compress-retry",
     async () => {
-      const ctx = getContext();
       const entries = await kv.list<{
         obsId: string;
         sessionId: string;
@@ -299,7 +298,7 @@ export function registerCompressFunction(
       }
 
       if (retried > 0 || removed > 0) {
-        ctx.logger.info("Compress retry complete", { retried, removed });
+        logger.info("Compress retry complete", { retried, removed });
       }
       return { retried, removed };
     },

@@ -280,7 +280,6 @@ export function registerRelationsFunction(sdk: ISdk, kv: StateKV): void {
   sdk.registerFunction(
     "mem::auto-relate",
     async () => {
-      const ctx = getContext();
       const memories = await kv.list<Memory>(KV.memories).catch(() => []);
       const latest = memories.filter((m) => m.isLatest);
       if (latest.length < 2) return { created: 0, skipped: "insufficient_memories" };
@@ -360,7 +359,7 @@ export function registerRelationsFunction(sdk: ISdk, kv: StateKV): void {
       }
 
       if (created > 0) {
-        ctx.logger.info("Auto-relate complete", { created });
+        logger.info("Auto-relate complete", { created });
       }
       return { created };
     },

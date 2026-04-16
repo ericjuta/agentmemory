@@ -13,6 +13,7 @@ function makeSnapshot(
     memory: {
       heapUsed: 10,
       heapTotal: 100,
+      heapLimit: 1000,
       rss: 20,
       external: 5,
     },
@@ -71,5 +72,22 @@ describe("evaluateHealth", () => {
     expect(result.alerts).toContain(
       "health_snapshot_persist_error_streak_1",
     );
+  });
+
+  it("uses heapLimit when available instead of transient heapTotal", () => {
+    const result = evaluateHealth(
+      makeSnapshot({
+        memory: {
+          heapUsed: 95,
+          heapTotal: 100,
+          heapLimit: 1000,
+          rss: 120,
+          external: 5,
+        },
+      }),
+    );
+
+    expect(result.status).toBe("healthy");
+    expect(result.alerts).toEqual([]);
   });
 });
