@@ -278,10 +278,7 @@ export function registerRelationsFunction(sdk: ISdk, kv: StateKV): void {
   );
 
   sdk.registerFunction(
-    {
-      id: "mem::auto-relate",
-      description: "Discover and create relations between memories that share concepts or files",
-    },
+    "mem::auto-relate",
     async () => {
       const ctx = getContext();
       const memories = await kv.list<Memory>(KV.memories).catch(() => []);

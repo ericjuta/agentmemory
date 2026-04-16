@@ -240,7 +240,7 @@ export function registerApiTriggers(
   });
 
   sdk.registerFunction(
-    { id: "api::context-refresh" },
+    "api::context-refresh",
     async (
       req: ApiRequest<{
         sessionId: string;
@@ -285,7 +285,7 @@ export function registerApiTriggers(
   });
 
   sdk.registerFunction(
-    { id: "api::semantic" },
+    "api::semantic",
     async (req: ApiRequest): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
@@ -300,7 +300,7 @@ export function registerApiTriggers(
   });
 
   sdk.registerFunction(
-    { id: "api::procedural" },
+    "api::procedural",
     async (req: ApiRequest): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
@@ -315,7 +315,7 @@ export function registerApiTriggers(
   });
 
   sdk.registerFunction(
-    { id: "api::auto-relate" },
+    "api::auto-relate",
     async (req: ApiRequest): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
@@ -330,7 +330,7 @@ export function registerApiTriggers(
   });
 
   sdk.registerFunction(
-    { id: "api::relations" },
+    "api::memory-relations",
     async (req: ApiRequest): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
@@ -344,7 +344,7 @@ export function registerApiTriggers(
   );
   sdk.registerTrigger({
     type: "http",
-    function_id: "api::relations",
+    function_id: "api::memory-relations",
     config: { api_path: "/agentmemory/memory-relations", http_method: "GET" },
   });
 
@@ -1066,7 +1066,7 @@ export function registerApiTriggers(
   });
 
   sdk.registerFunction(
-    { id: "api::graph-build" },
+    "api::graph-build",
     async (
       req: ApiRequest<{ project?: string; sessionId?: string }>,
     ): Promise<Response> => {

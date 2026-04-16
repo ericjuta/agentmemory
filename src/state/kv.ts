@@ -126,10 +126,7 @@ export class StateKV {
     try {
       const result = await this.withTimeout(
         operation,
-        this.sdk.trigger<TInput, TOutput>({
-          function_id: operation,
-          payload: data,
-        }),
+        this.sdk.trigger<TInput, TOutput>(operation, data),
       )
       this.resetFailures()
       return result
@@ -186,6 +183,5 @@ export class StateKV {
 
   private getErrorMessage(err: unknown): string {
     return err instanceof Error ? err.message : String(err)
->>>>>>> cf580aa (fix(kv): fast-fail unhealthy state operations)
   }
 }

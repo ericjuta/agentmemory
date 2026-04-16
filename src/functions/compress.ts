@@ -246,7 +246,7 @@ export function registerCompressFunction(
   );
 
   sdk.registerFunction(
-    { id: "mem::compress-retry", description: "Retry failed compressions from dead-letter" },
+    "mem::compress-retry",
     async () => {
       const ctx = getContext();
       const entries = await kv.list<{

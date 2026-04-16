@@ -17,8 +17,11 @@ import type {
 function mockSdk() {
   const functions = new Map<string, Function>();
   return {
-    registerFunction: (opts: { id: string }, handler: Function) => {
-      functions.set(opts.id, handler);
+    registerFunction: (
+      opts: string | { id: string },
+      handler: Function,
+    ) => {
+      functions.set(typeof opts === "string" ? opts : opts.id, handler);
     },
     registerTrigger: () => {},
     trigger: async (id: string, data: unknown) => {

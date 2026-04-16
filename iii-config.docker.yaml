@@ -1,5 +1,13 @@
-workers:
-  - name: iii-http
+modules:
+  - class: modules::state::StateModule
+    config:
+      adapter:
+        class: modules::state::adapters::KvStore
+        config:
+          store_method: file_based
+          file_path: /data/state_store.db
+
+  - class: modules::api::RestApiModule
     config:
       port: 3111
       host: 0.0.0.0
@@ -7,46 +15,30 @@ workers:
       cors:
         allowed_origins: ["http://localhost:3111", "http://localhost:3113", "http://127.0.0.1:3111", "http://127.0.0.1:3113"]
         allowed_methods: [GET, POST, PUT, DELETE, OPTIONS]
-  - name: iii-state
+
+  - class: modules::queue::QueueModule
     config:
       adapter:
-        name: kv
-        config:
-          store_method: file_based
-          file_path: ./data/state_store.db
-  - name: iii-queue
+        class: modules::queue::BuiltinQueueAdapter
+
+  - class: modules::pubsub::PubSubModule
     config:
       adapter:
-        name: builtin
-  - name: iii-pubsub
+        class: modules::pubsub::LocalAdapter
+
+  - class: modules::cron::CronModule
     config:
       adapter:
-        name: local
-  - name: iii-cron
-    config:
-      adapter:
-        name: kv
-  - name: iii-stream
+        class: modules::cron::KvCronAdapter
+
+  - class: modules::stream::StreamModule
     config:
       port: 3112
       host: 0.0.0.0
-      adapter:
-        name: kv
-        config:
-          store_method: file_based
-          file_path: ./data/stream_store
-  - name: iii-observability
+
+  - class: modules::observability::OtelModule
     config:
       enabled: true
       service_name: agentmemory
       exporter: memory
-      sampling_ratio: 1.0
-      metrics_enabled: true
       logs_enabled: true
-      logs_console_output: true
-  - name: iii-exec
-    config:
-      watch:
-        - src/**/*.ts
-      exec:
-        - node dist/index.mjs

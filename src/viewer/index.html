@@ -2546,7 +2546,7 @@
       }
 
       var html = '<div style="display:flex;gap:8px;margin-bottom:12px;">';
-      html += '<input class="search-input" type="text" placeholder="Search lessons..." value="' + esc(state.lessons.search) + '" oninput="state.lessons.search=this.value;renderLessons()" style="flex:1" />';
+      html += '<input class="search-input" id="lessons-search" type="text" placeholder="Search lessons..." value="' + esc(state.lessons.search) + '" style="flex:1" />';
       html += '<span style="font-size:12px;color:var(--ink-faint);align-self:center;">' + items.length + ' lessons</span>';
       html += '</div>';
 
@@ -2570,6 +2570,13 @@
       }
 
       el.innerHTML = html;
+      var lessonsSearch = document.getElementById('lessons-search');
+      if (lessonsSearch) {
+        lessonsSearch.addEventListener('input', function() {
+          state.lessons.search = this.value;
+          renderLessons();
+        });
+      }
     }
 
     async function loadActions() {
@@ -2599,8 +2606,8 @@
       }
 
       var html = '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">';
-      html += '<input class="search-input" type="text" placeholder="Search actions..." value="' + esc(state.actions.search) + '" oninput="state.actions.search=this.value;renderActions()" style="flex:1;min-width:200px" />';
-      html += '<select style="padding:4px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--ink);" onchange="state.actions.statusFilter=this.value;renderActions()">';
+      html += '<input class="search-input" id="actions-search" type="text" placeholder="Search actions..." value="' + esc(state.actions.search) + '" style="flex:1;min-width:200px" />';
+      html += '<select id="actions-status-filter" style="padding:4px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--ink);">';
       html += '<option value="">All statuses</option>';
       ['pending','active','done','blocked','cancelled'].forEach(function(s) {
         html += '<option value="' + s + '"' + (statusFilter === s ? ' selected' : '') + '>' + s + '</option>';
@@ -2632,6 +2639,20 @@
       }
 
       el.innerHTML = html;
+      var actionsSearch = document.getElementById('actions-search');
+      if (actionsSearch) {
+        actionsSearch.addEventListener('input', function() {
+          state.actions.search = this.value;
+          renderActions();
+        });
+      }
+      var actionsStatusFilter = document.getElementById('actions-status-filter');
+      if (actionsStatusFilter) {
+        actionsStatusFilter.addEventListener('change', function() {
+          state.actions.statusFilter = this.value;
+          renderActions();
+        });
+      }
     }
 
     async function loadCrystals() {
@@ -2661,7 +2682,7 @@
       }
 
       var html = '<div style="display:flex;gap:8px;margin-bottom:12px;">';
-      html += '<input class="search-input" type="text" placeholder="Search crystals..." value="' + esc(state.crystals.search) + '" oninput="state.crystals.search=this.value;renderCrystals()" style="flex:1" />';
+      html += '<input class="search-input" id="crystals-search" type="text" placeholder="Search crystals..." value="' + esc(state.crystals.search) + '" style="flex:1" />';
       html += '<span style="font-size:12px;color:var(--ink-faint);align-self:center;">' + items.length + ' crystals</span>';
       html += '</div>';
 
@@ -2708,6 +2729,13 @@
       }
 
       el.innerHTML = html;
+      var crystalsSearch = document.getElementById('crystals-search');
+      if (crystalsSearch) {
+        crystalsSearch.addEventListener('input', function() {
+          state.crystals.search = this.value;
+          renderCrystals();
+        });
+      }
     }
 
     async function loadAudit() {
@@ -2993,7 +3021,7 @@
 
       html += '</div>';
 
-      html += '<div style="text-align:center;margin-top:20px;"><button class="btn btn-primary" onclick="refreshOperations()">Refresh</button></div>';
+      html += '<div style="text-align:center;margin-top:20px;"><button class="btn btn-primary" data-action="refresh-operations">Refresh</button></div>';
       el.innerHTML = html;
     }
 
@@ -3276,6 +3304,10 @@
       }
       if (action === 'refresh-dashboard') {
         refreshDashboard();
+        return;
+      }
+      if (action === 'refresh-operations') {
+        refreshOperations();
         return;
       }
       if (action === 'zoom-graph') {

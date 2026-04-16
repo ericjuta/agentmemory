@@ -840,19 +840,7 @@ Built on [iii-engine](https://iii.dev)'s three primitives — no Express, no Pos
 
 </details>
 
-<<<<<<< HEAD
 <h2 id="development"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/tags/light/section-development.svg"><img src="assets/tags/section-development.svg" alt="Development" height="32" /></picture></h2>
-||||||| parent of 1061623 (docs(README): add Operations section with operational guidance)
-### Functions (123 mem:: functions)
-
-| Category | Functions | Purpose |
-|----------|-----------|---------|
-| **Core Memory** | `observe`, `compress`, `search`, `smart-search` | Capture, compress, and search observations |
-| | `context`, `summarize`, `remember`, `forget` | Build context, generate summaries, save/delete memories |
-| | `file-context`, `enrich`, `patterns`, `generate-rules` | File history, enrichment, pattern detection, rule generation |
-| | `migrate`, `export`, `import` | SQLite migration, JSON round-trip (v0.3.0–v0.7.2) |
-| **Search** | `expand-query`, `sliding-window`, `graph-retrieval` | Query reformulations, context enrichment, entity-based retrieval |
-| | `retention-score`, `retention-evict` | Ebbinghaus decay with tiered storage (hot/warm/cold) |
 | **Memory Evolution** | `evolve`, `auto-forget`, `evict` | Version memories, TTL expiry, importance-based eviction |
 | | `consolidate`, `consolidate-pipeline` | Merge duplicates, 4-tier consolidation (working→episodic→semantic→procedural) |
 | | `verify`, `cascade-update` | Citation chain provenance, staleness propagation |
