@@ -10,6 +10,9 @@ material semantic loss.
 the public seams and operator workflows that the current OpenClaw memory stack
 provides.
 
+This is a greenfield target for agentmemory-native design. It is not a request
+to port OpenClaw memory internals line-for-line.
+
 ## Current Answer
 
 Current agentmemory is not a full replacement.
@@ -49,6 +52,20 @@ Out of scope:
 - declaring success because "recall seems good enough" while operator workflows
   still regress
 
+## Design Principles
+
+- Agentmemory-native state is the source of truth. The server's native store,
+  indexes, and lifecycle state own memory behavior.
+- Markdown artifacts are views, projections, sync targets, or ingest sources,
+  not the primary runtime database.
+- Preserve semantics, not implementation trivia. Matching the user and operator
+  experience matters; copying OpenClaw file layouts and lock mechanics does not.
+- Do not recreate `memory-core` internals such as `.dreams` storage formats,
+  stale lock files, or file-backed promotion state unless no cleaner
+  agentmemory-native design can satisfy the same contract.
+- Replacement means OpenClaw can depend on agentmemory as a first-class memory
+  runtime, not as a patchwork of adapters hiding a second memory system.
+
 ## Replacement Bar
 
 Agentmemory is only a full replacement when all of the following are true:
@@ -59,8 +76,8 @@ Agentmemory is only a full replacement when all of the following are true:
    all still exist.
 3. Durable promotion preserves grounded snippet semantics instead of replacing
    them with synthesis-only memory objects.
-4. Existing workspace artifacts remain usable or are mirrored with stable,
-   reversible sync:
+4. Existing workspace artifacts remain usable as stable agentmemory-projected
+   or synchronized views:
    `MEMORY.md`, `memory/*.md`, `DREAMS.md`, and `memory/dreaming/*`.
 5. `memory-wiki` bridge mode still has usable artifacts and provenance inputs,
    or agentmemory ships an equivalent public contract and migration path.
@@ -102,9 +119,9 @@ Likely touchpoints:
 - `README.md`
 - new tests for OpenClaw plugin lifecycle behavior
 
-### 2. OpenClaw Tool Compatibility Layer
+### 2. OpenClaw-Facing Recall Interface
 
-Provide agentmemory-backed compatibility for the OpenClaw memory tool contract.
+Provide an OpenClaw-facing recall interface backed by agentmemory-native state.
 
 Minimum bar:
 
@@ -122,13 +139,17 @@ This can be implemented as:
 It should not require OpenClaw prompts and skills to be rewritten just to keep
 basic memory usage working.
 
-### 3. Workspace File Contract
+### 3. Artifact Projection And Workspace Bridge
 
-Implement a real workspace-memory bridge instead of a one-way export.
+Implement a real workspace bridge instead of a one-way export.
+
+The source of truth should stay in agentmemory-native state. Workspace markdown
+should be projected from, or reconciled with, that state.
 
 Required semantics:
 
-- ingest `MEMORY.md` and `memory/*.md` as first-class sources
+- ingest `MEMORY.md` and `memory/*.md` as first-class external sources when
+  present
 - preserve source identity so recalls can point back to exact file locations
 - two-way sync policy with conflict handling
 - stable markers or fingerprints for promoted entries so repeat syncs and
@@ -140,9 +161,11 @@ The current Claude bridge in
 enough. It exports a rendered file, but it does not provide full grounded file
 semantics.
 
-### 4. Grounded Short-Term Promotion
+### 4. Grounded Durable Promotion
 
-Implement the missing OpenClaw-style promotion lane inside agentmemory.
+Implement an agentmemory-native grounded promotion subsystem that preserves the
+important semantics of OpenClaw promotion without cloning its internal file
+formats.
 
 Required behavior:
 
@@ -157,10 +180,10 @@ Required behavior:
 This is the core feature that makes current OpenClaw `memory-core` semantics
 meaningfully different from consolidation.
 
-### 5. Dreaming Phase Parity
+### 5. Dreaming And Reflection Lifecycle
 
-Implement a first-class dreaming subsystem instead of treating consolidation as
-"close enough."
+Implement a first-class agentmemory lifecycle for dreaming/reflection and
+durable promotion instead of treating consolidation as "close enough."
 
 Required behavior:
 
@@ -175,13 +198,14 @@ Required artifacts:
 
 - `DREAMS.md` diary output
 - optional phase reports under `memory/dreaming/<phase>/YYYY-MM-DD.md`
-- machine state equivalent to the current short-term store, phase signals, and
-  checkpoints
+- agentmemory-native machine state that covers the current short-term store,
+  phase signals, and checkpoints semantics without requiring the same on-disk
+  layout
 
-### 6. Grounded Historical Backfill
+### 6. Historical Replay And Grounded Review Lane
 
-Implement the review and recovery lane that OpenClaw currently has for older
-daily notes.
+Implement an agentmemory-native review and recovery lane for historical daily
+notes.
 
 Required behavior:
 
@@ -195,10 +219,10 @@ Required behavior:
 Without this, agentmemory still lacks a full replacement for the operator lane
 used to inspect and replay older notes safely.
 
-### 7. Public Artifact Contract For `memory-wiki`
+### 7. Public Artifact Feed For `memory-wiki`
 
-Expose a public artifact surface equivalent to what OpenClaw currently expects
-from the active memory plugin.
+Expose a public artifact feed that gives `memory-wiki` the same effective input
+surface it currently gets from the active memory plugin.
 
 Required artifact classes:
 
@@ -233,11 +257,11 @@ good base, but they do not yet cover OpenClaw-specific memory-state parity.
 | Workstream | What must be added or changed |
 |---|---|
 | OpenClaw plugin | Replace legacy integration with a modern native plugin package and tests. |
-| File bridge | Add ingest + sync code for workspace memory files, not just export. |
-| Promotion | Add a grounded short-term recall store, ranking, explain, apply, and rehydrate logic. |
-| Dreaming | Add phase orchestration, artifacts, scheduling, and contamination controls. |
+| Artifact projection | Add ingest + sync code for workspace memory artifacts, while keeping native state authoritative. |
+| Promotion | Add a grounded short-term recall and promotion subsystem with ranking, explain, apply, and rehydrate logic. |
+| Dreaming | Add a native phase orchestration and artifact projection lifecycle with contamination controls. |
 | Backfill | Add grounded preview/write/stage/rollback workflow for historical daily notes. |
-| Artifact export | Expose OpenClaw-compatible public artifacts for wiki bridge mode. |
+| Public artifact feed | Expose OpenClaw-compatible public artifacts for wiki bridge mode. |
 | Diagnostics | Extend health and repair paths to cover bridge drift, promotion state, and dreaming state. |
 
 ## Acceptance Criteria
@@ -249,7 +273,7 @@ Do not call this complete until the following are true:
 - Prompt-time recall still works through the agentmemory plugin.
 - Tool-time recall still works through `memory_search` / `memory_get`
   compatible behavior.
-- Durable promotion writes grounded entries into `MEMORY.md`.
+- Server-native promotion state writes grounded entries into `MEMORY.md`.
 - Dreaming outputs write to `DREAMS.md` and phase reports.
 - Grounded historical backfill can preview, apply, and roll back.
 - `memory-wiki` bridge mode still sees usable memory artifacts.
@@ -276,5 +300,6 @@ These do not count as completion:
 - "consolidation exists"
 - "we can export something to `MEMORY.md`"
 - "OpenClaw can technically boot with the plugin enabled"
+- "we copied the old `.dreams` file layout into agentmemory"
 
 The bar is semantic replacement, not partial overlap.
