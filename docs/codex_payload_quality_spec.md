@@ -361,7 +361,42 @@ structured enrich input.
 - enrichment remains skipped for tools with no meaningful file/query signal
 - docs stop overstating coverage if some tools intentionally remain out of lane
 
-## 6. AssistantResult Capture and Freshness Completeness
+## 6. Non-Shell Post-Tool Capture Coverage
+
+### Current Problem
+
+Current native Codex post-tool observation capture is still effectively
+shell-only.
+
+Effects:
+
+- file reads, writes, edits, globs, and greps executed through native tools are
+  under-observed after execution
+- observability is skewed toward shell-based work
+- memory usefulness and freshness are worse for the exact high-signal tool
+  families most likely to matter
+
+### Required Outcome
+
+Post-tool capture coverage should include the same high-signal native tool
+families that the integration already treats as important enough for pre-tool
+enrichment.
+
+### Minimum lane
+
+- `Edit`
+- `Write`
+- `Read`
+- `Glob`
+- `Grep`
+
+### Acceptance Criteria
+
+- these tool families emit post-tool observations with useful result payloads
+- post-tool capture is no longer biased toward shell-only execution
+- docs and tests reflect the actual capture set
+
+## 7. AssistantResult Capture and Freshness Completeness
 
 ### Current Problem
 
@@ -391,7 +426,135 @@ Preferred outcome is a real `AssistantResult` event.
 - if emitted, `assistant_result` updates turn capsules and working set
 - if not emitted, docs and tests stop implying stronger host parity than exists
 
-## 7. Compatibility and Regression Coverage
+## 8. Strict Hook-Type Validation
+
+### Current Problem
+
+`/agentmemory/observe` and `mem::observe` currently accept any string-like hook
+type instead of enforcing the known hook family set.
+
+Effects:
+
+- unknown event families can silently enter storage
+- typos and drift become persistent data problems instead of clean failures
+- downstream logic has to tolerate malformed or unsupported hook semantics
+
+### Required Outcome
+
+The observe surface must reject unknown hook types by default.
+
+### Acceptance Criteria
+
+- unsupported hook types return a clear validation failure
+- only the declared hook family set is accepted for normal observation storage
+- intentional future expansion requires explicit schema/type updates
+
+## 9. Event Identity, Ordering, and Source Semantics
+
+### Current Problem
+
+Current native Codex observe payloads are stamped at send time and do not carry
+stable event identity.
+
+Effects:
+
+- retries cannot be made strongly idempotent
+- cross-event ordering is fuzzier than necessary
+- downstream debugging has weaker provenance
+
+### Required Outcome
+
+Native Codex observation payloads should carry enough source metadata to make
+ordering and dedup explicit.
+
+### Required fields
+
+- `event_id`
+  - stable per emitted lifecycle event
+- `source_timestamp`
+  - timestamp from the source event, not only send-time stamping
+- `source`
+  - e.g. `codex-native`
+- `payload_version`
+  - explicit schema version for the native adapter contract
+
+### Optional fields
+
+- `sequence`
+  - monotonic per session or per turn if available
+- `capabilities`
+  - explicit booleans or strings describing optional lanes the sender supports
+
+### Acceptance Criteria
+
+- retries can be deduplicated by identity instead of heuristics alone
+- ordering logic can rely on source timestamps when available
+- payload drift is versioned instead of silent
+
+## 10. Schema Negotiation and Capability Signaling
+
+### Current Problem
+
+Right now native Codex integration largely assumes shared implied knowledge
+between sender and receiver.
+
+Effects:
+
+- contract drift is hard to detect early
+- the receiver cannot distinguish old native senders from newer ones cleanly
+- optional lanes like `assistant_result` or richer post-tool payloads are not
+  explicitly negotiable
+
+### Required Outcome
+
+The native payload contract should advertise version and capability semantics.
+
+### Minimum advertised semantics
+
+- sender identity
+- payload version
+- optional lane support, such as:
+  - `assistant_result`
+  - structured post-tool payloads
+  - query-aware context
+  - event ids
+
+### Acceptance Criteria
+
+- agentmemory can branch on declared payload version if needed
+- docs define the versioned native contract
+- capability mismatches fail clearly in tests or diagnostics
+
+## 11. Persistence Classes and Storage Policy
+
+### Current Problem
+
+Observation storage policy is still too blunt. Events are mostly either
+captured or not, without a first-class persistence class.
+
+Effects:
+
+- diagnostics-only or ephemeral signals can leak into long-term retrieval
+- low-value operational metadata competes with actual recall material
+
+### Required Outcome
+
+The integration should distinguish between:
+
+- `persistent`
+  - normal memory-bearing observations
+- `ephemeral`
+  - useful during the active session, not intended for long-term recall
+- `diagnostics_only`
+  - useful for operators/viewers/logs, not for memory retrieval
+
+### Acceptance Criteria
+
+- shutdown markers and similar low-signal lifecycle events do not enter the
+  same persistence lane as real recall material
+- docs define the intended persistence class for each event family
+
+## 12. Compatibility and Regression Coverage
 
 ### Current Problem
 
@@ -411,12 +574,44 @@ Add explicit tests for:
    observations
 6. events with omitted `cwd` are rejected or normalized before storage
 7. enrichment coverage for the intended file/search tool lanes
+8. non-shell post-tool capture for native file/search tools
+9. strict hook-type validation failures for unknown types
+10. event identity / source timestamp preservation where the native adapter
+    claims to provide them
+11. payload version / capability signaling
+12. persistence-class behavior for non-recall lifecycle events
 
 ### Required Principle
 
 Tests should pin the actual supported wire contract, not an idealized one.
 
-## Documentation Updates
+## 13. Live End-to-End Contract Verification
+
+### Current Problem
+
+Unit tests are necessary but not enough. Full integration can still drift if
+the live native Codex process emits a different wire shape than the test
+fixtures.
+
+### Required Outcome
+
+Add one end-to-end verification lane using a real native Codex session against
+an instrumented agentmemory test server.
+
+### Minimum proof points
+
+- what actually hits `/agentmemory/observe`
+- what actually hits `/agentmemory/context`
+- what actually hits `/agentmemory/enrich`
+- what actually hits `/agentmemory/session/start`
+- what actually hits `/agentmemory/session/end`
+
+### Acceptance Criteria
+
+- at least one test or harness path validates the live native contract instead
+  of only mocked internal fixtures
+
+## 14. Documentation Updates
 
 At minimum update docs so they do not overstate current parity.
 
@@ -429,6 +624,10 @@ Required clarifications:
 - freshness may still be stop-driven unless the host emits `assistant_result`
 - pre-tool enrichment coverage should reflect the tools that actually send
   structured enrich input
+- post-tool capture coverage should reflect whether native non-shell tools are
+  included
+- strict hook allowlisting, payload versioning, and persistence classes are
+  part of the full native integration contract
 
 ## Recommended Implementation Order
 
@@ -437,9 +636,14 @@ Required clarifications:
 3. remove or drop low-signal shutdown observations
 4. fix missing cwd/project attribution on secondary events
 5. expand pre-tool enrichment coverage
-6. add compatibility and hygiene tests
-7. update docs to match reality
-8. add native `assistant_result` emission if the host can support it
+6. expand non-shell post-tool capture
+7. add strict hook allowlisting
+8. add `event_id`, `payload_version`, `source`, and source timestamp semantics
+9. define persistence classes for lifecycle events
+10. add compatibility and hygiene tests
+11. add live end-to-end contract verification
+12. update docs to match reality
+13. add native `assistant_result` emission if the host can support it
 
 ## Standard Of Done
 
@@ -450,5 +654,10 @@ This lane is done when:
 - bare shutdown markers no longer create low-value observations
 - all native capture payloads have stable project/cwd attribution
 - enrichment coverage matches the stated gate
+- non-shell post-tool capture is first-class for the intended native tools
+- unknown hook families are rejected instead of silently stored
+- native payloads carry stable identity/version/source semantics
+- persistence class is explicit for non-recall lifecycle events
 - compatibility tests pin the real supported wire shapes
+- at least one live end-to-end verification path exists
 - docs describe actual parity, not aspirational parity
