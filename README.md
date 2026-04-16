@@ -44,7 +44,8 @@
   <a href="#mcp-server">MCP</a> &bull;
   <a href="#real-time-viewer">Viewer</a> &bull;
   <a href="#configuration">Config</a> &bull;
-  <a href="#api">API</a>
+  <a href="#api">API</a> &bull;
+  <a href="#operations">Operations</a>
 </p>
 
 ---
@@ -143,6 +144,8 @@ agentmemory works with any agent that supports hooks, MCP, or REST API. All agen
 <p align="center">
   <sub>Works with <strong>any</strong> agent that speaks MCP or HTTP. One server, memories shared across all of them.</sub>
 </p>
+
+The included `docker-compose.yml` starts both `iii-engine` and the `agentmemory-worker`, mounts `iii-config.yaml` into the engine container, and persists iii state in the named `iii-data` volume.
 
 ---
 
@@ -563,14 +566,14 @@ agentmemory auto-detects your provider. For best results, install local embeddin
 npm install @xenova/transformers
 ```
 
-| Provider | Model | Cost | Notes |
-|---|---|---|---|
-| **Local (recommended)** | `all-MiniLM-L6-v2` | Free | Offline, +8pp recall over BM25-only |
-| Gemini | `text-embedding-004` | Free tier | 1500 RPM |
-| OpenAI | `text-embedding-3-small` | $0.02/1M | Highest quality |
-| Voyage AI | `voyage-code-3` | Paid | Optimized for code |
-| Cohere | `embed-english-v3.0` | Free trial | General purpose |
-| OpenRouter | Any model | Varies | Multi-model proxy |
+| Provider | Model | Dimensions | Env Var | Notes |
+|---|---|---|---|---|
+| **Local (recommended)** | `all-MiniLM-L6-v2` | 384 | `EMBEDDING_PROVIDER=local` | Free, offline, +8pp recall over BM25-only |
+| Gemini | `gemini-embedding-2-preview` | 3072 full / configurable lower | `GEMINI_API_KEY` | Set `GEMINI_EMBEDDING_MODEL` or `GEMINI_EMBEDDING_DIMENSIONS` to override |
+| OpenAI | `text-embedding-3-small` | 1536 | `OPENAI_API_KEY` | $0.02/1M tokens |
+| Voyage AI | `voyage-code-3` | 1024 | `VOYAGE_API_KEY` | Optimized for code |
+| Cohere | `embed-english-v3.0` | 1024 | `COHERE_API_KEY` | Free trial available |
+| OpenRouter | Any embedding model | varies | `OPENROUTER_API_KEY` | Multi-model proxy |
 
 ---
 
@@ -720,12 +723,15 @@ agentmemory auto-detects from your environment. No API key needed if you have a 
 
 ### Environment Variables
 
-Create `~/.agentmemory/.env`:
+Create `.env.local` in the repo root:
 
 ```env
 # LLM provider (pick one, or leave empty for Claude subscription)
 # ANTHROPIC_API_KEY=sk-ant-...
 # GEMINI_API_KEY=...
+# GEMINI_MODEL=gemini-flash-latest
+# GEMINI_EMBEDDING_MODEL=gemini-embedding-2-preview
+# GEMINI_EMBEDDING_DIMENSIONS=3072
 # OPENROUTER_API_KEY=...
 
 # Embedding provider (auto-detected, or override)
@@ -763,8 +769,10 @@ Create `~/.agentmemory/.env`:
                                    #   log only per Claude Code docs)
                                    # Observations are still captured via
                                    # PostToolUse regardless of this flag.
-# GRAPH_EXTRACTION_ENABLED=false
+# GRAPH_EXTRACTION_ENABLED=true
+# GRAPH_EXTRACTION_BATCH_SIZE=10
 # CONSOLIDATION_ENABLED=true
+# CONSOLIDATION_DECAY_DAYS=30
 # LESSON_DECAY_ENABLED=true
 # OBSIDIAN_AUTO_EXPORT=false
 # AGENTMEMORY_EXPORT_ROOT=~/.agentmemory
@@ -833,6 +841,156 @@ Built on [iii-engine](https://iii.dev)'s three primitives — no Express, no Pos
 </details>
 
 <h2 id="development"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/tags/light/section-development.svg"><img src="assets/tags/section-development.svg" alt="Development" height="32" /></picture></h2>
+| **Memory Evolution** | `evolve`, `auto-forget`, `evict` | Version memories, TTL expiry, importance-based eviction |
+| | `consolidate`, `consolidate-pipeline` | Merge duplicates, 4-tier consolidation (working→episodic→semantic→procedural) |
+| | `verify`, `cascade-update` | Citation chain provenance, staleness propagation |
+| **Knowledge Graph** | `graph-extract`, `graph-query`, `graph-stats` | LLM entity extraction, BFS traversal, statistics |
+| | `temporal-graph-extract`, `temporal-query` | Temporal knowledge extraction + point-in-time queries |
+| **Relationships** | `relate`, `get-related`, `timeline`, `profile` | Memory relations, chronological view, project profiles |
+| **Claude Bridge** | `claude-bridge-read`, `claude-bridge-sync` | Bi-directional sync with MEMORY.md |
+| **Actions** | `action-create`, `action-update`, `action-get`, `action-list` | Dependency-aware work items with typed edges |
+| | `action-edge-create` | Create typed edges between actions (requires, unlocks, gated_by) |
+| | `frontier`, `next` | Priority-ranked unblocked action queue |
+| **Leases** | `lease-acquire`, `lease-release`, `lease-renew`, `lease-cleanup` | TTL-based atomic agent claims with auto-cleanup |
+| **Routines** | `routine-create`, `routine-freeze`, `routine-list`, `routine-run`, `routine-status` | Frozen workflow templates instantiated into action chains |
+| **Signals** | `signal-send`, `signal-read`, `signal-threads`, `signal-cleanup` | Threaded inter-agent messaging with read receipts |
+| **Checkpoints** | `checkpoint-create`, `checkpoint-resolve`, `checkpoint-list`, `checkpoint-expire` | External condition gates (CI, approval, deploy) |
+| **Mesh** | `mesh-register`, `mesh-sync`, `mesh-receive`, `mesh-list`, `mesh-remove` | P2P sync between agentmemory instances |
+| **Sentinels** | `sentinel-create`, `sentinel-trigger`, `sentinel-check`, `sentinel-cancel`, `sentinel-list`, `sentinel-expire` | Event-driven condition watchers |
+| **Sketches** | `sketch-create`, `sketch-add`, `sketch-promote`, `sketch-discard`, `sketch-list`, `sketch-gc` | Ephemeral action graphs with auto-expiry |
+| **Crystals** | `crystallize`, `auto-crystallize`, `crystal-list`, `crystal-get` | LLM-powered compaction of action chains into digests |
+| **Lessons** | `lesson-save`, `lesson-recall`, `lesson-list`, `lesson-strengthen`, `lesson-decay-sweep` | Confidence-scored lessons with dedup, reinforcement, and decay |
+| **Facets** | `facet-tag`, `facet-untag`, `facet-query`, `facet-get`, `facet-stats`, `facet-dimensions` | Multi-dimensional tagging with AND/OR queries |
+| **Diagnostics** | `diagnose`, `heal` | Self-diagnosis across 8 categories with auto-fix |
+| **Flow** | `flow-compress` | LLM summarization of completed action chains |
+| **Branch** | `detect-worktree`, `list-worktrees`, `branch-sessions` | Git worktree detection for shared memory |
+| **Team** | `team-share`, `team-feed`, `team-profile` | Namespaced shared + private team memory |
+| **Governance** | `governance-delete`, `governance-bulk`, `audit-query` | Delete with audit trail, bulk operations |
+| **Snapshots** | `snapshot-create`, `snapshot-list`, `snapshot-restore` | Git-versioned memory state |
+| **Export** | `obsidian-export` | Obsidian-compatible Markdown with YAML frontmatter + wikilinks |
+
+### Data Model (34 KV scopes)
+
+| Scope | Stores |
+|-------|--------|
+| `mem:sessions` | Session metadata, project, timestamps |
+| `mem:obs:{session_id}` | Compressed observations with embeddings |
+| `mem:summaries` | End-of-session summaries |
+| `mem:memories` | Long-term memories (versioned, with relationships) |
+| `mem:relations` | Memory relationship graph |
+| `mem:profiles` | Aggregated project profiles |
+| `mem:emb:{obs_id}` | Vector embeddings |
+| `mem:index:bm25` | Persisted BM25 index |
+| `mem:metrics` | Per-function metrics |
+| `mem:health` | Health snapshots |
+| `mem:config` | Runtime configuration overrides |
+| `mem:confidence` | Confidence scores for memories |
+| `mem:claude-bridge` | Claude Code MEMORY.md bridge state |
+| `mem:graph:nodes` | Knowledge graph entities |
+| `mem:graph:edges` | Knowledge graph relationships |
+| `mem:semantic` | Semantic memories (consolidated facts) |
+| `mem:procedural` | Procedural memories (extracted workflows) |
+| `mem:team:{id}:shared` | Team shared items |
+| `mem:team:{id}:users:{uid}` | Per-user team state |
+| `mem:team:{id}:profile` | Aggregated team profile |
+| `mem:audit` | Audit trail for all operations |
+| `mem:actions` | Dependency-aware work items |
+| `mem:action-edges` | Typed edges (requires, unlocks, gated_by, etc.) |
+| `mem:leases` | TTL-based agent work claims |
+| `mem:routines` | Frozen workflow templates |
+| `mem:routine-runs` | Instantiated routine execution tracking |
+| `mem:signals` | Inter-agent messages with threading |
+| `mem:checkpoints` | External condition gates |
+| `mem:mesh` | Registered P2P sync peers |
+| `mem:sentinels` | Event-driven condition watchers |
+| `mem:sketches` | Ephemeral action graphs |
+| `mem:crystals` | Compacted action chain digests |
+| `mem:facets` | Multi-dimensional tags |
+| `mem:lessons` | Confidence-scored lessons with decay |
+
+## Operations
+
+### Health checks
+
+The worker exposes two health endpoints:
+
+| Endpoint | What it checks | Auth |
+|----------|---------------|------|
+| `GET /agentmemory/livez` | Process liveness (served directly from the viewer HTTP server, no engine dependency) | Public |
+| `GET /agentmemory/health` | Full runtime health — heap, CPU, event loop lag, connection state, function metrics | Requires `AGENTMEMORY_SECRET` when set |
+
+Docker healthcheck uses `/agentmemory/livez` on port 3113. This endpoint never touches the iii-engine, so the container stays healthy even when the engine is temporarily unresponsive.
+
+### Common failure: StateKV timeouts after long engine uptime
+
+The iii-engine's internal websocket channels can go stale after 12–24+ hours of continuous operation. When this happens:
+
+**Symptoms:**
+- `docker ps` shows the worker as `unhealthy`
+- Worker logs show `StateKV state::set timed out after 5000ms` or `StateKV temporarily unavailable`
+- `/agentmemory/health` returns 503 or times out
+- `/agentmemory/livez` should still return 200 (it bypasses the engine)
+
+**Fix:**
+```bash
+docker compose restart
+```
+
+This restarts both the engine and worker, clearing stale channels. Data is preserved in the `iii-data` volume.
+
+**Mitigation already in place:**
+- Maintenance loops (consolidation, auto-forget, eviction, index verify) pause automatically when health is degraded via the maintenance gate
+- KV calls use short timeouts with cooldown periods instead of blocking on long SDK waits
+- Consolidation scans are bounded per run to avoid saturating the engine
+- Healthcheck tolerances: 10s timeout, 5 retries, 30s start period
+
+### Restarting and rebuilding
+
+```bash
+# Restart without rebuilding (clears stale engine state)
+docker compose restart
+
+# Rebuild after code changes
+docker compose up -d --build
+
+# Rebuild only the worker (faster, keeps engine running)
+docker compose up -d --build agentmemory-worker
+
+# View worker logs
+docker compose logs -f agentmemory-worker
+
+# Check container health
+docker compose ps
+```
+
+### Launch Agent (macOS)
+
+agentmemory is registered as a Launch Agent (`com.agentmemory`) that starts on login. The startup script is at `~/Projects/agentmemory/start.sh`. Logs go to `/tmp/agentmemory.log`.
+
+```bash
+# Check if running
+launchctl list | grep agentmemory
+
+# Restart via launchctl
+launchctl kickstart -k gui/$(id -u)/com.agentmemory
+
+# Or restart docker directly
+cd ~/Projects/agentmemory && docker compose restart
+```
+
+### Key tuning variables
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `CONSOLIDATION_ENABLED` | `true` | Enable/disable the 4-tier consolidation pipeline |
+| `AUTO_FORGET_ENABLED` | `true` | Enable/disable automatic memory eviction |
+| `LESSON_DECAY_ENABLED` | `true` | Enable/disable lesson confidence decay |
+| `TOKEN_BUDGET` | `8000` | Max tokens injected at session start |
+| `MAX_OBS_PER_SESSION` | `500` | Cap on observations per session |
+
+When diagnosing stability issues, disable `AUTO_FORGET_ENABLED` and `CONSOLIDATION_ENABLED` first to isolate whether maintenance loops are contributing to engine saturation.
+
+## Development
 
 ```bash
 npm run dev               # Hot reload
@@ -845,4 +1003,13 @@ npm run test:integration  # API tests (requires running services)
 
 <h2 id="license"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/tags/light/section-license.svg"><img src="assets/tags/section-license.svg" alt="License" height="32" /></picture></h2>
 
-[Apache-2.0](LICENSE)
+This repository is distributed under [Apache-2.0](LICENSE).
+
+If you publish or redistribute this fork:
+
+- keep the [LICENSE](LICENSE) file with the source or any redistributions
+- keep the [NOTICE](NOTICE) file with the source or any redistributions from this fork
+- retain upstream copyright and attribution notices that still apply
+- clearly mark any files you modify when redistributing source form under Apache-2.0 section 4(b)
+
+Original upstream project: [rohitg00/agentmemory](https://github.com/rohitg00/agentmemory)

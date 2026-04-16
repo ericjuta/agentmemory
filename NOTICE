@@ -1,0 +1,23 @@
+This repository is a modified fork of rohitg00/agentmemory:
+https://github.com/rohitg00/agentmemory
+
+This fork is distributed under the Apache License, Version 2.0. It retains
+upstream attribution and copyright notices, and adds fork-specific change
+notices to commentable files modified or added in this repository relative to
+upstream/main.
+
+Original upstream copyright:
+Copyright 2026 Rohit Ghumare
+
+Repository-level notice for changed files that do not support inline comments:
+- .claude-plugin/marketplace.json (modified in this fork)
+- bun.lock (added in this fork)
+- package-lock.json (removed in this fork)
+- plugin/.claude-plugin/hooks.json (added in this fork)
+- plugin/.claude-plugin/plugin.json (modified in this fork)
+- plugin/hooks.json (added in this fork)
+- plugin/hooks/hooks.json (modified in this fork)
+- plugin/plugin.json (added in this fork)
+
+README.md also carries a visible fork and license notice for public
+redistribution.
