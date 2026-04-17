@@ -63,3 +63,4 @@ reasons:
 - [`NOTICE`](../NOTICE)
 - [`docs/codex_followups_spec.md`](./codex_followups_spec.md)
 - [`docs/retrieval_freshness_spec.md`](./retrieval_freshness_spec.md)
+- [`docs/memory_mechanisms_expansion_spec.md`](./memory_mechanisms_expansion_spec.md)
