@@ -6,6 +6,13 @@
 
 Forward-looking audit and expansion roadmap.
 
+Implementation specs derived from this roadmap now live in:
+
+- [`memory_mechanisms_implementation_spec.md`](./memory_mechanisms_implementation_spec.md)
+- [`belief_graph_spec.md`](./belief_graph_spec.md)
+- [`mission_layer_spec.md`](./mission_layer_spec.md)
+- [`handoff_packets_spec.md`](./handoff_packets_spec.md)
+
 This document answers a narrower product question than the existing fork docs:
 
 - given the current state of `agentmemory`,
