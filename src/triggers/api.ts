@@ -1,6 +1,11 @@
 // Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 import type { ISdk, ApiRequest } from "iii-sdk";
-import type { Session, CompressedObservation, HookPayload } from "../types.js";
+import type {
+  Session,
+  CompressedObservation,
+  HookPayload,
+  ObservationPersistenceClass,
+} from "../types.js";
 import { KV } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
 import { getLatestHealth } from "../health/monitor.js";
@@ -83,6 +88,34 @@ function parseOptionalPositiveInt(value: unknown): number | undefined | null {
   return parsed;
 }
 
+function parseOptionalStringArray(
+  value: unknown,
+): string[] | undefined | null {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value)) return null;
+  const parsed: string[] = [];
+  for (const entry of value) {
+    const str = asNonEmptyString(entry);
+    if (!str) return null;
+    parsed.push(str);
+  }
+  return parsed;
+}
+
+function parseOptionalPersistenceClass(
+  value: unknown,
+): ObservationPersistenceClass | undefined | null {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (
+    value === "persistent" ||
+    value === "ephemeral" ||
+    value === "diagnostics_only"
+  ) {
+    return value;
+  }
+  return null;
+}
+
 export function registerApiTriggers(
   sdk: ISdk,
   kv: StateKV,
@@ -158,7 +191,7 @@ export function registerApiTriggers(
 
   sdk.registerFunction("api::observe",
     async (req: ApiRequest<HookPayload>): Promise<Response> => {
-      const body = (req.body ?? {}) as Record<string, unknown>;
+      const body = (req.body ?? {}) as unknown as Record<string, unknown>;
       const hookType = asNonEmptyString(body.hookType);
       const sessionId = asNonEmptyString(body.sessionId);
       const project = asNonEmptyString(body.project);
@@ -173,6 +206,42 @@ export function registerApiTriggers(
           },
         };
       }
+      const source = body.source === undefined
+        ? undefined
+        : (asNonEmptyString(body.source) ?? undefined);
+      const payloadVersionRaw = body.payloadVersion ?? body.payload_version;
+      const payloadVersion = payloadVersionRaw === undefined
+        ? undefined
+        : (asNonEmptyString(payloadVersionRaw) ?? undefined);
+      const eventIdRaw = body.eventId ?? body.event_id;
+      const eventId = eventIdRaw === undefined
+        ? undefined
+        : (asNonEmptyString(eventIdRaw) ?? undefined);
+      const sourceTimestampRaw =
+        body.sourceTimestamp ?? body.source_timestamp;
+      const sourceTimestamp = sourceTimestampRaw === undefined
+        ? undefined
+        : (asNonEmptyString(sourceTimestampRaw) ?? undefined);
+      const capabilities = parseOptionalStringArray(body.capabilities);
+      const persistenceClass = parseOptionalPersistenceClass(
+        body.persistenceClass ?? body.persistence_class,
+      );
+      if (
+        (body.source !== undefined && !source) ||
+        (payloadVersionRaw !== undefined && !payloadVersion) ||
+        (eventIdRaw !== undefined && !eventId) ||
+        (sourceTimestampRaw !== undefined && !sourceTimestamp) ||
+        capabilities === null ||
+        persistenceClass === null
+      ) {
+        return {
+          status_code: 400,
+          body: {
+            error:
+              "source, payload_version, event_id, source_timestamp, capabilities, and persistence_class must be valid when provided",
+          },
+        };
+      }
       const payload: HookPayload = {
         hookType: hookType as HookPayload["hookType"],
         sessionId,
@@ -180,8 +249,22 @@ export function registerApiTriggers(
         cwd,
         timestamp,
         data: body.data,
+        source,
+        payloadVersion,
+        eventId,
+        sourceTimestamp,
+        capabilities,
+        persistenceClass,
       };
       const result = await sdk.trigger({ function_id: "mem::observe", payload });
+      if (
+        typeof result === "object" &&
+        result !== null &&
+        "success" in result &&
+        result.success === false
+      ) {
+        return { status_code: 400, body: result };
+      }
       return { status_code: 201, body: result };
     },
   );

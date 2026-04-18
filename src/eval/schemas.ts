@@ -6,6 +6,7 @@ const HookTypeEnum = z.enum([
   "pre_tool_use",
   "post_tool_use",
   "post_tool_failure",
+  "assistant_result",
   "pre_compact",
   "subagent_start",
   "subagent_stop",
@@ -39,6 +40,14 @@ export const ObserveInputSchema = z.object({
   cwd: z.string().min(1),
   timestamp: z.string().min(1),
   data: z.unknown(),
+  source: z.string().min(1).optional(),
+  payloadVersion: z.string().min(1).optional(),
+  eventId: z.string().min(1).optional(),
+  sourceTimestamp: z.string().min(1).optional(),
+  capabilities: z.array(z.string().min(1)).optional(),
+  persistenceClass: z
+    .enum(["persistent", "ephemeral", "diagnostics_only"])
+    .optional(),
 });
 
 export const CompressOutputSchema = z.object({

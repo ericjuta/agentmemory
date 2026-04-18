@@ -10,6 +10,10 @@ describe('KV', () => {
     expect(KV.observations('ses_123')).toBe('mem:obs:ses_123')
   })
 
+  it('generates observe receipt scope with session ID', () => {
+    expect(KV.observeReceipts('ses_123')).toBe('mem:observe-receipts:ses_123')
+  })
+
   it('has correct summaries scope', () => {
     expect(KV.summaries).toBe('mem:summaries')
   })

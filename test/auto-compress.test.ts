@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { RawObservation } from "../src/types.js";
 
@@ -73,16 +76,22 @@ function validPayload(overrides: Partial<Record<string, unknown>> = {}) {
 }
 
 describe("mem::observe auto-compress gate (#138)", () => {
+  const originalCwd = process.cwd();
+  let tempCwd = "";
+
   beforeEach(() => {
-    // Reset module cache so observe.js re-imports config.js with the
-    // fresh AGENTMEMORY_AUTO_COMPRESS env state. Without this, a later
-    // test that sets the env var can be undermined by cached module
-    // state from an earlier test (and vice versa).
     vi.resetModules();
     delete process.env["AGENTMEMORY_AUTO_COMPRESS"];
+    tempCwd = mkdtempSync(join(tmpdir(), "agentmemory-auto-compress-"));
+    process.chdir(tempCwd);
   });
   afterEach(() => {
     delete process.env["AGENTMEMORY_AUTO_COMPRESS"];
+    process.chdir(originalCwd);
+    if (tempCwd) {
+      rmSync(tempCwd, { recursive: true, force: true });
+      tempCwd = "";
+    }
   });
 
   it("default (AGENTMEMORY_AUTO_COMPRESS unset): does NOT fire mem::compress", async () => {

@@ -28,6 +28,24 @@ describe("Zod Schemas", () => {
       expect(result.success).toBe(true);
     });
 
+    it("accepts native observe metadata", () => {
+      const result = ObserveInputSchema.safeParse({
+        hookType: "assistant_result",
+        sessionId: "ses_abc",
+        project: "my-project",
+        cwd: "/home/user",
+        timestamp: "2026-01-01T00:00:00Z",
+        source: "codex-native",
+        payloadVersion: "1",
+        eventId: "evt_123",
+        sourceTimestamp: "2026-01-01T00:00:00Z",
+        capabilities: ["event_identity"],
+        persistenceClass: "persistent",
+        data: { assistant_text: "done", is_final: true },
+      });
+      expect(result.success).toBe(true);
+    });
+
     it("rejects missing sessionId", () => {
       const result = ObserveInputSchema.safeParse({
         hookType: "post_tool_use",

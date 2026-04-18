@@ -66,19 +66,24 @@ describe("observe freshness plumbing", () => {
       project: "/project",
       cwd: "/project",
       timestamp: "2026-03-29T12:00:05.000Z",
+      source: "codex-native",
+      payloadVersion: "1",
+      eventId: "evt-stop-turn-2",
+      persistenceClass: "ephemeral",
+      capabilities: ["event_identity"],
       data: {
+        session_id: "session-1",
         turn_id: "turn-2",
+        cwd: "/project",
+        model: "gpt-5.4",
         last_assistant_message:
           "The latest turn capsule is now retrieved immediately.",
       },
-    })) as { observationId: string };
+    })) as { observationId: string; persisted: boolean };
 
     const observations = await kv.list<any>(KV.observations("session-1"));
-    expect(observations).toHaveLength(2);
-    expect(observations[1].turnId).toBe("turn-2");
-    expect(observations[1].assistantResponse).toBe(
-      "The latest turn capsule is now retrieved immediately.",
-    );
+    expect(result.persisted).toBe(false);
+    expect(observations).toHaveLength(1);
 
     const capsule = await kv.get<any>(KV.turnCapsules, "session-1:turn-2");
     expect(capsule.userPrompt).toBe("What changed most recently?");
@@ -90,5 +95,134 @@ describe("observe freshness plumbing", () => {
     const workingSet = await kv.get<any>(KV.workingSets, "session-1");
     expect(workingSet.latestCompletedTurnId).toBe("turn-2");
     expect(workingSet.latestCompletedCapsule.turnId).toBe("turn-2");
+  });
+
+  it("rejects unknown hook families instead of storing them", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerObserveFunction(sdk as never, kv as never);
+
+    const result = (await sdk.trigger("mem::observe", {
+      hookType: "unknown_hook",
+      sessionId: "session-1",
+      project: "/project",
+      cwd: "/project",
+      timestamp: "2026-03-29T12:00:00.000Z",
+      data: {},
+    })) as { success: false; error: string };
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Unsupported hookType");
+    expect(await kv.list<any>(KV.observations("session-1"))).toHaveLength(0);
+  });
+
+  it("rejects unsupported native payload versions cleanly", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerObserveFunction(sdk as never, kv as never);
+
+    const result = (await sdk.trigger("mem::observe", {
+      hookType: "post_tool_use",
+      sessionId: "session-1",
+      project: "/project",
+      cwd: "/project",
+      timestamp: "2026-03-29T12:00:00.000Z",
+      source: "codex-native",
+      payloadVersion: "99",
+      eventId: "evt-1",
+      persistenceClass: "persistent",
+      capabilities: ["structured_post_tool_payload"],
+      data: {
+        session_id: "session-1",
+        turn_id: "turn-1",
+        cwd: "/project",
+        model: "gpt-5.4",
+        tool_name: "Read",
+        tool_use_id: "toolu_1",
+        tool_input: { file_path: "/project/src/observe.ts" },
+        tool_output: { output: "ok" },
+      },
+    })) as { success: false; error: string };
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Unsupported codex-native payloadVersion");
+    expect(await kv.list<any>(KV.observations("session-1"))).toHaveLength(0);
+  });
+
+  it("uses native event ids for idempotent observe retries", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerObserveFunction(sdk as never, kv as never);
+
+    const payload = {
+      hookType: "post_tool_use" as const,
+      sessionId: "session-1",
+      project: "/project",
+      cwd: "/project",
+      timestamp: "2026-03-29T12:00:00.000Z",
+      source: "codex-native",
+      payloadVersion: "1",
+      eventId: "evt-2",
+      persistenceClass: "persistent" as const,
+      capabilities: ["structured_post_tool_payload", "event_identity"],
+      data: {
+        session_id: "session-1",
+        turn_id: "turn-1",
+        cwd: "/project",
+        model: "gpt-5.4",
+        tool_name: "Read",
+        tool_use_id: "toolu_2",
+        tool_input: { file_path: "/project/src/observe.ts" },
+        tool_output: { output: "ok" },
+      },
+    };
+
+    const first = (await sdk.trigger("mem::observe", payload)) as {
+      observationId: string;
+    };
+    const second = (await sdk.trigger("mem::observe", payload)) as {
+      deduplicated: boolean;
+      observationId: string;
+    };
+
+    const observations = await kv.list<any>(KV.observations("session-1"));
+    expect(first.observationId).toBe(second.observationId);
+    expect(second.deduplicated).toBe(true);
+    expect(observations).toHaveLength(1);
+    expect(observations[0].eventId).toBe("evt-2");
+  });
+
+  it("keeps diagnostics-only shutdown markers out of recall storage", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerObserveFunction(sdk as never, kv as never);
+
+    const result = (await sdk.trigger("mem::observe", {
+      hookType: "stop",
+      sessionId: "session-1",
+      project: "/project",
+      cwd: "/project",
+      timestamp: "2026-03-29T12:00:05.000Z",
+      source: "codex-native",
+      payloadVersion: "1",
+      eventId: "evt-stop",
+      persistenceClass: "diagnostics_only",
+      capabilities: ["event_identity"],
+      data: {
+        session_id: "session-1",
+        cwd: "/project",
+      },
+    })) as { observationId: string; persisted: boolean };
+
+    expect(result.persisted).toBe(false);
+    expect(await kv.list<any>(KV.observations("session-1"))).toHaveLength(0);
+    expect(await kv.get<any>(KV.turnCapsules, "session-1:turn-1")).toBeNull();
+    expect(
+      await kv.get<any>(KV.observeReceipts("session-1"), "evt-stop"),
+    ).toMatchObject({
+      eventId: "evt-stop",
+      observationId: result.observationId,
+      persistenceClass: "diagnostics_only",
+    });
   });
 });

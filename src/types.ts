@@ -16,6 +16,12 @@ export interface RawObservation {
   sessionId: string;
   timestamp: string;
   hookType: HookType;
+  source?: string;
+  payloadVersion?: string;
+  eventId?: string;
+  sourceTimestamp?: string;
+  capabilities?: string[];
+  persistenceClass?: ObservationPersistenceClass;
   turnId?: string;
   toolName?: string;
   toolInput?: unknown;
@@ -29,6 +35,12 @@ export interface CompressedObservation {
   id: string;
   sessionId: string;
   timestamp: string;
+  source?: string;
+  payloadVersion?: string;
+  eventId?: string;
+  sourceTimestamp?: string;
+  capabilities?: string[];
+  persistenceClass?: ObservationPersistenceClass;
   turnId?: string;
   type: ObservationType;
   title: string;
@@ -105,6 +117,11 @@ export type HookType =
   | "stop"
   | "session_end";
 
+export type ObservationPersistenceClass =
+  | "persistent"
+  | "ephemeral"
+  | "diagnostics_only";
+
 export interface TurnCapsule {
   id: string;
   sessionId: string;
@@ -147,6 +164,21 @@ export interface HookPayload {
   cwd: string;
   timestamp: string;
   data: unknown;
+  source?: string;
+  payloadVersion?: string;
+  eventId?: string;
+  sourceTimestamp?: string;
+  capabilities?: string[];
+  persistenceClass?: ObservationPersistenceClass;
+}
+
+export interface ObserveReceipt {
+  eventId: string;
+  observationId: string;
+  sessionId: string;
+  hookType: HookType;
+  persistenceClass: ObservationPersistenceClass;
+  storedAt: string;
 }
 
 export interface ProviderConfig {
