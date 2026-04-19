@@ -2304,6 +2304,67 @@ export function registerApiTriggers(
   });
   sdk.registerTrigger({ type: "http", function_id: "api::verify", config: { api_path: "/agentmemory/verify", http_method: "POST" } });
 
+  sdk.registerFunction("api::belief-project",  async (req: ApiRequest) => {
+    const denied = checkAuth(req, secret);
+    if (denied) return denied;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const project = body.project === undefined ? undefined : asNonEmptyString(body.project);
+    const memoryIds = parseOptionalStringArray(body.memoryIds);
+    if ((body.project !== undefined && !project) || memoryIds === null) {
+      return {
+        status_code: 400,
+        body: { error: "project must be a non-empty string and memoryIds must be a string array when provided" },
+      };
+    }
+    const result = await sdk.trigger({
+      function_id: "mem::belief-project",
+      payload: {
+        project,
+        memoryIds,
+        force: body.force === true,
+      },
+    });
+    return { status_code: 200, body: result };
+  });
+  sdk.registerTrigger({ type: "http", function_id: "api::belief-project", config: { api_path: "/agentmemory/beliefs/project", http_method: "POST" } });
+
+  sdk.registerFunction("api::belief-list",  async (req: ApiRequest) => {
+    const denied = checkAuth(req, secret);
+    if (denied) return denied;
+    const params = req.query_params || {};
+    const project = params.project === undefined ? undefined : asNonEmptyString(params.project);
+    const status = params.status === undefined ? undefined : asNonEmptyString(params.status);
+    const limit = parsePositiveIntQuery(params.limit, 100);
+    if ((params.project !== undefined && !project) || (params.status !== undefined && !status)) {
+      return {
+        status_code: 400,
+        body: { error: "project and status must be non-empty strings when provided" },
+      };
+    }
+    const result = await sdk.trigger({
+      function_id: "mem::belief-list",
+      payload: { project, status, limit },
+    });
+    return { status_code: 200, body: result };
+  });
+  sdk.registerTrigger({ type: "http", function_id: "api::belief-list", config: { api_path: "/agentmemory/beliefs", http_method: "GET" } });
+
+  sdk.registerFunction("api::belief-get",  async (req: ApiRequest) => {
+    const denied = checkAuth(req, secret);
+    if (denied) return denied;
+    const params = req.query_params || {};
+    const beliefId = asNonEmptyString(params.beliefId ?? params.id);
+    if (!beliefId) {
+      return { status_code: 400, body: { error: "beliefId is required" } };
+    }
+    const result = await sdk.trigger({
+      function_id: "mem::belief-get",
+      payload: { beliefId },
+    });
+    return { status_code: 200, body: result };
+  });
+  sdk.registerTrigger({ type: "http", function_id: "api::belief-get", config: { api_path: "/agentmemory/beliefs/get", http_method: "GET" } });
+
   sdk.registerFunction("api::cascade-update",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
     if (denied) return denied;

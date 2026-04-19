@@ -298,6 +298,46 @@ export interface MemoryRelation {
   confidence?: number;
 }
 
+export interface Belief {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  project: string;
+  claim: string;
+  normalizedClaim: string;
+  status: "active" | "superseded" | "contradicted" | "uncertain";
+  confidence: number;
+  supportingMemoryIds: string[];
+  contradictingMemoryIds: string[];
+  supersededByBeliefId?: string;
+  supersedesBeliefIds: string[];
+  sourceTypes: Memory["type"][];
+  files: string[];
+  concepts: string[];
+}
+
+export interface BeliefEvidence {
+  id: string;
+  beliefId: string;
+  memoryId: string;
+  relationType: "supports" | "contradicts" | "supersedes";
+  weight: number;
+  createdAt: string;
+}
+
+export interface BeliefProjection {
+  beliefId: string;
+  claim: string;
+  status: Belief["status"];
+  confidence: number;
+  supportCount: number;
+  contradictionCount: number;
+  superseded: boolean;
+  files: string[];
+  concepts: string[];
+  updatedAt: string;
+}
+
 export interface HybridSearchResult {
   observation: CompressedObservation;
   bm25Score: number;
@@ -353,6 +393,8 @@ export interface ExportData {
   profiles?: ProjectProfile[];
   graphNodes?: GraphNode[];
   graphEdges?: GraphEdge[];
+  beliefs?: Belief[];
+  beliefEvidence?: BeliefEvidence[];
   semanticMemories?: SemanticMemory[];
   proceduralMemories?: ProceduralMemory[];
   actions?: Action[];
@@ -582,6 +624,8 @@ export interface AuditEntry {
     | "core_add"
     | "core_remove"
     | "auto_page"
+    | "belief_project"
+    | "belief_update"
     | "relation_create";
   userId?: string;
   functionId: string;

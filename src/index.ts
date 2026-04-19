@@ -38,6 +38,7 @@ import { registerFileIndexFunction } from "./functions/file-index.js";
 import { registerConsolidateFunction } from "./functions/consolidate.js";
 import { registerPatternsFunction } from "./functions/patterns.js";
 import { registerRememberFunction } from "./functions/remember.js";
+import { registerBeliefsFunctions } from "./functions/beliefs.js";
 import { registerEvictFunction } from "./functions/evict.js";
 import { registerRelationsFunction } from "./functions/relations.js";
 import { registerTimelineFunction } from "./functions/timeline.js";
@@ -178,6 +179,7 @@ async function main() {
   registerConsolidateFunction(sdk, kv, provider);
   registerPatternsFunction(sdk, kv);
   registerRememberFunction(sdk, kv);
+  registerBeliefsFunctions(sdk, kv);
   registerEvictFunction(sdk, kv, onEvict);
 
   registerRelationsFunction(sdk, kv);
@@ -342,7 +344,7 @@ async function main() {
     `[agentmemory] Ready. ${embeddingProvider ? "Triple-stream (BM25+Vector+Graph)" : "BM25+Graph"} search active.`,
   );
   console.log(
-    `[agentmemory] Endpoints: 104 REST + 44 MCP tools + 6 MCP resources + 3 MCP prompts`,
+    `[agentmemory] Endpoints: 107 REST + 44 MCP tools + 6 MCP resources + 3 MCP prompts`,
   );
 
   const viewerPort = config.restPort + 2;

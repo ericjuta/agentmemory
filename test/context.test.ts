@@ -1,6 +1,7 @@
 // Fork note: added in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 import { describe, expect, it } from "vitest";
 import type {
+  Memory,
   CompressedObservation,
   GraphNode,
   ProceduralMemory,
@@ -12,6 +13,7 @@ import type {
   TurnCapsule,
 } from "../src/types.js";
 import { KV } from "../src/state/schema.js";
+import { registerBeliefsFunctions } from "../src/functions/beliefs.js";
 import { registerContextFunction } from "../src/functions/context.js";
 import { mockKV, mockSdk } from "./helpers/mocks.js";
 
@@ -538,5 +540,53 @@ describe("context freshness", () => {
     expect(matchIndex).toBeGreaterThan(-1);
     expect(otherIndex).toBeGreaterThan(-1);
     expect(matchIndex).toBeLessThan(otherIndex);
+  });
+
+  it("surfaces active beliefs ahead of plain memories when the query overlaps", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerBeliefsFunctions(sdk as never, kv as never);
+    registerContextFunction(sdk as never, kv as never, 1000);
+
+    const currentSession: Session = {
+      id: "session-belief",
+      project: "/project",
+      cwd: "/project",
+      startedAt: "2026-03-29T11:00:00.000Z",
+      status: "active",
+      observationCount: 1,
+    };
+    const memory: Memory = {
+      id: "mem-parser",
+      createdAt: "2026-03-29T11:00:01.000Z",
+      updatedAt: "2026-03-29T11:00:01.000Z",
+      type: "fact",
+      title: "Parser choice",
+      content: "Use parser Y for ingest.",
+      concepts: ["parser", "ingest"],
+      files: ["/project/src/parser.ts"],
+      sessionIds: [currentSession.id],
+      strength: 8,
+      version: 1,
+      isLatest: true,
+      sourceObservationIds: [],
+    };
+    await kv.set(KV.sessions, currentSession.id, currentSession);
+    await kv.set(KV.memories, memory.id, memory);
+    await sdk.trigger("mem::belief-project", { project: "/project" });
+
+    const result = (await sdk.trigger("mem::context", {
+      sessionId: currentSession.id,
+      project: "/project",
+      budget: 1000,
+      query: "parser Y ingest",
+    })) as { context: string };
+
+    const beliefIndex = result.context.indexOf("## Current Belief");
+    const memoryIndex = result.context.indexOf("## Fact Memory: Parser choice");
+    expect(result.context).toContain("Use parser Y for ingest.");
+    expect(beliefIndex).toBeGreaterThan(-1);
+    expect(memoryIndex).toBeGreaterThan(-1);
+    expect(beliefIndex).toBeLessThan(memoryIndex);
   });
 });

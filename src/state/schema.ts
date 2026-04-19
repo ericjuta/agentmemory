@@ -13,6 +13,8 @@ export const KV = {
   embeddings: (obsId: string) => `mem:emb:${obsId}`,
   bm25Index: "mem:index:bm25",
   relations: "mem:relations",
+  beliefs: "mem:beliefs",
+  beliefEvidence: "mem:belief-evidence",
   profiles: "mem:profiles",
   claudeBridge: "mem:claude-bridge",
   graphNodes: "mem:graph:nodes",

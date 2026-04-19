@@ -1,6 +1,7 @@
 // Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 import type { ISdk } from "iii-sdk";
 import type {
+  BeliefProjection,
   Session,
   CompressedObservation,
   SessionSummary,
@@ -17,6 +18,7 @@ import { StateKV } from "../state/kv.js";
 import { recordAccessBatch } from "./access-tracker.js";
 import { logger } from "../logger.js";
 import { GraphRetrieval } from "./graph-retrieval.js";
+import { listProjectedBeliefs } from "./beliefs.js";
 
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 3);
@@ -43,6 +45,10 @@ type RankedContextBlock = ContextBlock & {
 
 function normalizeFingerprint(text: string): string {
   return text.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.filter((value) => value.length > 0))];
 }
 
 function queryTerms(query?: string): string[] {
@@ -181,6 +187,27 @@ function formatMemory(memory: Memory): string {
   return lines.join("\n");
 }
 
+function formatBelief(projection: BeliefProjection): string {
+  const lines = ["## Current Belief", projection.claim];
+  lines.push(
+    `Status: ${projection.status} (confidence ${projection.confidence.toFixed(2)})`,
+  );
+  lines.push(
+    `Evidence: ${projection.supportCount} support / ${projection.contradictionCount} contradiction`,
+  );
+  if (projection.files.length > 0) {
+    lines.push(`Files: ${projection.files.slice(0, 5).join(", ")}`);
+  }
+  if (projection.concepts.length > 0) {
+    lines.push(`Concepts: ${projection.concepts.slice(0, 8).join(", ")}`);
+  }
+  return lines.join("\n");
+}
+
+function expandTerms(values: string[]): string[] {
+  return values.flatMap((value) => queryTerms(value));
+}
+
 function makeBlock(
   id: string,
   lane: Lane,
@@ -205,13 +232,6 @@ function makeBlock(
     sourceObservationIds: options.sourceObservationIds,
     isCapsule: options.isCapsule,
   };
-}
-
-function pushIfContent(
-  blocks: RankedContextBlock[],
-  block: RankedContextBlock | null,
-): void {
-  if (block) blocks.push(block);
 }
 
 function lanePriority(lane: Lane): number {
@@ -265,6 +285,32 @@ export function registerContextFunction(
             ),
           );
         }
+      }
+
+      const focusTerms = uniqueStrings([
+        ...terms,
+        ...expandTerms(workingSet?.latestImportantConcepts || []),
+        ...expandTerms(workingSet?.latestImportantFiles || []),
+        ...expandTerms(workingSet?.latestCompletedCapsule?.concepts || []),
+        ...expandTerms(workingSet?.latestCompletedCapsule?.files || []),
+      ]);
+
+      const projectedBeliefs = await listProjectedBeliefs(kv, data.project).catch(() => []);
+      for (const belief of projectedBeliefs
+        .filter((projection) => projection.status === "active")
+        .slice(0, 8)) {
+        const beliefText = [belief.claim, ...belief.files, ...belief.concepts].join(" ");
+        const warmBelief = scoreQueryOverlap(beliefText, focusTerms) > 0;
+        const lane = warmBelief ? warmBlocks : coldBlocks;
+        lane.push(
+          makeBlock(
+            `belief:${belief.beliefId}`,
+            warmBelief ? "warm" : "cold",
+            "memory",
+            formatBelief(belief),
+            new Date(belief.updatedAt).getTime(),
+          ),
+        );
       }
 
       const profile = await kv

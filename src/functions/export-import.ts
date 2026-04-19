@@ -8,6 +8,8 @@ import type {
   ExportData,
   GraphNode,
   GraphEdge,
+  Belief,
+  BeliefEvidence,
   SemanticMemory,
   ProceduralMemory,
   Action,
@@ -21,7 +23,6 @@ import type {
   Facet,
   Lesson,
   Insight,
-  ExportPagination,
   AccessLogExport,
 } from "../types.js";
 import { normalizeAccessLog } from "./access-tracker.js";
@@ -75,6 +76,8 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
       const [
         graphNodes,
         graphEdges,
+        beliefs,
+        beliefEvidence,
         semanticMemories,
         proceduralMemories,
         actions,
@@ -92,6 +95,8 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
       ] = await Promise.all([
         kv.list<GraphNode>(KV.graphNodes).catch(() => []),
         kv.list<GraphEdge>(KV.graphEdges).catch(() => []),
+        kv.list<Belief>(KV.beliefs).catch(() => []),
+        kv.list<BeliefEvidence>(KV.beliefEvidence).catch(() => []),
         kv.list<SemanticMemory>(KV.semantic).catch(() => []),
         kv.list<ProceduralMemory>(KV.procedural).catch(() => []),
         kv.list<Action>(KV.actions).catch(() => []),
@@ -118,6 +123,8 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
         profiles: profiles.length > 0 ? profiles : undefined,
         graphNodes: graphNodes.length > 0 ? graphNodes : undefined,
         graphEdges: graphEdges.length > 0 ? graphEdges : undefined,
+        beliefs: beliefs.length > 0 ? beliefs : undefined,
+        beliefEvidence: beliefEvidence.length > 0 ? beliefEvidence : undefined,
         semanticMemories:
           semanticMemories.length > 0 ? semanticMemories : undefined,
         proceduralMemories:
@@ -321,6 +328,12 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
         for (const e of await kv.list<{ id: string }>(KV.graphEdges).catch(() => [])) {
           await kv.delete(KV.graphEdges, e.id);
         }
+        for (const b of await kv.list<Belief>(KV.beliefs).catch(() => [])) {
+          await kv.delete(KV.beliefs, b.id);
+        }
+        for (const e of await kv.list<BeliefEvidence>(KV.beliefEvidence).catch(() => [])) {
+          await kv.delete(KV.beliefEvidence, e.id);
+        }
         for (const s of await kv.list<{ id: string }>(KV.semantic).catch(() => [])) {
           await kv.delete(KV.semantic, s.id);
         }
@@ -409,6 +422,24 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
             if (existing) { stats.skipped++; continue; }
           }
           await kv.set(KV.graphEdges, edge.id, edge);
+        }
+      }
+      if (importData.beliefs) {
+        for (const belief of importData.beliefs) {
+          if (strategy === "skip") {
+            const existing = await kv.get(KV.beliefs, belief.id).catch(() => null);
+            if (existing) { stats.skipped++; continue; }
+          }
+          await kv.set(KV.beliefs, belief.id, belief);
+        }
+      }
+      if (importData.beliefEvidence) {
+        for (const entry of importData.beliefEvidence) {
+          if (strategy === "skip") {
+            const existing = await kv.get(KV.beliefEvidence, entry.id).catch(() => null);
+            if (existing) { stats.skipped++; continue; }
+          }
+          await kv.set(KV.beliefEvidence, entry.id, entry);
         }
       }
       if (importData.semanticMemories) {
