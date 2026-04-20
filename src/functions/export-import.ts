@@ -29,6 +29,11 @@ import type {
   Lesson,
   Insight,
   AccessLogExport,
+  BranchOverlay,
+  GuardrailMemory,
+  DecisionMemory,
+  ComponentDossier,
+  RoutineCandidate,
 } from "../types.js";
 import { normalizeAccessLog } from "./access-tracker.js";
 import { KV } from "../state/schema.js";
@@ -97,6 +102,11 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
         facets,
         lessons,
         insights,
+        branchOverlays,
+        guardrails,
+        decisions,
+        componentDossiers,
+        routineCandidates,
         routines,
         routineRuns,
         signals,
@@ -121,6 +131,11 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
         kv.list<Facet>(KV.facets).catch(() => []),
         kv.list<Lesson>(KV.lessons).catch(() => []),
         kv.list<Insight>(KV.insights).catch(() => []),
+        kv.list<BranchOverlay>(KV.branchOverlays).catch(() => []),
+        kv.list<GuardrailMemory>(KV.guardrails).catch(() => []),
+        kv.list<DecisionMemory>(KV.decisions).catch(() => []),
+        kv.list<ComponentDossier>(KV.componentDossiers).catch(() => []),
+        kv.list<RoutineCandidate>(KV.routineCandidates).catch(() => []),
         kv.list<Routine>(KV.routines).catch(() => []),
         kv.list<RoutineRun>(KV.routineRuns).catch(() => []),
         kv.list<Signal>(KV.signals).catch(() => []),
@@ -156,6 +171,13 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
         facets: facets.length > 0 ? facets : undefined,
         lessons: lessons.length > 0 ? lessons : undefined,
         insights: insights.length > 0 ? insights : undefined,
+        branchOverlays: branchOverlays.length > 0 ? branchOverlays : undefined,
+        guardrails: guardrails.length > 0 ? guardrails : undefined,
+        decisions: decisions.length > 0 ? decisions : undefined,
+        componentDossiers:
+          componentDossiers.length > 0 ? componentDossiers : undefined,
+        routineCandidates:
+          routineCandidates.length > 0 ? routineCandidates : undefined,
         routines: routines.length > 0 ? routines : undefined,
         routineRuns: routineRuns.length > 0 ? routineRuns : undefined,
         signals: signals.length > 0 ? signals : undefined,
@@ -356,6 +378,21 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
         }
         for (const i of await kv.list<Insight>(KV.insights).catch(() => [])) {
           await kv.delete(KV.insights, i.id);
+        }
+        for (const overlay of await kv.list<BranchOverlay>(KV.branchOverlays).catch(() => [])) {
+          await kv.delete(KV.branchOverlays, overlay.id);
+        }
+        for (const guardrail of await kv.list<GuardrailMemory>(KV.guardrails).catch(() => [])) {
+          await kv.delete(KV.guardrails, guardrail.id);
+        }
+        for (const decision of await kv.list<DecisionMemory>(KV.decisions).catch(() => [])) {
+          await kv.delete(KV.decisions, decision.id);
+        }
+        for (const dossier of await kv.list<ComponentDossier>(KV.componentDossiers).catch(() => [])) {
+          await kv.delete(KV.componentDossiers, dossier.id);
+        }
+        for (const candidate of await kv.list<RoutineCandidate>(KV.routineCandidates).catch(() => [])) {
+          await kv.delete(KV.routineCandidates, candidate.id);
         }
         for (const n of await kv.list<{ id: string }>(KV.graphNodes).catch(() => [])) {
           await kv.delete(KV.graphNodes, n.id);
@@ -652,6 +689,51 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
             if (existing) { stats.skipped++; continue; }
           }
           await kv.set(KV.insights, insight.id, insight);
+        }
+      }
+      if (importData.branchOverlays) {
+        for (const overlay of importData.branchOverlays) {
+          if (strategy === "skip") {
+            const existing = await kv.get(KV.branchOverlays, overlay.id).catch(() => null);
+            if (existing) { stats.skipped++; continue; }
+          }
+          await kv.set(KV.branchOverlays, overlay.id, overlay);
+        }
+      }
+      if (importData.guardrails) {
+        for (const guardrail of importData.guardrails) {
+          if (strategy === "skip") {
+            const existing = await kv.get(KV.guardrails, guardrail.id).catch(() => null);
+            if (existing) { stats.skipped++; continue; }
+          }
+          await kv.set(KV.guardrails, guardrail.id, guardrail);
+        }
+      }
+      if (importData.decisions) {
+        for (const decision of importData.decisions) {
+          if (strategy === "skip") {
+            const existing = await kv.get(KV.decisions, decision.id).catch(() => null);
+            if (existing) { stats.skipped++; continue; }
+          }
+          await kv.set(KV.decisions, decision.id, decision);
+        }
+      }
+      if (importData.componentDossiers) {
+        for (const dossier of importData.componentDossiers) {
+          if (strategy === "skip") {
+            const existing = await kv.get(KV.componentDossiers, dossier.id).catch(() => null);
+            if (existing) { stats.skipped++; continue; }
+          }
+          await kv.set(KV.componentDossiers, dossier.id, dossier);
+        }
+      }
+      if (importData.routineCandidates) {
+        for (const candidate of importData.routineCandidates) {
+          if (strategy === "skip") {
+            const existing = await kv.get(KV.routineCandidates, candidate.id).catch(() => null);
+            if (existing) { stats.skipped++; continue; }
+          }
+          await kv.set(KV.routineCandidates, candidate.id, candidate);
         }
       }
       if (importData.accessLogs) {

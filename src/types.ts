@@ -3,6 +3,7 @@ export interface Session {
   id: string;
   project: string;
   cwd: string;
+  branch?: string;
   startedAt: string;
   endedAt?: string;
   status: "active" | "completed" | "abandoned";
@@ -467,6 +468,11 @@ export interface ExportData {
   facets?: Facet[];
   lessons?: Lesson[];
   insights?: Insight[];
+  branchOverlays?: BranchOverlay[];
+  guardrails?: GuardrailMemory[];
+  decisions?: DecisionMemory[];
+  componentDossiers?: ComponentDossier[];
+  routineCandidates?: RoutineCandidate[];
   accessLogs?: AccessLogExport[];
   pagination?: ExportPagination;
 }
@@ -688,7 +694,13 @@ export interface AuditEntry {
     | "relation_create"
     | "mission_create"
     | "mission_update"
-    | "handoff_generate";
+    | "handoff_generate"
+    | "branch_overlay_save"
+    | "branch_overlay_promote"
+    | "guardrail_save"
+    | "decision_save"
+    | "dossier_refresh"
+    | "routine_compile";
   userId?: string;
   functionId: string;
   targetIds: string[];
@@ -924,6 +936,112 @@ export interface HandoffPacket {
   sourceObservationIds: string[];
   sourceActionIds: string[];
   sourceBeliefIds?: string[];
+}
+
+export interface BranchOverlay {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  project: string;
+  branch: string;
+  targetType:
+    | "mission"
+    | "handoff"
+    | "guardrail"
+    | "decision"
+    | "dossier"
+    | "blocker";
+  targetId: string;
+  summary: string;
+  blockers: string[];
+  notes: string[];
+  metadata?: Record<string, unknown>;
+  status: "active" | "promoted" | "superseded" | "dismissed";
+  promotedAt?: string;
+  promotedBy?: string;
+  supersededBy?: string;
+}
+
+export type GuardrailRiskLevel = "low" | "medium" | "high" | "critical";
+
+export interface GuardrailMemory {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  project?: string;
+  branch?: string;
+  scopeType: "project" | "file" | "concept" | "mission" | "action";
+  scopeId: string;
+  triggerConditions: string[];
+  riskLevel: GuardrailRiskLevel;
+  explanation: string;
+  evidence: string[];
+  relatedFiles: string[];
+  relatedConcepts: string[];
+  missionId?: string;
+  expiresAt?: string;
+  reviewAfter?: string;
+  status: "active" | "expired" | "superseded";
+  supersedes: string[];
+  supersededBy?: string;
+  sourceObservationIds: string[];
+  sourceActionIds: string[];
+}
+
+export interface DecisionMemory {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  title: string;
+  decision: string;
+  rationale: string;
+  alternatives: string[];
+  reconsiderWhen: string[];
+  status: "active" | "superseded" | "reconsidered";
+  project?: string;
+  branch?: string;
+  missionId?: string;
+  relatedFiles: string[];
+  relatedConcepts: string[];
+  sourceObservationIds: string[];
+  sourceActionIds: string[];
+  supersedes: string[];
+  supersededBy?: string;
+}
+
+export interface ComponentDossier {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  project: string;
+  branch?: string;
+  filePath: string;
+  summary: string;
+  currentState: string;
+  keyFacts: string[];
+  activeRisks: string[];
+  openQuestions: string[];
+  relatedLessonIds: string[];
+  relatedInsightIds: string[];
+  relatedGuardrailIds: string[];
+  relatedDecisionIds: string[];
+  sourceObservationIds: string[];
+  lastRefreshedAt: string;
+}
+
+export interface RoutineCandidate {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  project?: string;
+  branch?: string;
+  name: string;
+  description: string;
+  derivedFromActionIds: string[];
+  stepTitles: string[];
+  evidenceCount: number;
+  confidence: number;
+  status: "proposed" | "accepted" | "rejected";
 }
 
 export interface MissionStatusSummary {

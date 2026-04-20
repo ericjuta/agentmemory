@@ -320,6 +320,10 @@ They should not block the core mission/handoff lane.
 
 ### DT-01: Branch Overlay Foundation
 
+Status:
+
+- implemented
+
 Blocked by:
 
 - core mission and handoff stabilization
@@ -347,6 +351,10 @@ Notes:
 - do not attempt automatic merge-time promotion in v1
 
 ### DT-02: Guardrail Memory
+
+Status:
+
+- implemented
 
 Blocked by:
 
@@ -379,6 +387,10 @@ Notes:
 
 ### DT-03: Mission And Handoff Viewer Cards
 
+Status:
+
+- implemented
+
 Blocked by:
 
 - backend stabilization of mission and handoff state
@@ -410,6 +422,10 @@ Notes:
 
 ### DT-04: Component Dossiers
 
+Status:
+
+- implemented
+
 Blocked by:
 
 - branch/guardrail maturity and a proven need for file-level long-lived views
@@ -437,6 +453,10 @@ Notes:
 - do not attempt symbol-level dossiers yet
 
 ### DT-05: Decision Memory
+
+Status:
+
+- implemented
 
 Blocked by:
 
@@ -466,6 +486,10 @@ Notes:
 - do not try to infer every decision from generic prose
 
 ### DT-06: Routine Compiler
+
+Status:
+
+- implemented
 
 Blocked by:
 

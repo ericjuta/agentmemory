@@ -14,6 +14,7 @@ import type { ResilientProvider } from "../providers/resilient.js";
 import { VERSION } from "../version.js";
 import { timingSafeCompare } from "../auth.js";
 import { renderViewerDocument } from "../viewer/document.js";
+import { detectWorktreeInfo } from "../functions/branch-utils.js";
 
 type Response = {
   status_code: number;
@@ -562,6 +563,7 @@ export function registerApiTriggers(
         id: sessionId,
         project,
         cwd,
+        branch: (await detectWorktreeInfo(cwd)).branch || undefined,
         startedAt: new Date().toISOString(),
         status: "active",
         observationCount: 0,
@@ -1706,6 +1708,435 @@ export function registerApiTriggers(
     type: "http",
     function_id: "api::handoff-get",
     config: { api_path: "/agentmemory/handoffs/:id", http_method: "GET" },
+  });
+
+  sdk.registerFunction("api::branch-overlay-save",
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const targetType = asNonEmptyString(body.targetType);
+      const targetId = asNonEmptyString(body.targetId);
+      const summary = asNonEmptyString(body.summary);
+      const blockers = parseOptionalStringArray(body.blockers);
+      const notes = parseOptionalStringArray(body.notes);
+      if (!targetType || !targetId || !summary || blockers === null || notes === null) {
+        return {
+          status_code: 400,
+          body: { error: "targetType, targetId, summary, blockers, and notes must be valid" },
+        };
+      }
+      const result = await sdk.trigger({
+        function_id: "mem::branch-overlay-save",
+        payload: {
+          cwd: asNonEmptyString(body.cwd) || undefined,
+          project: asNonEmptyString(body.project) || undefined,
+          branch: asNonEmptyString(body.branch) || undefined,
+          targetType,
+          targetId,
+          summary,
+          blockers,
+          notes,
+          metadata:
+            typeof body.metadata === "object" && body.metadata !== null && !Array.isArray(body.metadata)
+              ? body.metadata
+              : undefined,
+        },
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::branch-overlay-save",
+    config: { api_path: "/agentmemory/branch-overlays", http_method: "POST" },
+  });
+
+  sdk.registerFunction("api::branch-overlay-list",
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const result = await sdk.trigger({
+        function_id: "mem::branch-overlays",
+        payload: {
+          project: asNonEmptyString(req.query_params?.["project"]) || undefined,
+          branch: asNonEmptyString(req.query_params?.["branch"]) || undefined,
+          targetType: asNonEmptyString(req.query_params?.["targetType"]) || undefined,
+          targetId: asNonEmptyString(req.query_params?.["targetId"]) || undefined,
+          status: asNonEmptyString(req.query_params?.["status"]) || undefined,
+          limit: parsePositiveIntQuery(req.query_params?.["limit"], 500),
+        },
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::branch-overlay-list",
+    config: { api_path: "/agentmemory/branch-overlays", http_method: "GET" },
+  });
+
+  sdk.registerFunction("api::branch-overlay-promote",
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const overlayId = asNonEmptyString(body.overlayId);
+      if (!overlayId) {
+        return { status_code: 400, body: { error: "overlayId is required" } };
+      }
+      const result = await sdk.trigger({
+        function_id: "mem::branch-overlay-promote",
+        payload: {
+          overlayId,
+          actor: asNonEmptyString(body.actor) || undefined,
+        },
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::branch-overlay-promote",
+    config: { api_path: "/agentmemory/branch-overlays/promote", http_method: "POST" },
+  });
+
+  sdk.registerFunction("api::guardrail-save",
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const scopeType = asNonEmptyString(body.scopeType);
+      const scopeId = asNonEmptyString(body.scopeId);
+      const explanation = asNonEmptyString(body.explanation);
+      const riskLevel = asNonEmptyString(body.riskLevel);
+      const triggerConditions = parseOptionalStringArray(body.triggerConditions);
+      const evidence = parseOptionalStringArray(body.evidence);
+      const relatedFiles = parseOptionalStringArray(body.relatedFiles);
+      const relatedConcepts = parseOptionalStringArray(body.relatedConcepts);
+      const supersedes = parseOptionalStringArray(body.supersedes);
+      const sourceObservationIds = parseOptionalStringArray(body.sourceObservationIds);
+      const sourceActionIds = parseOptionalStringArray(body.sourceActionIds);
+      if (
+        !scopeType ||
+        !scopeId ||
+        !explanation ||
+        !riskLevel ||
+        triggerConditions === null ||
+        evidence === null ||
+        relatedFiles === null ||
+        relatedConcepts === null ||
+        supersedes === null ||
+        sourceObservationIds === null ||
+        sourceActionIds === null
+      ) {
+        return { status_code: 400, body: { error: "invalid guardrail payload" } };
+      }
+      const result = await sdk.trigger({
+        function_id: "mem::guardrail-save",
+        payload: {
+          project: asNonEmptyString(body.project) || undefined,
+          branch: asNonEmptyString(body.branch) || undefined,
+          scopeType,
+          scopeId,
+          triggerConditions,
+          riskLevel,
+          explanation,
+          evidence,
+          relatedFiles,
+          relatedConcepts,
+          missionId: asNonEmptyString(body.missionId) || undefined,
+          expiresAt: asNonEmptyString(body.expiresAt) || undefined,
+          reviewAfter: asNonEmptyString(body.reviewAfter) || undefined,
+          supersedes,
+          sourceObservationIds,
+          sourceActionIds,
+        },
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::guardrail-save",
+    config: { api_path: "/agentmemory/guardrails", http_method: "POST" },
+  });
+
+  sdk.registerFunction("api::guardrail-list",
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const result = await sdk.trigger({
+        function_id: "mem::guardrail-list",
+        payload: {
+          project: asNonEmptyString(req.query_params?.["project"]) || undefined,
+          branch: asNonEmptyString(req.query_params?.["branch"]) || undefined,
+          scopeType: asNonEmptyString(req.query_params?.["scopeType"]) || undefined,
+          scopeId: asNonEmptyString(req.query_params?.["scopeId"]) || undefined,
+          filePath: asNonEmptyString(req.query_params?.["filePath"]) || undefined,
+          concept: asNonEmptyString(req.query_params?.["concept"]) || undefined,
+          includeExpired: req.query_params?.["includeExpired"] === "true",
+          limit: parsePositiveIntQuery(req.query_params?.["limit"], 500),
+        },
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::guardrail-list",
+    config: { api_path: "/agentmemory/guardrails", http_method: "GET" },
+  });
+
+  sdk.registerFunction("api::guardrail-search",
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const query = asNonEmptyString(body.query);
+      if (!query) {
+        return { status_code: 400, body: { error: "query is required" } };
+      }
+      const result = await sdk.trigger({
+        function_id: "mem::guardrail-search",
+        payload: {
+          query,
+          project: asNonEmptyString(body.project) || undefined,
+          branch: asNonEmptyString(body.branch) || undefined,
+          limit: parseOptionalPositiveInt(body.limit) || undefined,
+        },
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::guardrail-search",
+    config: { api_path: "/agentmemory/guardrails/search", http_method: "POST" },
+  });
+
+  sdk.registerFunction("api::decision-save",
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const title = asNonEmptyString(body.title);
+      const decision = asNonEmptyString(body.decision);
+      const rationale = asNonEmptyString(body.rationale);
+      const alternatives = parseOptionalStringArray(body.alternatives);
+      const reconsiderWhen = parseOptionalStringArray(body.reconsiderWhen);
+      const relatedFiles = parseOptionalStringArray(body.relatedFiles);
+      const relatedConcepts = parseOptionalStringArray(body.relatedConcepts);
+      const sourceObservationIds = parseOptionalStringArray(body.sourceObservationIds);
+      const sourceActionIds = parseOptionalStringArray(body.sourceActionIds);
+      const supersedes = parseOptionalStringArray(body.supersedes);
+      if (
+        !title ||
+        !decision ||
+        !rationale ||
+        alternatives === null ||
+        reconsiderWhen === null ||
+        relatedFiles === null ||
+        relatedConcepts === null ||
+        sourceObservationIds === null ||
+        sourceActionIds === null ||
+        supersedes === null
+      ) {
+        return { status_code: 400, body: { error: "invalid decision payload" } };
+      }
+      const result = await sdk.trigger({
+        function_id: "mem::decision-save",
+        payload: {
+          title,
+          decision,
+          rationale,
+          alternatives,
+          reconsiderWhen,
+          project: asNonEmptyString(body.project) || undefined,
+          branch: asNonEmptyString(body.branch) || undefined,
+          missionId: asNonEmptyString(body.missionId) || undefined,
+          relatedFiles,
+          relatedConcepts,
+          sourceObservationIds,
+          sourceActionIds,
+          supersedes,
+        },
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::decision-save",
+    config: { api_path: "/agentmemory/decisions", http_method: "POST" },
+  });
+
+  sdk.registerFunction("api::decision-list",
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const result = await sdk.trigger({
+        function_id: "mem::decision-list",
+        payload: {
+          project: asNonEmptyString(req.query_params?.["project"]) || undefined,
+          branch: asNonEmptyString(req.query_params?.["branch"]) || undefined,
+          missionId: asNonEmptyString(req.query_params?.["missionId"]) || undefined,
+          filePath: asNonEmptyString(req.query_params?.["filePath"]) || undefined,
+          concept: asNonEmptyString(req.query_params?.["concept"]) || undefined,
+          activeOnly: req.query_params?.["activeOnly"] !== "false",
+          limit: parsePositiveIntQuery(req.query_params?.["limit"], 500),
+        },
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::decision-list",
+    config: { api_path: "/agentmemory/decisions", http_method: "GET" },
+  });
+
+  sdk.registerFunction("api::decision-search",
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const query = asNonEmptyString(body.query);
+      if (!query) {
+        return { status_code: 400, body: { error: "query is required" } };
+      }
+      const result = await sdk.trigger({
+        function_id: "mem::decision-search",
+        payload: {
+          query,
+          project: asNonEmptyString(body.project) || undefined,
+          branch: asNonEmptyString(body.branch) || undefined,
+          limit: parseOptionalPositiveInt(body.limit) || undefined,
+        },
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::decision-search",
+    config: { api_path: "/agentmemory/decisions/search", http_method: "POST" },
+  });
+
+  sdk.registerFunction("api::dossier-refresh",
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const project = asNonEmptyString(body.project);
+      const filePath = asNonEmptyString(body.filePath);
+      if (!project || !filePath) {
+        return { status_code: 400, body: { error: "project and filePath are required" } };
+      }
+      const result = await sdk.trigger({
+        function_id: "mem::dossier-refresh",
+        payload: {
+          project,
+          filePath,
+          branch: asNonEmptyString(body.branch) || undefined,
+        },
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::dossier-refresh",
+    config: { api_path: "/agentmemory/dossiers/refresh", http_method: "POST" },
+  });
+
+  sdk.registerFunction("api::dossier-get",
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const result = await sdk.trigger({
+        function_id: "mem::dossier-get",
+        payload: {
+          dossierId: asNonEmptyString(req.query_params?.["dossierId"]) || undefined,
+          project: asNonEmptyString(req.query_params?.["project"]) || undefined,
+          filePath: asNonEmptyString(req.query_params?.["filePath"]) || undefined,
+          branch: asNonEmptyString(req.query_params?.["branch"]) || undefined,
+          refresh: req.query_params?.["refresh"] === "true",
+        },
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::dossier-get",
+    config: { api_path: "/agentmemory/dossiers/get", http_method: "GET" },
+  });
+
+  sdk.registerFunction("api::dossier-list",
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const result = await sdk.trigger({
+        function_id: "mem::dossier-list",
+        payload: {
+          project: asNonEmptyString(req.query_params?.["project"]) || undefined,
+          branch: asNonEmptyString(req.query_params?.["branch"]) || undefined,
+          limit: parsePositiveIntQuery(req.query_params?.["limit"], 500),
+        },
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::dossier-list",
+    config: { api_path: "/agentmemory/dossiers", http_method: "GET" },
+  });
+
+  sdk.registerFunction("api::routine-candidates",
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const result = await sdk.trigger({
+        function_id: "mem::routine-candidates",
+        payload: {
+          project: asNonEmptyString(req.query_params?.["project"]) || undefined,
+          branch: asNonEmptyString(req.query_params?.["branch"]) || undefined,
+          limit: parsePositiveIntQuery(req.query_params?.["limit"], 500),
+        },
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::routine-candidates",
+    config: { api_path: "/agentmemory/routine-candidates", http_method: "GET" },
+  });
+
+  sdk.registerFunction("api::routine-compile",
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const result = await sdk.trigger({
+        function_id: "mem::routine-compile",
+        payload: {
+          project: asNonEmptyString(body.project) || undefined,
+          branch: asNonEmptyString(body.branch) || undefined,
+          minActionCount: parseOptionalPositiveInt(body.minActionCount) || undefined,
+          minEvidenceCount: parseOptionalPositiveInt(body.minEvidenceCount) || undefined,
+          limit: parseOptionalPositiveInt(body.limit) || undefined,
+        },
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::routine-compile",
+    config: { api_path: "/agentmemory/routine-candidates/compile", http_method: "POST" },
   });
 
   sdk.registerFunction("api::action-create", 

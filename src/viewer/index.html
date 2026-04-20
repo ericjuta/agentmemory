@@ -780,6 +780,8 @@
     <button data-tab="lessons">Lessons</button>
     <button data-tab="actions">Actions</button>
     <button data-tab="coordination">Coordination</button>
+    <button data-tab="guidance">Guidance</button>
+    <button data-tab="components">Components</button>
     <button data-tab="crystals">Crystals</button>
     <button data-tab="audit">Audit</button>
     <button data-tab="activity">Activity</button>
@@ -793,6 +795,8 @@
   <div id="view-lessons" class="view"></div>
   <div id="view-actions" class="view"></div>
   <div id="view-coordination" class="view"></div>
+  <div id="view-guidance" class="view"></div>
+  <div id="view-components" class="view"></div>
   <div id="view-crystals" class="view"></div>
   <div id="view-timeline" class="view"></div>
   <div id="view-sessions" class="view"></div>
@@ -865,7 +869,7 @@
 
     var state = {
       activeTab: 'dashboard',
-      dashboard: { loaded: false, health: null, sessions: [], memories: [], graphStats: null, recentAudit: [], lessons: [], crystals: [], missions: [], handoffs: [] },
+      dashboard: { loaded: false, health: null, sessions: [], memories: [], graphStats: null, recentAudit: [], lessons: [], crystals: [], missions: [], handoffs: [], guardrails: [], decisions: [], dossiers: [], routineCandidates: [], branchOverlays: [] },
       graph: { loaded: false, nodes: [], edges: [], stats: null, filters: {}, selectedNode: null },
       memories: { loaded: false, items: [], search: '', typeFilter: '' },
       timeline: { loaded: false, observations: [], sessionId: '', minImportance: 0, page: 0, pageSize: 50 },
@@ -875,6 +879,8 @@
       lessons: { loaded: false, items: [], search: '' },
       actions: { loaded: false, items: [], frontier: [], statusFilter: '', search: '' },
       coordination: { loaded: false, projects: [], selectedProject: '', missions: [], handoffs: [] },
+      guidance: { loaded: false, guardrails: [], decisions: [], search: '' },
+      components: { loaded: false, dossiers: [], routineCandidates: [], search: '' },
       crystals: { loaded: false, items: [], search: '' },
       operations: {
         loaded: false,
@@ -987,6 +993,8 @@
         case 'lessons': if (!state.lessons.loaded) await loadLessons(); break;
         case 'actions': if (!state.actions.loaded) await loadActions(); break;
         case 'coordination': if (!state.coordination.loaded) await loadCoordination(); break;
+        case 'guidance': if (!state.guidance.loaded) await loadGuidance(); break;
+        case 'components': if (!state.components.loaded) await loadComponents(); break;
         case 'crystals': if (!state.crystals.loaded) await loadCrystals(); break;
         case 'audit': if (!state.audit.loaded) await loadAudit(); break;
         case 'activity': if (!state.activity.loaded) await loadActivity(); break;
@@ -1010,7 +1018,12 @@
         apiGet('lessons'),
         apiGet('crystals'),
         apiGet('missions?limit=100'),
-        apiGet('handoffs?limit=100')
+        apiGet('handoffs?limit=100'),
+        apiGet('guardrails?limit=100'),
+        apiGet('decisions?limit=100'),
+        apiGet('dossiers?limit=100'),
+        apiGet('routine-candidates?limit=100'),
+        apiGet('branch-overlays?limit=100')
       ]);
       state.dashboard.health = results[0];
       state.dashboard.sessions = (results[1] && results[1].sessions) || [];
@@ -1023,6 +1036,11 @@
       state.dashboard.crystals = (results[9] && results[9].crystals) || [];
       state.dashboard.missions = (results[10] && results[10].missions) || [];
       state.dashboard.handoffs = (results[11] && results[11].handoffPackets) || [];
+      state.dashboard.guardrails = (results[12] && results[12].guardrails) || [];
+      state.dashboard.decisions = (results[13] && results[13].decisions) || [];
+      state.dashboard.dossiers = (results[14] && results[14].dossiers) || [];
+      state.dashboard.routineCandidates = (results[15] && results[15].routineCandidates) || [];
+      state.dashboard.branchOverlays = (results[16] && results[16].overlays) || [];
       state.dashboard.relations = (results[7] && results[7].relations) || [];
       // Derive relation count from memory relatedIds if KV.relations is empty
       if (state.dashboard.relations.length === 0 && state.dashboard.memories.length > 0) {
@@ -1066,10 +1084,20 @@
         return status === 'blocked';
       }).length;
       var handoffCount = (d.handoffs || []).length;
+      var guardrailCount = (d.guardrails || []).length;
+      var decisionCount = (d.decisions || []).length;
+      var dossierCount = (d.dossiers || []).length;
+      var routineCandidateCount = (d.routineCandidates || []).length;
+      var overlayCount = (d.branchOverlays || []).length;
       html += '<div class="stat-card"><div class="label">Lessons</div><div class="value">' + lessonCount + '</div><div class="sub">confidence-scored</div></div>';
       html += '<div class="stat-card"><div class="label">Crystals</div><div class="value">' + crystalCount + '</div><div class="sub">action digests</div></div>';
       html += '<div class="stat-card"><div class="label">Missions</div><div class="value">' + missionCount + '</div><div class="sub">' + blockedMissionCount + ' blocked</div></div>';
       html += '<div class="stat-card"><div class="label">Handoffs</div><div class="value">' + handoffCount + '</div><div class="sub">durable resume packets</div></div>';
+      html += '<div class="stat-card"><div class="label">Guardrails</div><div class="value">' + guardrailCount + '</div><div class="sub">negative memory</div></div>';
+      html += '<div class="stat-card"><div class="label">Decisions</div><div class="value">' + decisionCount + '</div><div class="sub">active rationale</div></div>';
+      html += '<div class="stat-card"><div class="label">Dossiers</div><div class="value">' + dossierCount + '</div><div class="sub">file syntheses</div></div>';
+      html += '<div class="stat-card"><div class="label">Routine Proposals</div><div class="value">' + routineCandidateCount + '</div><div class="sub">compiler candidates</div></div>';
+      html += '<div class="stat-card"><div class="label">Branch Overlays</div><div class="value">' + overlayCount + '</div><div class="sub">branch-local notes</div></div>';
       html += '<div class="stat-card"><div class="label">Graph Nodes</div><div class="value">' + nodeCount + '</div><div class="sub">' + edgeCount + ' edges</div></div>';
       html += '<div class="stat-card"><div class="label">Health</div><div class="value"><div class="health-bar"><span class="health-dot ' + dotClass + '"></span> ' + esc(healthStatus) + '</div></div>';
       html += '<div class="sub">' + esc(snap.connectionState || 'unknown') + '</div></div>';
@@ -2851,6 +2879,180 @@
         coordinationProject.addEventListener('change', function() {
           state.coordination.selectedProject = this.value;
           renderCoordination();
+        });
+      }
+    }
+
+    async function loadGuidance() {
+      var el = document.getElementById('view-guidance');
+      el.innerHTML = '<div class="loading">Loading guidance...</div>';
+      var results = await Promise.all([
+        apiGet('guardrails?limit=100'),
+        apiGet('decisions?limit=100')
+      ]);
+      state.guidance.guardrails = (results[0] && results[0].guardrails) || [];
+      state.guidance.decisions = (results[1] && results[1].decisions) || [];
+      state.guidance.loaded = true;
+      renderGuidance();
+    }
+
+    function renderGuidance() {
+      var el = document.getElementById('view-guidance');
+      var search = state.guidance.search.toLowerCase();
+      var guardrails = state.guidance.guardrails || [];
+      var decisions = state.guidance.decisions || [];
+
+      if (search) {
+        guardrails = guardrails.filter(function(item) {
+          return (item.explanation + ' ' + (item.triggerConditions || []).join(' ') + ' ' + (item.relatedFiles || []).join(' ') + ' ' + (item.relatedConcepts || []).join(' ')).toLowerCase().indexOf(search) >= 0;
+        });
+        decisions = decisions.filter(function(item) {
+          return (item.title + ' ' + item.decision + ' ' + item.rationale + ' ' + (item.relatedFiles || []).join(' ') + ' ' + (item.relatedConcepts || []).join(' ')).toLowerCase().indexOf(search) >= 0;
+        });
+      }
+
+      var html = '<div style="display:flex;gap:8px;margin-bottom:12px;">';
+      html += '<input class="search-input" id="guidance-search" type="text" placeholder="Search guardrails and decisions..." value="' + esc(state.guidance.search) + '" style="flex:1" />';
+      html += '<span style="font-size:12px;color:var(--ink-faint);align-self:center;">' + guardrails.length + ' guardrails · ' + decisions.length + ' decisions</span>';
+      html += '</div>';
+      html += '<div class="two-col">';
+
+      html += '<div class="card"><div class="card-title">Guardrails</div>';
+      if (guardrails.length === 0) {
+        html += '<div class="empty-state"><p>No active guardrails</p></div>';
+      } else {
+        guardrails.forEach(function(item) {
+          html += '<div style="padding:12px 0;border-bottom:1px solid var(--border-light);">';
+          html += '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">';
+          html += '<div style="font-size:16px;color:var(--ink);font-family:var(--font-display);font-weight:700;line-height:1.2;">' + esc(item.explanation || item.id || 'Guardrail') + '</div>';
+          html += '<span class="badge ' + (item.riskLevel === 'critical' || item.riskLevel === 'high' ? 'badge-red' : item.riskLevel === 'medium' ? 'badge-yellow' : 'badge-blue') + '">' + esc(item.riskLevel || 'low') + '</span>';
+          html += '</div>';
+          html += '<div class="detail-row"><div class="dl">Scope</div><div class="dv">' + esc((item.scopeType || '-') + ' · ' + (item.scopeId || '-')) + '</div></div>';
+          if (item.triggerConditions && item.triggerConditions.length) {
+            html += '<div style="margin-top:8px;font-size:12px;color:var(--ink-muted);line-height:1.6;"><strong>Triggers:</strong> ' + esc(item.triggerConditions.slice(0, 3).join(' | ')) + '</div>';
+          }
+          if (item.relatedFiles && item.relatedFiles.length) {
+            html += '<div style="margin-top:6px;font-size:11px;color:var(--ink-faint);font-family:var(--font-mono);">' + esc(item.relatedFiles.slice(0, 4).join(', ')) + '</div>';
+          }
+          html += '</div>';
+        });
+      }
+      html += '</div>';
+
+      html += '<div class="card"><div class="card-title">Decision Memory</div>';
+      if (decisions.length === 0) {
+        html += '<div class="empty-state"><p>No active decisions</p></div>';
+      } else {
+        decisions.forEach(function(item) {
+          html += '<div style="padding:12px 0;border-bottom:1px solid var(--border-light);">';
+          html += '<div style="font-size:16px;color:var(--ink);font-family:var(--font-display);font-weight:700;line-height:1.2;">' + esc(item.title || item.id || 'Decision') + '</div>';
+          html += '<div style="margin-top:6px;font-size:13px;color:var(--ink-muted);line-height:1.6;"><strong>Decision:</strong> ' + esc(item.decision || '') + '</div>';
+          html += '<div style="margin-top:6px;font-size:12px;color:var(--ink-muted);line-height:1.6;">' + esc(truncate(item.rationale || '', 180)) + '</div>';
+          if (item.reconsiderWhen && item.reconsiderWhen.length) {
+            html += '<div style="margin-top:8px;font-size:12px;color:var(--accent);line-height:1.6;"><strong>Reconsider when:</strong> ' + esc(item.reconsiderWhen.slice(0, 3).join(' | ')) + '</div>';
+          }
+          if (item.relatedFiles && item.relatedFiles.length) {
+            html += '<div style="margin-top:6px;font-size:11px;color:var(--ink-faint);font-family:var(--font-mono);">' + esc(item.relatedFiles.slice(0, 4).join(', ')) + '</div>';
+          }
+          html += '</div>';
+        });
+      }
+      html += '</div>';
+
+      html += '</div>';
+      el.innerHTML = html;
+
+      var guidanceSearch = document.getElementById('guidance-search');
+      if (guidanceSearch) {
+        guidanceSearch.addEventListener('input', function() {
+          state.guidance.search = this.value;
+          renderGuidance();
+        });
+      }
+    }
+
+    async function loadComponents() {
+      var el = document.getElementById('view-components');
+      el.innerHTML = '<div class="loading">Loading component dossiers...</div>';
+      var results = await Promise.all([
+        apiGet('dossiers?limit=100'),
+        apiGet('routine-candidates?limit=100')
+      ]);
+      state.components.dossiers = (results[0] && results[0].dossiers) || [];
+      state.components.routineCandidates = (results[1] && results[1].routineCandidates) || [];
+      state.components.loaded = true;
+      renderComponents();
+    }
+
+    function renderComponents() {
+      var el = document.getElementById('view-components');
+      var search = state.components.search.toLowerCase();
+      var dossiers = state.components.dossiers || [];
+      var routineCandidates = state.components.routineCandidates || [];
+
+      if (search) {
+        dossiers = dossiers.filter(function(item) {
+          return (item.filePath + ' ' + item.summary + ' ' + item.currentState + ' ' + (item.keyFacts || []).join(' ') + ' ' + (item.activeRisks || []).join(' ')).toLowerCase().indexOf(search) >= 0;
+        });
+        routineCandidates = routineCandidates.filter(function(item) {
+          return (item.name + ' ' + item.description + ' ' + (item.stepTitles || []).join(' ')).toLowerCase().indexOf(search) >= 0;
+        });
+      }
+
+      var html = '<div style="display:flex;gap:8px;margin-bottom:12px;">';
+      html += '<input class="search-input" id="components-search" type="text" placeholder="Search dossiers and routine proposals..." value="' + esc(state.components.search) + '" style="flex:1" />';
+      html += '<span style="font-size:12px;color:var(--ink-faint);align-self:center;">' + dossiers.length + ' dossiers · ' + routineCandidates.length + ' proposals</span>';
+      html += '</div>';
+      html += '<div class="two-col">';
+
+      html += '<div class="card"><div class="card-title">Component Dossiers</div>';
+      if (dossiers.length === 0) {
+        html += '<div class="empty-state"><p>No dossiers generated yet</p></div>';
+      } else {
+        dossiers.forEach(function(item) {
+          html += '<div style="padding:12px 0;border-bottom:1px solid var(--border-light);">';
+          html += '<div style="font-size:15px;color:var(--ink);font-family:var(--font-display);font-weight:700;line-height:1.2;">' + esc(item.filePath || item.id || 'Dossier') + '</div>';
+          html += '<div style="margin-top:6px;font-size:13px;color:var(--ink-muted);line-height:1.6;">' + esc(item.summary || '') + '</div>';
+          if (item.activeRisks && item.activeRisks.length) {
+            html += '<div style="margin-top:8px;font-size:12px;color:var(--accent);line-height:1.6;"><strong>Risks:</strong> ' + esc(item.activeRisks.slice(0, 3).join(' | ')) + '</div>';
+          }
+          if (item.openQuestions && item.openQuestions.length) {
+            html += '<div style="margin-top:8px;font-size:12px;color:var(--ink-muted);line-height:1.6;"><strong>Open:</strong> ' + esc(item.openQuestions.slice(0, 3).join(' | ')) + '</div>';
+          }
+          html += '</div>';
+        });
+      }
+      html += '</div>';
+
+      html += '<div class="card"><div class="card-title">Routine Candidates</div>';
+      if (routineCandidates.length === 0) {
+        html += '<div class="empty-state"><p>No repeated successful chains compiled yet</p></div>';
+      } else {
+        routineCandidates.forEach(function(item) {
+          html += '<div style="padding:12px 0;border-bottom:1px solid var(--border-light);">';
+          html += '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">';
+          html += '<div style="font-size:16px;color:var(--ink);font-family:var(--font-display);font-weight:700;line-height:1.2;">' + esc(item.name || item.id || 'Routine Candidate') + '</div>';
+          html += '<span class="badge badge-purple">' + esc(item.status || 'proposed') + '</span>';
+          html += '</div>';
+          html += '<div style="margin-top:6px;font-size:13px;color:var(--ink-muted);line-height:1.6;">' + esc(item.description || '') + '</div>';
+          html += '<div class="detail-row"><div class="dl">Evidence</div><div class="dv" style="font-family:var(--font-mono);">' + esc(item.evidenceCount || 0) + '</div></div>';
+          html += '<div class="detail-row"><div class="dl">Confidence</div><div class="dv" style="font-family:var(--font-mono);">' + esc((item.confidence || 0).toFixed ? item.confidence.toFixed(2) : item.confidence || '0.00') + '</div></div>';
+          if (item.stepTitles && item.stepTitles.length) {
+            html += '<div style="margin-top:8px;font-size:12px;color:var(--ink-muted);line-height:1.6;"><strong>Steps:</strong> ' + esc(item.stepTitles.slice(0, 4).join(' -> ')) + '</div>';
+          }
+          html += '</div>';
+        });
+      }
+      html += '</div>';
+
+      html += '</div>';
+      el.innerHTML = html;
+
+      var componentsSearch = document.getElementById('components-search');
+      if (componentsSearch) {
+        componentsSearch.addEventListener('input', function() {
+          state.components.search = this.value;
+          renderComponents();
         });
       }
     }

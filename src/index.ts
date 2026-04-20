@@ -63,6 +63,10 @@ import { registerCheckpointsFunction } from "./functions/checkpoints.js";
 import { registerFlowCompressFunction } from "./functions/flow-compress.js";
 import { registerMeshFunction } from "./functions/mesh.js";
 import { registerBranchAwareFunction } from "./functions/branch-aware.js";
+import { registerGuardrailsFunction } from "./functions/guardrails.js";
+import { registerDecisionsFunction } from "./functions/decisions.js";
+import { registerComponentDossiersFunction } from "./functions/component-dossiers.js";
+import { registerRoutineCompilerFunction } from "./functions/routine-compiler.js";
 import { registerSentinelsFunction } from "./functions/sentinels.js";
 import { registerSketchesFunction } from "./functions/sketches.js";
 import { registerCrystallizeFunction } from "./functions/crystallize.js";
@@ -246,6 +250,10 @@ async function main() {
   registerCheckpointsFunction(sdk, kv);
   registerMeshFunction(sdk, kv, secret);
   registerBranchAwareFunction(sdk, kv);
+  registerGuardrailsFunction(sdk, kv);
+  registerDecisionsFunction(sdk, kv);
+  registerComponentDossiersFunction(sdk, kv);
+  registerRoutineCompilerFunction(sdk, kv);
   registerFlowCompressFunction(sdk, kv, provider);
   registerSentinelsFunction(sdk, kv);
   registerSketchesFunction(sdk, kv);
@@ -270,7 +278,7 @@ async function main() {
     `[agentmemory] v0.6 advanced retrieval: sliding-window, query-expansion, temporal-graph, retention-scoring`,
   );
   console.log(
-    `[agentmemory] Orchestration layer: actions, frontier, leases, routines, signals, checkpoints, flow-compress, mesh, branch-aware, sentinels, sketches, crystallize, diagnostics, facets`,
+    `[agentmemory] Orchestration layer: actions, frontier, leases, missions, handoffs, branch-aware, guardrails, decisions, dossiers, routine-compiler, routines, signals, checkpoints, flow-compress, mesh, sentinels, sketches, crystallize, diagnostics, facets`,
   );
 
   const snapshotConfig = loadSnapshotConfig();
@@ -348,7 +356,7 @@ async function main() {
     `[agentmemory] Ready. ${embeddingProvider ? "Triple-stream (BM25+Vector+Graph)" : "BM25+Graph"} search active.`,
   );
   console.log(
-    `[agentmemory] Endpoints: 114 REST + 44 MCP tools + 6 MCP resources + 3 MCP prompts`,
+    `[agentmemory] Endpoints: 128 REST + 44 MCP tools + 6 MCP resources + 3 MCP prompts`,
   );
 
   const viewerPort = config.restPort + 2;

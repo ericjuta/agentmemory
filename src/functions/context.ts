@@ -2,6 +2,10 @@
 import type { ISdk } from "iii-sdk";
 import type {
   BeliefProjection,
+  BranchOverlay,
+  ComponentDossier,
+  DecisionMemory,
+  GuardrailMemory,
   Session,
   CompressedObservation,
   SessionSummary,
@@ -25,6 +29,9 @@ import { recordAccessBatch } from "./access-tracker.js";
 import { logger } from "../logger.js";
 import { GraphRetrieval } from "./graph-retrieval.js";
 import { listProjectedBeliefs } from "./beliefs.js";
+import { listScopedGuardrails } from "./guardrails.js";
+import { listScopedDecisions } from "./decisions.js";
+import { detectWorktreeInfo } from "./branch-utils.js";
 
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 3);
@@ -79,6 +86,11 @@ function linkedMemoryId(id: string): string | undefined {
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.filter((value) => value.length > 0))];
+}
+
+function basename(filePath: string): string {
+  const parts = filePath.split("/");
+  return parts[parts.length - 1] || filePath;
 }
 
 function queryTerms(query?: string): string[] {
@@ -263,6 +275,77 @@ function formatHandoffPacket(packet: HandoffPacket): string {
   return lines.join("\n");
 }
 
+function formatBranchOverlay(overlay: BranchOverlay): string {
+  const lines = ["## Branch Overlay"];
+  lines.push(`Branch: ${overlay.branch}`);
+  lines.push(`Target: ${overlay.targetType} ${overlay.targetId}`);
+  lines.push(`Summary: ${overlay.summary}`);
+  if (overlay.blockers.length > 0) {
+    lines.push(`Blockers: ${overlay.blockers.slice(0, 4).join(" | ")}`);
+  }
+  if (overlay.notes.length > 0) {
+    lines.push(`Notes: ${overlay.notes.slice(0, 4).join(" | ")}`);
+  }
+  return lines.join("\n");
+}
+
+function formatGuardrail(guardrail: GuardrailMemory): string {
+  const lines = ["## Guardrail"];
+  lines.push(`Risk: ${guardrail.riskLevel}`);
+  lines.push(`Scope: ${guardrail.scopeType} ${guardrail.scopeId}`);
+  lines.push(`Explanation: ${guardrail.explanation}`);
+  if (guardrail.triggerConditions.length > 0) {
+    lines.push(`Triggers: ${guardrail.triggerConditions.slice(0, 4).join(" | ")}`);
+  }
+  if (guardrail.evidence.length > 0) {
+    lines.push(`Evidence: ${guardrail.evidence.slice(0, 4).join(" | ")}`);
+  }
+  if (guardrail.relatedFiles.length > 0) {
+    lines.push(`Files: ${guardrail.relatedFiles.slice(0, 5).join(", ")}`);
+  }
+  if (guardrail.relatedConcepts.length > 0) {
+    lines.push(`Concepts: ${guardrail.relatedConcepts.slice(0, 6).join(", ")}`);
+  }
+  return lines.join("\n");
+}
+
+function formatDecision(decision: DecisionMemory): string {
+  const lines = ["## Decision Memory"];
+  lines.push(`Title: ${decision.title}`);
+  lines.push(`Decision: ${decision.decision}`);
+  lines.push(`Rationale: ${decision.rationale}`);
+  if (decision.alternatives.length > 0) {
+    lines.push(`Alternatives: ${decision.alternatives.slice(0, 4).join(" | ")}`);
+  }
+  if (decision.reconsiderWhen.length > 0) {
+    lines.push(`Reconsider when: ${decision.reconsiderWhen.slice(0, 4).join(" | ")}`);
+  }
+  if (decision.relatedFiles.length > 0) {
+    lines.push(`Files: ${decision.relatedFiles.slice(0, 5).join(", ")}`);
+  }
+  if (decision.relatedConcepts.length > 0) {
+    lines.push(`Concepts: ${decision.relatedConcepts.slice(0, 6).join(", ")}`);
+  }
+  return lines.join("\n");
+}
+
+function formatDossier(dossier: ComponentDossier): string {
+  const lines = ["## Component Dossier"];
+  lines.push(`File: ${dossier.filePath}`);
+  lines.push(`Summary: ${dossier.summary}`);
+  lines.push(`Current state: ${dossier.currentState}`);
+  if (dossier.keyFacts.length > 0) {
+    lines.push(`Key facts: ${dossier.keyFacts.slice(0, 4).join(" | ")}`);
+  }
+  if (dossier.activeRisks.length > 0) {
+    lines.push(`Active risks: ${dossier.activeRisks.slice(0, 4).join(" | ")}`);
+  }
+  if (dossier.openQuestions.length > 0) {
+    lines.push(`Open questions: ${dossier.openQuestions.slice(0, 4).join(" | ")}`);
+  }
+  return lines.join("\n");
+}
+
 function expandTerms(values: string[]): string[] {
   return values.flatMap((value) => queryTerms(value));
 }
@@ -405,6 +488,10 @@ export function registerContextFunction(
       const warmBlocks: RankedContextBlock[] = [];
       const coldBlocks: RankedContextBlock[] = [];
       const graphRetrieval = new GraphRetrieval(kv);
+      const session = await kv.get<Session>(KV.sessions, data.sessionId).catch(() => null);
+      const branch =
+        session?.branch ||
+        (session?.cwd ? (await detectWorktreeInfo(session.cwd)).branch || undefined : undefined);
 
       const workingSet = await kv
         .get<SessionWorkingSet>(KV.workingSets, data.sessionId)
@@ -438,6 +525,33 @@ export function registerContextFunction(
       ]);
 
       if (isResumeQuery(data.query)) {
+        if (branch) {
+          const overlays = (
+            await kv.list<BranchOverlay>(KV.branchOverlays).catch(() => [])
+          )
+            .filter((overlay) => overlay.project === data.project)
+            .filter((overlay) => overlay.branch === branch)
+            .filter((overlay) => overlay.status === "active")
+            .filter(
+              (overlay) =>
+                overlay.targetType === "mission" ||
+                overlay.targetType === "handoff" ||
+                overlay.targetType === "blocker",
+            )
+            .slice(0, 3);
+          for (const overlay of overlays) {
+            hotBlocks.push(
+              makeBlock(
+                `branch-overlay:${overlay.id}`,
+                "hot",
+                "summary",
+                formatBranchOverlay(overlay),
+                new Date(overlay.updatedAt).getTime(),
+              ),
+            );
+          }
+        }
+
         const handoffPackets = await kv
           .list<HandoffPacket>(KV.handoffPackets)
           .catch(() => []);
@@ -495,6 +609,97 @@ export function registerContextFunction(
             ),
           );
         }
+      }
+
+      const guardrails = await listScopedGuardrails(kv, {
+        project: data.project,
+        branch,
+        includeExpired: false,
+        limit: 12,
+      });
+      for (const guardrail of guardrails) {
+        const overlap = scoreQueryOverlap(
+          [
+            guardrail.explanation,
+            ...guardrail.triggerConditions,
+            ...guardrail.relatedFiles,
+            ...guardrail.relatedConcepts,
+          ].join(" "),
+          focusTerms,
+        );
+        const lane = overlap > 0 ? warmBlocks : coldBlocks;
+        lane.push(
+          makeBlock(
+            `guardrail:${guardrail.id}`,
+            overlap > 0 ? "warm" : "cold",
+            "memory",
+            formatGuardrail(guardrail),
+            new Date(guardrail.updatedAt).getTime(),
+          ),
+        );
+      }
+
+      const decisions = await listScopedDecisions(kv, {
+        project: data.project,
+        branch,
+        activeOnly: true,
+        limit: 12,
+      });
+      for (const decision of decisions) {
+        const overlap = scoreQueryOverlap(
+          [
+            decision.title,
+            decision.decision,
+            decision.rationale,
+            ...decision.relatedFiles,
+            ...decision.relatedConcepts,
+          ].join(" "),
+          focusTerms,
+        );
+        const lane = overlap > 0 ? warmBlocks : coldBlocks;
+        lane.push(
+          makeBlock(
+            `decision:${decision.id}`,
+            overlap > 0 ? "warm" : "cold",
+            "memory",
+            formatDecision(decision),
+            new Date(decision.updatedAt).getTime(),
+          ),
+        );
+      }
+
+      const dossiers = (await kv.list<ComponentDossier>(KV.componentDossiers).catch(() => []))
+        .filter((dossier) => dossier.project === data.project)
+        .filter((dossier) => !branch || !dossier.branch || dossier.branch === branch)
+        .slice(0, 30);
+      const focusFiles = uniqueStrings([
+        ...(workingSet?.latestImportantFiles || []),
+        ...(workingSet?.latestCompletedCapsule?.files || []),
+      ]);
+      for (const dossier of dossiers) {
+        const dossierFocusText = [
+          dossier.filePath,
+          basename(dossier.filePath),
+          dossier.summary,
+          dossier.currentState,
+          ...dossier.keyFacts,
+          ...dossier.activeRisks,
+        ].join(" ");
+        const fileOverlap =
+          focusFiles.includes(dossier.filePath) ||
+          focusFiles.some((filePath) => basename(filePath) === basename(dossier.filePath));
+        const overlap = scoreQueryOverlap(dossierFocusText, focusTerms);
+        if (!fileOverlap && overlap === 0) continue;
+        warmBlocks.push(
+          makeBlock(
+            `dossier:${dossier.id}`,
+            "warm",
+            "memory",
+            formatDossier(dossier),
+            new Date(dossier.updatedAt).getTime(),
+            { sourceObservationIds: dossier.sourceObservationIds },
+          ),
+        );
       }
 
       const projectedBeliefs = await listProjectedBeliefs(kv, data.project).catch(() => []);
