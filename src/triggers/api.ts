@@ -303,11 +303,20 @@ export function registerApiTriggers(
           body: { error: "budget must be a positive integer" },
         };
       }
-      const payload: { sessionId: string; project: string; budget?: number } = {
+      const query = body.query === undefined
+        ? undefined
+        : (asNonEmptyString(body.query) ?? undefined);
+      const payload: {
+        sessionId: string;
+        project: string;
+        budget?: number;
+        query?: string;
+      } = {
         sessionId,
         project,
       };
       if (budget !== undefined) payload.budget = budget;
+      if (query !== undefined) payload.query = query;
       const result = await sdk.trigger({ function_id: "mem::context", payload });
       return { status_code: 200, body: result };
     },

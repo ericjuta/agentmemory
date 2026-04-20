@@ -1,0 +1,56 @@
+import { describe, expect, it } from "vitest";
+import type { CompressedObservation, Session } from "../src/types.js";
+import { registerContextFunction } from "../src/functions/context.js";
+import { registerApiTriggers } from "../src/triggers/api.js";
+import { KV } from "../src/state/schema.js";
+import { mockKV, mockSdk } from "./helpers/mocks.js";
+
+describe("api::context", () => {
+  it("forwards an optional query to mem::context", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerContextFunction(sdk as never, kv as never, 900);
+    registerApiTriggers(sdk as never, kv as never);
+
+    const session: Session = {
+      id: "session-api-context",
+      project: "/project",
+      cwd: "/project",
+      startedAt: "2026-03-29T13:00:00.000Z",
+      status: "active",
+      observationCount: 1,
+    };
+    const observation: CompressedObservation = {
+      id: "obs-api-context",
+      sessionId: session.id,
+      turnId: "turn-1",
+      timestamp: "2026-03-29T13:00:01.000Z",
+      type: "discovery",
+      title: "Context query forwarding",
+      facts: [],
+      narrative: "The context endpoint should preserve retrieval trace queries.",
+      concepts: ["retrieval trace", "api context"],
+      files: ["/project/src/triggers/api.ts"],
+      importance: 7,
+    };
+
+    await kv.set(KV.sessions, session.id, session);
+    await kv.set(KV.observations(session.id), observation.id, observation);
+
+    const response = (await sdk.trigger("api::context", {
+      body: {
+        sessionId: session.id,
+        project: session.project,
+        query: "retrieval trace",
+      },
+      headers: {},
+    })) as {
+      status_code: number;
+      body: { trace: { query?: string; queryTerms: string[] } };
+    };
+
+    expect(response.status_code).toBe(200);
+    expect(response.body.trace.query).toBe("retrieval trace");
+    expect(response.body.trace.queryTerms).toContain("retrieval");
+  });
+});

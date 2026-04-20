@@ -222,6 +222,60 @@ export interface ContextBlock {
   sourceIds?: string[];
 }
 
+export type RetrievalTraceLane = "hot" | "warm" | "cold";
+
+export type RetrievalTraceDecision =
+  | "selected_lane_budget"
+  | "selected_leftover_fill"
+  | "skipped_duplicate_fingerprint"
+  | "skipped_observation_already_selected"
+  | "skipped_session_already_covered"
+  | "skipped_lane_budget"
+  | "skipped_total_budget";
+
+export interface RetrievalTraceScore {
+  queryOverlap: number;
+  lanePriority: number;
+  recency: number;
+}
+
+export interface RetrievalTraceCandidate {
+  id: string;
+  sourceType: string;
+  blockType: ContextBlock["type"];
+  lane: RetrievalTraceLane;
+  preview: string;
+  tokens: number;
+  score: RetrievalTraceScore;
+  selected: boolean;
+  decision: RetrievalTraceDecision;
+  sessionId?: string;
+  sourceObservationIds?: string[];
+  isCapsule?: boolean;
+  linkedMemoryId?: string;
+}
+
+export interface ContextInjection {
+  sessionId: string;
+  memoryIds: string[];
+  timestamp: string;
+}
+
+export interface RetrievalTrace {
+  generatedAt: string;
+  query?: string;
+  queryTerms: string[];
+  budget: number;
+  availableBudget: number;
+  selectedTokens: number;
+  responseTokens: number;
+  laneBudgets: Record<RetrievalTraceLane, number>;
+  laneUsage: Record<RetrievalTraceLane, number>;
+  selected: RetrievalTraceCandidate[];
+  skipped: RetrievalTraceCandidate[];
+  usefulnessLink: ContextInjection | null;
+}
+
 export interface EvalResult {
   valid: boolean;
   errors: string[];

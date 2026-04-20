@@ -589,4 +589,150 @@ describe("context freshness", () => {
     expect(memoryIndex).toBeGreaterThan(-1);
     expect(beliefIndex).toBeLessThan(memoryIndex);
   });
+
+  it("returns retrieval trace metadata and reuses context injections for usefulness feedback", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerContextFunction(sdk as never, kv as never, 1000);
+
+    const currentSession: Session = {
+      id: "session-trace",
+      project: "/project",
+      cwd: "/project",
+      startedAt: "2026-03-29T12:00:00.000Z",
+      status: "active",
+      observationCount: 2,
+    };
+    await kv.set(KV.sessions, currentSession.id, currentSession);
+
+    const capsule: TurnCapsule = {
+      id: "session-trace:turn-1",
+      sessionId: "session-trace",
+      turnId: "turn-1",
+      project: "/project",
+      cwd: "/project",
+      createdAt: "2026-03-29T12:00:01.000Z",
+      updatedAt: "2026-03-29T12:00:02.000Z",
+      userPrompt: "Explain retrieval ranking",
+      assistantConclusion: "Need explicit trace output for selected and skipped context.",
+      files: ["/project/src/functions/context.ts"],
+      concepts: ["retrieval trace"],
+      hadFailure: false,
+      hadDecision: true,
+      sourceObservationIds: ["obs-covered"],
+      importantObservationIds: ["obs-covered"],
+      maxImportance: 8,
+    };
+    const workingSet: SessionWorkingSet = {
+      sessionId: currentSession.id,
+      project: "/project",
+      cwd: "/project",
+      updatedAt: "2026-03-29T12:00:03.000Z",
+      latestTurnId: "turn-1",
+      latestCompletedTurnId: "turn-1",
+      latestCompletedCapsule: capsule,
+      latestAssistantConclusion:
+        "Need explicit trace output for selected and skipped context.",
+      latestImportantFiles: ["/project/src/functions/context.ts"],
+      latestImportantConcepts: ["retrieval trace"],
+      latestImportantObservationIds: ["obs-covered"],
+      latestHadFailure: false,
+      latestHadDecision: true,
+    };
+    const coveredObservation: CompressedObservation = {
+      id: "obs-covered",
+      sessionId: currentSession.id,
+      turnId: "turn-1",
+      timestamp: "2026-03-29T12:00:02.500Z",
+      type: "task",
+      title: "Covered warm observation",
+      facts: [],
+      narrative: "This should be skipped because the working set already covers it.",
+      concepts: ["retrieval trace"],
+      files: ["/project/src/functions/context.ts"],
+      importance: 7,
+    };
+    const memory: Memory = {
+      id: "mem-trace",
+      createdAt: "2026-03-29T12:00:04.000Z",
+      updatedAt: "2026-03-29T12:00:04.000Z",
+      type: "fact",
+      title: "Trace requirement",
+      content: "Add retrieval trace output to context selection.",
+      concepts: ["retrieval trace", "context"],
+      files: ["/project/src/functions/context.ts"],
+      sessionIds: [currentSession.id],
+      strength: 8,
+      version: 1,
+      isLatest: true,
+      sourceObservationIds: [],
+    };
+
+    await kv.set(KV.turnCapsules, capsule.id, capsule);
+    await kv.set(KV.workingSets, currentSession.id, workingSet);
+    await kv.set(
+      KV.observations(currentSession.id),
+      coveredObservation.id,
+      coveredObservation,
+    );
+    await kv.set(KV.memories, memory.id, memory);
+
+    const result = (await sdk.trigger("mem::context", {
+      sessionId: currentSession.id,
+      project: "/project",
+      budget: 1000,
+      query: "retrieval trace context",
+    })) as {
+      context: string;
+      trace: {
+        query: string;
+        selected: Array<{
+          id: string;
+          lane: string;
+          decision: string;
+          score: { queryOverlap: number };
+          linkedMemoryId?: string;
+        }>;
+        skipped: Array<{ id: string; decision: string }>;
+        usefulnessLink: {
+          sessionId: string;
+          memoryIds: string[];
+          timestamp: string;
+        } | null;
+      };
+    };
+
+    expect(result.context).toContain("Explain retrieval ranking");
+    expect(result.context).toContain("Trace requirement");
+    expect(result.trace.query).toBe("retrieval trace context");
+
+    const selectedMemory = result.trace.selected.find(
+      (candidate) => candidate.id === "memory:mem-trace",
+    );
+    expect(selectedMemory).toMatchObject({
+      lane: "cold",
+      decision: "selected_lane_budget",
+      linkedMemoryId: "mem-trace",
+    });
+    expect(selectedMemory?.score.queryOverlap).toBeGreaterThan(0);
+
+    const skippedObservation = result.trace.skipped.find(
+      (candidate) => candidate.id === "observation:obs-covered",
+    );
+    expect(skippedObservation).toMatchObject({
+      decision: "skipped_observation_already_selected",
+    });
+
+    expect(result.trace.usefulnessLink).toMatchObject({
+      sessionId: currentSession.id,
+      memoryIds: ["mem-trace"],
+    });
+
+    const storedInjection = await kv.get<{
+      sessionId: string;
+      memoryIds: string[];
+      timestamp: string;
+    }>(KV.contextInjections, currentSession.id);
+    expect(storedInjection).toEqual(result.trace.usefulnessLink);
+  });
 });

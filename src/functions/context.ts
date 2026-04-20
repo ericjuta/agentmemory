@@ -6,8 +6,13 @@ import type {
   CompressedObservation,
   SessionSummary,
   ContextBlock,
+  ContextInjection,
   ProjectProfile,
   ProceduralMemory,
+  RetrievalTrace,
+  RetrievalTraceCandidate,
+  RetrievalTraceDecision,
+  RetrievalTraceLane,
   SemanticMemory,
   Memory,
   TurnCapsule,
@@ -32,7 +37,7 @@ function escapeXmlAttr(s: string): string {
     .replace(/>/g, "&gt;");
 }
 
-type Lane = "hot" | "warm" | "cold";
+type Lane = RetrievalTraceLane;
 
 type RankedContextBlock = ContextBlock & {
   id: string;
@@ -45,6 +50,30 @@ type RankedContextBlock = ContextBlock & {
 
 function normalizeFingerprint(text: string): string {
   return text.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function blockPreview(content: string): string {
+  const lines = content
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const preferred = lines.find((line) => !line.startsWith("## "));
+  return (preferred ?? lines[0] ?? "").slice(0, 160);
+}
+
+function blockSourceType(id: string): string {
+  return id.split(":")[0] || "unknown";
+}
+
+function linkedMemoryId(id: string): string | undefined {
+  if (
+    id.startsWith("memory:") ||
+    id.startsWith("semantic:") ||
+    id.startsWith("procedural:")
+  ) {
+    return id.split(":").slice(1).join(":");
+  }
+  return undefined;
 }
 
 function uniqueStrings(values: string[]): string[] {
@@ -243,6 +272,43 @@ function lanePriority(lane: Lane): number {
     case "cold":
       return 1;
   }
+}
+
+function buildTraceCandidate(
+  block: RankedContextBlock,
+  terms: string[],
+): RetrievalTraceCandidate {
+  return {
+    id: block.id,
+    sourceType: blockSourceType(block.id),
+    blockType: block.type,
+    lane: block.lane,
+    preview: blockPreview(block.content),
+    tokens: block.tokens,
+    score: {
+      queryOverlap: scoreQueryOverlap(block.content, terms),
+      lanePriority: lanePriority(block.lane),
+      recency: block.recency,
+    },
+    selected: false,
+    decision: "skipped_lane_budget",
+    sessionId: block.sessionId,
+    sourceObservationIds: block.sourceObservationIds,
+    isCapsule: block.isCapsule,
+    linkedMemoryId: linkedMemoryId(block.id),
+  };
+}
+
+function updateTraceCandidate(
+  traceCandidates: Map<string, RetrievalTraceCandidate>,
+  block: RankedContextBlock,
+  decision: RetrievalTraceDecision,
+  selected: boolean,
+): void {
+  const candidate = traceCandidates.get(block.id);
+  if (!candidate) return;
+  candidate.decision = decision;
+  candidate.selected = selected;
 }
 
 export function registerContextFunction(
@@ -582,22 +648,22 @@ export function registerContextFunction(
         }
       }
 
+      const traceTimestamp = new Date().toISOString();
       let usedTokens = 0;
+      let selectedTokens = 0;
       const selected: string[] = [];
       const accessedIds: string[] = [];
       const header = `<agentmemory-context project="${escapeXmlAttr(data.project)}">`;
       const footer = `</agentmemory-context>`;
-      usedTokens += estimateTokens(header) + estimateTokens(footer);
-      const availableBudget = Math.max(
-        0,
-        budget - estimateTokens(header) - estimateTokens(footer),
-      );
+      const wrapperTokens = estimateTokens(header) + estimateTokens(footer);
+      usedTokens += wrapperTokens;
+      const availableBudget = Math.max(0, budget - wrapperTokens);
       // When a query is present, shift budget toward warm/cold (relevant content)
       // over hot (recent-but-possibly-irrelevant capsules)
       const hasQuery = terms.length > 0;
       const hotPct = hasQuery ? 0.2 : 0.4;
       const warmPct = hasQuery ? 0.4 : 0.3;
-      const laneBudgets = {
+      const laneBudgets: Record<RetrievalTraceLane, number> = {
         hot: Math.floor(availableBudget * hotPct),
         warm: Math.floor(availableBudget * warmPct),
         cold:
@@ -605,11 +671,21 @@ export function registerContextFunction(
           Math.floor(availableBudget * hotPct) -
           Math.floor(availableBudget * warmPct),
       };
+      const laneUsage: Record<RetrievalTraceLane, number> = {
+        hot: 0,
+        warm: 0,
+        cold: 0,
+      };
 
       const selectedIds = new Set<string>();
       const fingerprints = new Set<string>();
       const selectedObservationIds = new Set<string>();
       const selectedCapsuleSessions = new Set<string>();
+      const selectedTraceIds: string[] = [];
+      const allBlocks = [...hotBlocks, ...warmBlocks, ...coldBlocks];
+      const traceCandidates = new Map(
+        allBlocks.map((block) => [block.id, buildTraceCandidate(block, terms)]),
+      );
       const sortBlocks = (blocks: RankedContextBlock[]) =>
         blocks.sort((a, b) => {
           const aScore = scoreQueryOverlap(a.content, terms);
@@ -623,15 +699,49 @@ export function registerContextFunction(
           return b.recency - a.recency;
         });
 
+      const markSkipped = (
+        block: RankedContextBlock,
+        decision: RetrievalTraceDecision,
+      ) => {
+        const candidate = traceCandidates.get(block.id);
+        if (!candidate || candidate.selected) return;
+        updateTraceCandidate(traceCandidates, block, decision, false);
+      };
+
+      const selectBlock = (
+        block: RankedContextBlock,
+        decision: RetrievalTraceDecision,
+      ) => {
+        selected.push(block.content);
+        usedTokens += block.tokens;
+        selectedTokens += block.tokens;
+        selectedIds.add(block.id);
+        selectedTraceIds.push(block.id);
+        fingerprints.add(block.fingerprint);
+        laneUsage[block.lane] += block.tokens;
+        updateTraceCandidate(traceCandidates, block, decision, true);
+        if (block.isCapsule && block.sessionId) {
+          selectedCapsuleSessions.add(block.sessionId);
+        }
+        for (const id of block.sourceObservationIds || []) {
+          selectedObservationIds.add(id);
+          accessedIds.push(id);
+        }
+      };
+
       const takeFromLane = (blocks: RankedContextBlock[], laneBudget: number) => {
         let laneUsed = 0;
         for (const block of blocks) {
           if (selectedIds.has(block.id)) continue;
-          if (fingerprints.has(block.fingerprint)) continue;
+          if (fingerprints.has(block.fingerprint)) {
+            markSkipped(block, "skipped_duplicate_fingerprint");
+            continue;
+          }
           if (
             block.lane === "warm" &&
             block.sourceObservationIds?.some((id) => selectedObservationIds.has(id))
           ) {
+            markSkipped(block, "skipped_observation_already_selected");
             continue;
           }
           if (
@@ -640,22 +750,19 @@ export function registerContextFunction(
             block.sessionId &&
             selectedCapsuleSessions.has(block.sessionId)
           ) {
+            markSkipped(block, "skipped_session_already_covered");
             continue;
           }
-          if (laneUsed + block.tokens > laneBudget) continue;
-          if (usedTokens + block.tokens > budget) continue;
-          selected.push(block.content);
-          usedTokens += block.tokens;
+          if (laneUsed + block.tokens > laneBudget) {
+            markSkipped(block, "skipped_lane_budget");
+            continue;
+          }
+          if (usedTokens + block.tokens > budget) {
+            markSkipped(block, "skipped_total_budget");
+            continue;
+          }
+          selectBlock(block, "selected_lane_budget");
           laneUsed += block.tokens;
-          selectedIds.add(block.id);
-          fingerprints.add(block.fingerprint);
-          if (block.isCapsule && block.sessionId) {
-            selectedCapsuleSessions.add(block.sessionId);
-          }
-          for (const id of block.sourceObservationIds || []) {
-            selectedObservationIds.add(id);
-            accessedIds.push(id);
-          }
         }
       };
 
@@ -684,11 +791,15 @@ export function registerContextFunction(
           return b.recency - a.recency;
         });
       for (const block of leftovers) {
-        if (fingerprints.has(block.fingerprint)) continue;
+        if (fingerprints.has(block.fingerprint)) {
+          markSkipped(block, "skipped_duplicate_fingerprint");
+          continue;
+        }
         if (
           block.lane === "warm" &&
           block.sourceObservationIds?.some((id) => selectedObservationIds.has(id))
         ) {
+          markSkipped(block, "skipped_observation_already_selected");
           continue;
         }
         if (
@@ -697,42 +808,70 @@ export function registerContextFunction(
           block.sessionId &&
           selectedCapsuleSessions.has(block.sessionId)
         ) {
+          markSkipped(block, "skipped_session_already_covered");
           continue;
         }
-        if (usedTokens + block.tokens > budget) continue;
-        selected.push(block.content);
-        usedTokens += block.tokens;
-        selectedIds.add(block.id);
-        fingerprints.add(block.fingerprint);
-        if (block.isCapsule && block.sessionId) {
-          selectedCapsuleSessions.add(block.sessionId);
+        if (usedTokens + block.tokens > budget) {
+          markSkipped(block, "skipped_total_budget");
+          continue;
         }
-        for (const id of block.sourceObservationIds || []) {
-          selectedObservationIds.add(id);
-          accessedIds.push(id);
-        }
+        selectBlock(block, "selected_leftover_fill");
       }
 
-      // Track which memories were injected for feedback loop
-      const injectedMemoryIds = [...selectedIds]
-        .filter(id => id.startsWith("memory:") || id.startsWith("semantic:") || id.startsWith("procedural:"))
-        .map(id => id.split(":").slice(1).join(":"));
+      const injectedMemoryIds = uniqueStrings(
+        selectedTraceIds
+          .map((id) => traceCandidates.get(id)?.linkedMemoryId)
+          .filter((id): id is string => Boolean(id)),
+      );
+      const usefulnessLink: ContextInjection | null =
+        injectedMemoryIds.length > 0
+          ? {
+              sessionId: data.sessionId,
+              memoryIds: injectedMemoryIds,
+              timestamp: traceTimestamp,
+            }
+          : null;
 
-      if (injectedMemoryIds.length > 0) {
-        await kv.set(KV.contextInjections, data.sessionId, {
-          sessionId: data.sessionId,
-          memoryIds: injectedMemoryIds,
-          timestamp: new Date().toISOString(),
-        }).catch(() => {});
+      if (usefulnessLink) {
+        await kv
+          .set(KV.contextInjections, data.sessionId, usefulnessLink)
+          .catch(() => {});
       }
 
       if (accessedIds.length > 0) {
         void recordAccessBatch(kv, accessedIds);
       }
 
+      const trace: RetrievalTrace = {
+        generatedAt: traceTimestamp,
+        query: data.query?.trim() || undefined,
+        queryTerms: terms,
+        budget,
+        availableBudget,
+        selectedTokens,
+        responseTokens: selected.length > 0 ? usedTokens : 0,
+        laneBudgets,
+        laneUsage,
+        selected: selectedTraceIds
+          .map((id) => traceCandidates.get(id))
+          .filter((candidate): candidate is RetrievalTraceCandidate =>
+            Boolean(candidate),
+          ),
+        skipped: [...traceCandidates.values()]
+          .filter((candidate) => !candidate.selected)
+          .sort((a, b) => {
+            const queryDelta = b.score.queryOverlap - a.score.queryOverlap;
+            if (queryDelta !== 0) return queryDelta;
+            const laneDelta = b.score.lanePriority - a.score.lanePriority;
+            if (laneDelta !== 0) return laneDelta;
+            return b.score.recency - a.score.recency;
+          }),
+        usefulnessLink,
+      };
+
       if (selected.length === 0) {
         logger.info("No context available", { project: data.project });
-        return { context: "", blocks: 0, tokens: 0 };
+        return { context: "", blocks: 0, tokens: 0, trace };
       }
 
       const result = `${header}\n${selected.join("\n\n")}\n${footer}`;
@@ -740,7 +879,12 @@ export function registerContextFunction(
         blocks: selected.length,
         tokens: usedTokens,
       });
-      return { context: result, blocks: selected.length, tokens: usedTokens };
+      return {
+        context: result,
+        blocks: selected.length,
+        tokens: usedTokens,
+        trace,
+      };
     },
   );
 }
