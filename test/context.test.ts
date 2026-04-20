@@ -4,6 +4,7 @@ import type {
   Memory,
   CompressedObservation,
   GraphNode,
+  HandoffPacket,
   ProceduralMemory,
   ProjectProfile,
   SemanticMemory,
@@ -734,5 +735,130 @@ describe("context freshness", () => {
       timestamp: string;
     }>(KV.contextInjections, currentSession.id);
     expect(storedInjection).toEqual(result.trace.usefulnessLink);
+  });
+
+  it("includes the latest matching handoff packet for resume-style queries", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerContextFunction(sdk as never, kv as never, 1200);
+
+    const currentSession: Session = {
+      id: "session-resume",
+      project: "/project",
+      cwd: "/project",
+      startedAt: "2026-04-20T10:00:00.000Z",
+      status: "active",
+      observationCount: 1,
+    };
+    await kv.set(KV.sessions, currentSession.id, currentSession);
+
+    const currentPacket: HandoffPacket = {
+      id: "hdf-current",
+      createdAt: "2026-04-20T10:00:01.000Z",
+      updatedAt: "2026-04-20T10:05:00.000Z",
+      project: "/project",
+      scopeType: "session",
+      scopeId: currentSession.id,
+      summary: "Resume the deploy handoff from the current session.",
+      recentChanges: ["Mission state is wired through the API."],
+      knownFacts: ["Deployment approval is still pending."],
+      relevantFiles: ["/project/src/triggers/api.ts"],
+      relevantConcepts: ["handoff", "mission"],
+      blockers: ["Checkpoint pending: Production approval"],
+      openQuestions: ["Who approves the release?"],
+      recommendedNextStep: "Resolve the pending approval checkpoint.",
+      confidence: 0.82,
+      sourceObservationIds: ["obs-handoff"],
+      sourceActionIds: [],
+      sourceBeliefIds: [],
+    };
+    const olderMissionPacket: HandoffPacket = {
+      id: "hdf-mission",
+      createdAt: "2026-04-20T09:00:01.000Z",
+      updatedAt: "2026-04-20T10:06:00.000Z",
+      project: "/project",
+      scopeType: "mission",
+      scopeId: "msn_older",
+      summary: "Older mission packet that should lose to the current session resume packet.",
+      recentChanges: ["An older migration completed."],
+      knownFacts: ["Mission packet exists."],
+      relevantFiles: ["/project/src/functions/missions.ts"],
+      relevantConcepts: ["mission"],
+      blockers: [],
+      openQuestions: [],
+      recommendedNextStep: "Review mission history.",
+      confidence: 0.6,
+      sourceObservationIds: [],
+      sourceActionIds: [],
+      sourceBeliefIds: [],
+    };
+    await kv.set(KV.handoffPackets, currentPacket.id, currentPacket);
+    await kv.set(KV.handoffPackets, olderMissionPacket.id, olderMissionPacket);
+
+    const result = (await sdk.trigger("mem::context", {
+      sessionId: currentSession.id,
+      project: "/project",
+      budget: 1200,
+      query: "resume handoff blockers and next step",
+    })) as {
+      context: string;
+      trace: { selected: Array<{ id: string }> };
+    };
+
+    expect(result.context).toContain("## Resume Handoff Packet");
+    expect(result.context).toContain(currentPacket.summary);
+    expect(result.context).toContain(currentPacket.recommendedNextStep);
+    expect(result.context).not.toContain(olderMissionPacket.summary);
+    expect(
+      result.trace.selected.some((candidate) => candidate.id === "handoff:hdf-current"),
+    ).toBe(true);
+  });
+
+  it("does not inject handoff packets for non-resume queries", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerContextFunction(sdk as never, kv as never, 1200);
+
+    const currentSession: Session = {
+      id: "session-no-handoff",
+      project: "/project",
+      cwd: "/project",
+      startedAt: "2026-04-20T11:00:00.000Z",
+      status: "active",
+      observationCount: 1,
+    };
+    await kv.set(KV.sessions, currentSession.id, currentSession);
+
+    const packet: HandoffPacket = {
+      id: "hdf-ignore",
+      createdAt: "2026-04-20T11:00:01.000Z",
+      updatedAt: "2026-04-20T11:02:00.000Z",
+      project: "/project",
+      scopeType: "session",
+      scopeId: currentSession.id,
+      summary: "Resume packet that should stay out of plain ranking queries.",
+      recentChanges: ["Updated resume support."],
+      knownFacts: ["Resume artifacts exist."],
+      relevantFiles: ["/project/src/functions/handoffs.ts"],
+      relevantConcepts: ["handoff"],
+      blockers: [],
+      openQuestions: [],
+      recommendedNextStep: "Use only on resume queries.",
+      confidence: 0.75,
+      sourceObservationIds: [],
+      sourceActionIds: [],
+      sourceBeliefIds: [],
+    };
+    await kv.set(KV.handoffPackets, packet.id, packet);
+
+    const result = (await sdk.trigger("mem::context", {
+      sessionId: currentSession.id,
+      project: "/project",
+      budget: 1200,
+      query: "graph retrieval ranking",
+    })) as { context: string };
+
+    expect(result.context).not.toContain(packet.summary);
+    expect(result.context).not.toContain("## Resume Handoff Packet");
   });
 });

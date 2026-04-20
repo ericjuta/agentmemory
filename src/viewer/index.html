@@ -779,6 +779,7 @@
     <button data-tab="sessions">Sessions</button>
     <button data-tab="lessons">Lessons</button>
     <button data-tab="actions">Actions</button>
+    <button data-tab="coordination">Coordination</button>
     <button data-tab="crystals">Crystals</button>
     <button data-tab="audit">Audit</button>
     <button data-tab="activity">Activity</button>
@@ -791,6 +792,7 @@
   <div id="view-memories" class="view"></div>
   <div id="view-lessons" class="view"></div>
   <div id="view-actions" class="view"></div>
+  <div id="view-coordination" class="view"></div>
   <div id="view-crystals" class="view"></div>
   <div id="view-timeline" class="view"></div>
   <div id="view-sessions" class="view"></div>
@@ -863,7 +865,7 @@
 
     var state = {
       activeTab: 'dashboard',
-      dashboard: { loaded: false, health: null, sessions: [], memories: [], graphStats: null, recentAudit: [], lessons: [], crystals: [] },
+      dashboard: { loaded: false, health: null, sessions: [], memories: [], graphStats: null, recentAudit: [], lessons: [], crystals: [], missions: [], handoffs: [] },
       graph: { loaded: false, nodes: [], edges: [], stats: null, filters: {}, selectedNode: null },
       memories: { loaded: false, items: [], search: '', typeFilter: '' },
       timeline: { loaded: false, observations: [], sessionId: '', minImportance: 0, page: 0, pageSize: 50 },
@@ -872,6 +874,7 @@
       activity: { loaded: false, observations: [], sessions: [], typeFilter: '' },
       lessons: { loaded: false, items: [], search: '' },
       actions: { loaded: false, items: [], frontier: [], statusFilter: '', search: '' },
+      coordination: { loaded: false, projects: [], selectedProject: '', missions: [], handoffs: [] },
       crystals: { loaded: false, items: [], search: '' },
       operations: {
         loaded: false,
@@ -904,6 +907,23 @@
     function truncate(s, n) {
       if (!s) return '';
       return s.length > n ? s.slice(0, n) + '...' : s;
+    }
+    function missionStatusClass(status) {
+      if (status === 'completed') return 'badge-green';
+      if (status === 'active') return 'badge-blue';
+      if (status === 'blocked') return 'badge-red';
+      if (status === 'cancelled') return 'badge-muted';
+      return 'badge-yellow';
+    }
+    function handoffScopeClass(scopeType) {
+      if (scopeType === 'mission') return 'badge-purple';
+      if (scopeType === 'session') return 'badge-blue';
+      if (scopeType === 'action') return 'badge-green';
+      return 'badge-muted';
+    }
+    function handoffScopeLabel(packet) {
+      var scopeId = packet && packet.scopeId ? packet.scopeId : '';
+      return (packet && packet.scopeType ? packet.scopeType : 'unknown') + (scopeId ? ' · ' + truncate(scopeId, 16) : '');
     }
     function debounce(fn, ms) {
       var t;
@@ -966,6 +986,7 @@
         case 'sessions': if (!state.sessions.loaded) await loadSessions(); break;
         case 'lessons': if (!state.lessons.loaded) await loadLessons(); break;
         case 'actions': if (!state.actions.loaded) await loadActions(); break;
+        case 'coordination': if (!state.coordination.loaded) await loadCoordination(); break;
         case 'crystals': if (!state.crystals.loaded) await loadCrystals(); break;
         case 'audit': if (!state.audit.loaded) await loadAudit(); break;
         case 'activity': if (!state.activity.loaded) await loadActivity(); break;
@@ -987,7 +1008,9 @@
         apiGet('procedural'),
         apiGet('memory-relations'),
         apiGet('lessons'),
-        apiGet('crystals')
+        apiGet('crystals'),
+        apiGet('missions?limit=100'),
+        apiGet('handoffs?limit=100')
       ]);
       state.dashboard.health = results[0];
       state.dashboard.sessions = (results[1] && results[1].sessions) || [];
@@ -998,6 +1021,8 @@
       state.dashboard.procedural = (results[6] && results[6].procedures) || (results[6] && results[6].procedural) || [];
       state.dashboard.lessons = (results[8] && results[8].lessons) || [];
       state.dashboard.crystals = (results[9] && results[9].crystals) || [];
+      state.dashboard.missions = (results[10] && results[10].missions) || [];
+      state.dashboard.handoffs = (results[11] && results[11].handoffPackets) || [];
       state.dashboard.relations = (results[7] && results[7].relations) || [];
       // Derive relation count from memory relatedIds if KV.relations is empty
       if (state.dashboard.relations.length === 0 && state.dashboard.memories.length > 0) {
@@ -1035,8 +1060,16 @@
       html += '<div class="stat-card"><div class="label">Memories</div><div class="value">' + d.memories.length + '</div><div class="sub">latest versions</div></div>';
       var lessonCount = (d.lessons || []).length;
       var crystalCount = (d.crystals || []).length;
+      var missionCount = (d.missions || []).length;
+      var blockedMissionCount = (d.missions || []).filter(function(item) {
+        var status = (item && item.statusSummary && item.statusSummary.status) || (item && item.mission && item.mission.status) || '';
+        return status === 'blocked';
+      }).length;
+      var handoffCount = (d.handoffs || []).length;
       html += '<div class="stat-card"><div class="label">Lessons</div><div class="value">' + lessonCount + '</div><div class="sub">confidence-scored</div></div>';
       html += '<div class="stat-card"><div class="label">Crystals</div><div class="value">' + crystalCount + '</div><div class="sub">action digests</div></div>';
+      html += '<div class="stat-card"><div class="label">Missions</div><div class="value">' + missionCount + '</div><div class="sub">' + blockedMissionCount + ' blocked</div></div>';
+      html += '<div class="stat-card"><div class="label">Handoffs</div><div class="value">' + handoffCount + '</div><div class="sub">durable resume packets</div></div>';
       html += '<div class="stat-card"><div class="label">Graph Nodes</div><div class="value">' + nodeCount + '</div><div class="sub">' + edgeCount + ' edges</div></div>';
       html += '<div class="stat-card"><div class="label">Health</div><div class="value"><div class="health-bar"><span class="health-dot ' + dotClass + '"></span> ' + esc(healthStatus) + '</div></div>';
       html += '<div class="sub">' + esc(snap.connectionState || 'unknown') + '</div></div>';
@@ -2655,6 +2688,173 @@
       }
     }
 
+    async function loadCoordination() {
+      var el = document.getElementById('view-coordination');
+      el.innerHTML = '<div class="loading">Loading coordination...</div>';
+      var results = await Promise.all([
+        apiGet('sessions?limit=200'),
+        apiGet('missions?limit=100'),
+        apiGet('handoffs?limit=100')
+      ]);
+      var sessions = (results[0] && results[0].sessions) || [];
+      state.coordination.missions = (results[1] && results[1].missions) || [];
+      state.coordination.handoffs = (results[2] && results[2].handoffPackets) || [];
+
+      var projects = {};
+      sessions.forEach(function(s) { if (s.project) projects[s.project] = true; });
+      state.coordination.missions.forEach(function(item) {
+        if (item && item.mission && item.mission.project) projects[item.mission.project] = true;
+      });
+      state.coordination.handoffs.forEach(function(packet) {
+        if (packet && packet.project) projects[packet.project] = true;
+      });
+      state.coordination.projects = Object.keys(projects).sort();
+      if (
+        state.coordination.selectedProject &&
+        state.coordination.projects.indexOf(state.coordination.selectedProject) === -1
+      ) {
+        state.coordination.selectedProject = '';
+      }
+      if (!state.coordination.selectedProject && state.coordination.projects.length === 1) {
+        state.coordination.selectedProject = state.coordination.projects[0];
+      }
+      state.coordination.loaded = true;
+      renderCoordination();
+    }
+
+    function renderCoordination() {
+      var el = document.getElementById('view-coordination');
+      var selectedProject = state.coordination.selectedProject;
+      var missions = state.coordination.missions || [];
+      var handoffs = state.coordination.handoffs || [];
+
+      if (selectedProject) {
+        missions = missions.filter(function(item) {
+          return item && item.mission && item.mission.project === selectedProject;
+        });
+        handoffs = handoffs.filter(function(packet) {
+          return packet && packet.project === selectedProject;
+        });
+      }
+
+      var activeCount = 0;
+      var blockedCount = 0;
+      var completedCount = 0;
+      missions.forEach(function(item) {
+        var status = (item && item.statusSummary && item.statusSummary.status) || (item && item.mission && item.mission.status) || '';
+        if (status === 'active') activeCount += 1;
+        if (status === 'blocked') blockedCount += 1;
+        if (status === 'completed') completedCount += 1;
+      });
+      var missionLinkedPackets = handoffs.filter(function(packet) {
+        return packet && packet.scopeType === 'mission';
+      }).length;
+      var handoffById = {};
+      handoffs.forEach(function(packet) {
+        if (packet && packet.id) handoffById[packet.id] = packet;
+      });
+
+      var html = '<div class="toolbar">';
+      html += '<select id="coordination-project">';
+      html += '<option value="">All projects</option>';
+      state.coordination.projects.forEach(function(project) {
+        html += '<option value="' + esc(project) + '"' + (selectedProject === project ? ' selected' : '') + '>' + esc(project) + '</option>';
+      });
+      html += '</select>';
+      html += '<span style="font-size:12px;color:var(--ink-faint);">' + missions.length + ' missions · ' + handoffs.length + ' packets</span>';
+      html += '<button class="btn btn-primary" data-action="refresh-coordination" style="margin-left:auto;">Refresh</button>';
+      html += '</div>';
+
+      html += '<div class="stats-grid">';
+      html += '<div class="stat-card"><div class="label">Missions</div><div class="value">' + missions.length + '</div><div class="sub">durable objectives</div></div>';
+      html += '<div class="stat-card"><div class="label">Active</div><div class="value">' + activeCount + '</div><div class="sub">currently moving</div></div>';
+      html += '<div class="stat-card"><div class="label">Blocked</div><div class="value">' + blockedCount + '</div><div class="sub">attention needed</div></div>';
+      html += '<div class="stat-card"><div class="label">Completed</div><div class="value">' + completedCount + '</div><div class="sub">closed loops</div></div>';
+      html += '<div class="stat-card"><div class="label">Packets</div><div class="value">' + handoffs.length + '</div><div class="sub">resume artifacts</div></div>';
+      html += '<div class="stat-card"><div class="label">Mission Packets</div><div class="value">' + missionLinkedPackets + '</div><div class="sub">mission-scoped handoffs</div></div>';
+      html += '</div>';
+
+      html += '<div class="two-col">';
+
+      html += '<div class="card"><div class="card-title">Missions</div>';
+      if (missions.length === 0) {
+        html += '<div class="empty-state"><p>No missions recorded for this scope</p></div>';
+      } else {
+        missions.forEach(function(item) {
+          var mission = (item && item.mission) || {};
+          var summary = (item && item.statusSummary) || {};
+          var status = summary.status || mission.status || 'draft';
+          var actionCounts = summary.actionCounts || {};
+          var actionTotal = (actionCounts.pending || 0) + (actionCounts.active || 0) + (actionCounts.done || 0) + (actionCounts.blocked || 0) + (actionCounts.cancelled || 0);
+          var blockers = summary.blockers || [];
+          var linkedPacket = mission.latestHandoffPacketId ? handoffById[mission.latestHandoffPacketId] : null;
+          html += '<div style="padding:12px 0;border-bottom:1px solid var(--border-light);">';
+          html += '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">';
+          html += '<div style="font-size:18px;color:var(--ink);font-family:var(--font-display);font-weight:700;line-height:1.2;">' + esc(mission.goal || mission.id || 'Mission') + '</div>';
+          html += '<span class="badge ' + missionStatusClass(status) + '">' + esc(status) + '</span>';
+          html += '</div>';
+          if (mission.summary) {
+            html += '<div style="margin-top:6px;font-size:13px;color:var(--ink-muted);line-height:1.6;">' + esc(mission.summary) + '</div>';
+          }
+          html += '<div class="detail-row"><div class="dl">Phase</div><div class="dv">' + esc(mission.phase || '-') + '</div></div>';
+          html += '<div class="detail-row"><div class="dl">Owner</div><div class="dv">' + esc(mission.owner || '-') + '</div></div>';
+          html += '<div class="detail-row"><div class="dl">Linked Actions</div><div class="dv" style="font-family:var(--font-mono);">' + actionTotal + '</div></div>';
+          if (blockers.length > 0) {
+            html += '<div style="margin-top:8px;font-size:12px;color:var(--accent);line-height:1.6;"><strong>Blockers:</strong> ' + esc(blockers.slice(0, 3).join(' | ')) + '</div>';
+          }
+          if (linkedPacket) {
+            html += '<div style="margin-top:8px;padding:8px 10px;border:1px solid var(--border-light);background:var(--bg-alt);">';
+            html += '<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:var(--ink-faint);font-family:var(--font-ui);margin-bottom:4px;">Latest Handoff</div>';
+            html += '<div style="font-size:13px;color:var(--ink);line-height:1.5;">' + esc(linkedPacket.summary || '') + '</div>';
+            html += '<div style="font-size:11px;color:var(--ink-faint);margin-top:4px;">Next: ' + esc(linkedPacket.recommendedNextStep || '-') + '</div>';
+            html += '</div>';
+          }
+          html += '</div>';
+        });
+      }
+      html += '</div>';
+
+      html += '<div class="card"><div class="card-title">Handoff Packets</div>';
+      if (handoffs.length === 0) {
+        html += '<div class="empty-state"><p>No handoff packets recorded for this scope</p></div>';
+      } else {
+        handoffs.forEach(function(packet) {
+          var confidence = typeof packet.confidence === 'number' ? packet.confidence.toFixed(2) : '0.00';
+          html += '<div style="padding:12px 0;border-bottom:1px solid var(--border-light);">';
+          html += '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">';
+          html += '<div style="font-size:16px;color:var(--ink);font-family:var(--font-display);font-weight:700;line-height:1.2;">' + esc(packet.summary || packet.id || 'Handoff Packet') + '</div>';
+          html += '<span class="badge ' + handoffScopeClass(packet.scopeType) + '">' + esc(packet.scopeType) + '</span>';
+          html += '</div>';
+          html += '<div class="detail-row"><div class="dl">Scope</div><div class="dv">' + esc(handoffScopeLabel(packet)) + '</div></div>';
+          html += '<div class="detail-row"><div class="dl">Updated</div><div class="dv" style="font-family:var(--font-mono);font-size:12px;">' + esc(formatTime(packet.updatedAt)) + '</div></div>';
+          html += '<div class="detail-row"><div class="dl">Confidence</div><div class="dv" style="font-family:var(--font-mono);">' + esc(confidence) + '</div></div>';
+          if (packet.blockers && packet.blockers.length > 0) {
+            html += '<div style="margin-top:8px;font-size:12px;color:var(--accent);line-height:1.6;"><strong>Blockers:</strong> ' + esc(packet.blockers.slice(0, 3).join(' | ')) + '</div>';
+          }
+          if (packet.recommendedNextStep) {
+            html += '<div style="margin-top:8px;font-size:13px;color:var(--ink);line-height:1.6;"><strong>Next:</strong> ' + esc(packet.recommendedNextStep) + '</div>';
+          }
+          if (packet.relevantFiles && packet.relevantFiles.length > 0) {
+            html += '<div style="margin-top:6px;font-size:11px;color:var(--ink-faint);font-family:var(--font-mono);">' + esc(packet.relevantFiles.slice(0, 4).join(', ')) + '</div>';
+          }
+          html += '</div>';
+        });
+      }
+      html += '</div>';
+
+      html += '</div>';
+
+      el.innerHTML = html;
+
+      var coordinationProject = document.getElementById('coordination-project');
+      if (coordinationProject) {
+        coordinationProject.addEventListener('change', function() {
+          state.coordination.selectedProject = this.value;
+          renderCoordination();
+        });
+      }
+    }
+
     async function loadCrystals() {
       var el = document.getElementById('view-crystals');
       if (state.dashboard.loaded && state.dashboard.crystals.length) {
@@ -3308,6 +3508,11 @@
       }
       if (action === 'refresh-operations') {
         refreshOperations();
+        return;
+      }
+      if (action === 'refresh-coordination') {
+        state.coordination.loaded = false;
+        loadCoordination();
         return;
       }
       if (action === 'zoom-graph') {

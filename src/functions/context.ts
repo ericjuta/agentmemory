@@ -13,6 +13,7 @@ import type {
   RetrievalTraceCandidate,
   RetrievalTraceDecision,
   RetrievalTraceLane,
+  HandoffPacket,
   SemanticMemory,
   Memory,
   TurnCapsule,
@@ -233,8 +234,83 @@ function formatBelief(projection: BeliefProjection): string {
   return lines.join("\n");
 }
 
+function formatHandoffPacket(packet: HandoffPacket): string {
+  const lines = ["## Resume Handoff Packet"];
+  lines.push(`Scope: ${packet.scopeType} ${packet.scopeId}`);
+  lines.push(`Summary: ${packet.summary}`);
+  if (packet.recentChanges.length > 0) {
+    lines.push(`Recent changes: ${packet.recentChanges.slice(0, 4).join(" | ")}`);
+  }
+  if (packet.blockers.length > 0) {
+    lines.push(`Blockers: ${packet.blockers.slice(0, 4).join(" | ")}`);
+  }
+  if (packet.openQuestions.length > 0) {
+    lines.push(`Open questions: ${packet.openQuestions.slice(0, 3).join(" | ")}`);
+  }
+  if (packet.recommendedNextStep) {
+    lines.push(`Recommended next step: ${packet.recommendedNextStep}`);
+  }
+  if (packet.relevantFiles.length > 0) {
+    lines.push(`Files: ${packet.relevantFiles.slice(0, 6).join(", ")}`);
+  }
+  if (packet.relevantConcepts.length > 0) {
+    lines.push(`Concepts: ${packet.relevantConcepts.slice(0, 8).join(", ")}`);
+  }
+  if (packet.knownFacts.length > 0) {
+    lines.push(`Known facts: ${packet.knownFacts.slice(0, 4).join(" | ")}`);
+  }
+  lines.push(`Confidence: ${packet.confidence.toFixed(2)}`);
+  return lines.join("\n");
+}
+
 function expandTerms(values: string[]): string[] {
   return values.flatMap((value) => queryTerms(value));
+}
+
+function isResumeQuery(query?: string): boolean {
+  if (!query) return false;
+  const normalized = query.toLowerCase();
+  return [
+    "resume",
+    "handoff",
+    "continue",
+    "left off",
+    "pick up",
+    "picked up",
+    "where was i",
+    "what just happened",
+    "what happened",
+    "current status",
+    "blocked",
+    "blockers",
+    "next step",
+    "current objective",
+  ].some((term) => normalized.includes(term));
+}
+
+function handoffScopePriority(
+  packet: HandoffPacket,
+  sessionId: string,
+): number {
+  if (packet.scopeType === "session" && packet.scopeId === sessionId) {
+    return 4;
+  }
+  if (packet.scopeType === "mission") return 3;
+  if (packet.scopeType === "action") return 2;
+  return 1;
+}
+
+function handoffSearchText(packet: HandoffPacket): string {
+  return [
+    packet.summary,
+    packet.recommendedNextStep,
+    ...packet.recentChanges,
+    ...packet.knownFacts,
+    ...packet.relevantFiles,
+    ...packet.relevantConcepts,
+    ...packet.blockers,
+    ...packet.openQuestions,
+  ].join(" ");
 }
 
 function makeBlock(
@@ -360,6 +436,66 @@ export function registerContextFunction(
         ...expandTerms(workingSet?.latestCompletedCapsule?.concepts || []),
         ...expandTerms(workingSet?.latestCompletedCapsule?.files || []),
       ]);
+
+      if (isResumeQuery(data.query)) {
+        const handoffPackets = await kv
+          .list<HandoffPacket>(KV.handoffPackets)
+          .catch(() => []);
+        const matchingPacket =
+          handoffPackets
+            .filter((packet) => packet.project === data.project)
+            .slice()
+            .sort((a, b) => {
+              const aSessionMatch =
+                Number(a.scopeType === "session" && a.scopeId === data.sessionId);
+              const bSessionMatch =
+                Number(b.scopeType === "session" && b.scopeId === data.sessionId);
+              if (bSessionMatch !== aSessionMatch) {
+                return bSessionMatch - aSessionMatch;
+              }
+              const aOverlap = scoreQueryOverlap(handoffSearchText(a), focusTerms);
+              const bOverlap = scoreQueryOverlap(handoffSearchText(b), focusTerms);
+              if (bOverlap !== aOverlap) {
+                return bOverlap - aOverlap;
+              }
+              const scopeDelta =
+                handoffScopePriority(b, data.sessionId) -
+                handoffScopePriority(a, data.sessionId);
+              if (scopeDelta !== 0) return scopeDelta;
+              return (
+                new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+              );
+            })[0] || null;
+
+        if (matchingPacket) {
+          const lane =
+            matchingPacket.scopeType === "session" &&
+            matchingPacket.scopeId === data.sessionId
+              ? hotBlocks
+              : warmBlocks;
+          const laneName =
+            matchingPacket.scopeType === "session" &&
+            matchingPacket.scopeId === data.sessionId
+              ? "hot"
+              : "warm";
+          lane.push(
+            makeBlock(
+              `handoff:${matchingPacket.id}`,
+              laneName,
+              "summary",
+              formatHandoffPacket(matchingPacket),
+              new Date(matchingPacket.updatedAt).getTime(),
+              {
+                sessionId:
+                  matchingPacket.scopeType === "session"
+                    ? matchingPacket.scopeId
+                    : undefined,
+                sourceObservationIds: matchingPacket.sourceObservationIds,
+              },
+            ),
+          );
+        }
+      }
 
       const projectedBeliefs = await listProjectedBeliefs(kv, data.project).catch(() => []);
       for (const belief of projectedBeliefs
