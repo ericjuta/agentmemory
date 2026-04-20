@@ -27,6 +27,8 @@ Most importantly:
 - belief projection is already implemented
 - retrieval feedback is only partially implemented
 - mission and handoff state do not exist yet
+- this DAG is intentionally narrowed to the core implementation set that looks
+  worth shipping next
 
 ## Live Baseline
 
@@ -70,8 +72,11 @@ Use these rules when turning this DAG into actual PRs:
    - `src/index.ts`
    - `README.md`
    - endpoint-count assertions or docs that depend on the count
+7. branch overlays, guardrails, viewer expansion, dossiers, decision memory,
+   and routine compilation are explicitly deferred until the mission/handoff
+   lane proves its value
 
-## Ticket DAG
+## Core Ticket DAG
 
 ```text
 IT-01 -> IT-03
@@ -81,26 +86,13 @@ IT-02 -> IT-05
 IT-03 -> IT-04
 IT-04 -> IT-05
 IT-05 -> IT-06
-IT-04 -> IT-07
-IT-05 -> IT-07
-IT-07 -> IT-08
-IT-04 -> IT-09
-IT-06 -> IT-09
-IT-07 -> IT-10
-IT-08 -> IT-10
-IT-07 -> IT-11
-IT-04 -> IT-11
-IT-04 -> IT-12
-IT-11 -> IT-12
 ```
 
 Interpretation:
 
 - the critical path is retrieval trace -> mission core -> mission linkage ->
   handoff packets
-- branch overlays and guardrails come after mission/handoff state is stable
-- viewer work is explicitly off the main path
-- dossiers, decisions, and routine compilation stay late
+- this is the recommended implementation bar, not a maximal backlog
 
 ## Ticket Specs
 
@@ -292,12 +284,18 @@ Notes:
 - this is the migration ticket for existing handoff seams
 - no new MCP tools are required
 
-### IT-07: Branch Overlay Foundation
+## Deferred Tickets
+
+The following items may still be good ideas, but they are not part of the
+current implementation bar.
+
+They should not block the core mission/handoff lane.
+
+### DT-01: Branch Overlay Foundation
 
 Blocked by:
 
-- `IT-04`
-- `IT-05`
+- core mission and handoff stabilization
 
 Goal:
 
@@ -321,11 +319,11 @@ Notes:
 - start with mission, handoff, and blocker-oriented state
 - do not attempt automatic merge-time promotion in v1
 
-### IT-08: Guardrail Memory
+### DT-02: Guardrail Memory
 
 Blocked by:
 
-- `IT-07`
+- branch-local durable state or another proven retrieval gap
 
 Goal:
 
@@ -352,12 +350,11 @@ Notes:
 - do not hard-block execution in v1
 - surface guidance first, enforcement later if ever needed
 
-### IT-09: Mission And Handoff Viewer Cards
+### DT-03: Mission And Handoff Viewer Cards
 
 Blocked by:
 
-- `IT-04`
-- `IT-06`
+- backend stabilization of mission and handoff state
 
 Goal:
 
@@ -384,12 +381,11 @@ Notes:
 
 - keep this out of the first mission/handoff backend PRs
 
-### IT-10: Component Dossiers
+### DT-04: Component Dossiers
 
 Blocked by:
 
-- `IT-07`
-- `IT-08`
+- branch/guardrail maturity and a proven need for file-level long-lived views
 
 Goal:
 
@@ -413,12 +409,11 @@ Notes:
 
 - do not attempt symbol-level dossiers yet
 
-### IT-11: Decision Memory
+### DT-05: Decision Memory
 
 Blocked by:
 
-- `IT-07`
-- `IT-04`
+- clear evidence that lessons/insights/crystals are insufficient
 
 Goal:
 
@@ -443,12 +438,11 @@ Notes:
 - start from manual-save and reflection-driven paths
 - do not try to infer every decision from generic prose
 
-### IT-12: Routine Compiler
+### DT-06: Routine Compiler
 
 Blocked by:
 
-- `IT-04`
-- `IT-11`
+- evidence of repeated successful action-chain patterns worth formalizing
 
 Goal:
 
@@ -486,15 +480,8 @@ Use these slices unless there is a strong reason to split more finely:
 3. slice C
    - `IT-05`
    - `IT-06`
-4. slice D
-   - `IT-07`
-   - `IT-08`
-5. slice E
-   - `IT-09`
-6. slice F
-   - `IT-10`
-   - `IT-11`
-   - `IT-12`
+
+Deferred slices should be planned only after slice C lands and is used.
 
 ## Acceptance Criteria
 
@@ -505,3 +492,4 @@ This DAG is successful when:
 - the critical path is explicit
 - export/import responsibilities are visible early
 - mission and handoff work no longer look like one monolithic refactor
+- clearly optional ideas are separated from the current implementation bar
