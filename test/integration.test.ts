@@ -1,7 +1,7 @@
 // Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
-const BASE_URL = process.env["AGENTMEMORY_URL"] || "http://localhost:3111";
+const BASE_URL = process.env["AGENTMEMORY_URL"] || "http://127.0.0.1:3111";
 const SECRET = process.env["AGENTMEMORY_SECRET"] || "";
 
 const SESSION_ID = `test_${Date.now()}`;
