@@ -13,6 +13,7 @@ export function registerActionsFunction(sdk: ISdk, kv: StateKV): void {
       priority?: number;
       createdBy?: string;
       project?: string;
+      missionId?: string;
       tags?: string[];
       parentId?: string;
       sourceObservationIds?: string[];
@@ -39,12 +40,19 @@ export function registerActionsFunction(sdk: ISdk, kv: StateKV): void {
           sourceObservationIds: data.sourceObservationIds || [],
           sourceMemoryIds: data.sourceMemoryIds || [],
           parentId: data.parentId,
+          missionId: data.missionId,
         };
 
         if (data.parentId) {
           const parent = await kv.get<Action>(KV.actions, data.parentId);
           if (!parent) {
             return { success: false, error: "parent action not found" };
+          }
+        }
+        if (data.missionId) {
+          const mission = await kv.get(KV.missions, data.missionId);
+          if (!mission) {
+            return { success: false, error: "mission not found" };
           }
         }
 
@@ -107,6 +115,7 @@ export function registerActionsFunction(sdk: ISdk, kv: StateKV): void {
       assignedTo?: string;
       result?: string;
       tags?: string[];
+      missionId?: string;
     }) => {
       if (!data.actionId) {
         return { success: false, error: "actionId is required" };
@@ -128,6 +137,15 @@ export function registerActionsFunction(sdk: ISdk, kv: StateKV): void {
         if (data.assignedTo !== undefined) action.assignedTo = data.assignedTo;
         if (data.result !== undefined) action.result = data.result;
         if (data.tags !== undefined) action.tags = data.tags;
+        if (data.missionId !== undefined) {
+          if (data.missionId) {
+            const mission = await kv.get(KV.missions, data.missionId);
+            if (!mission) {
+              return { success: false, error: "mission not found" };
+            }
+          }
+          action.missionId = data.missionId;
+        }
         action.updatedAt = new Date().toISOString();
 
         await kv.set(KV.actions, action.id, action);

@@ -453,10 +453,15 @@ export interface ExportData {
   proceduralMemories?: ProceduralMemory[];
   actions?: Action[];
   actionEdges?: ActionEdge[];
+  leases?: Lease[];
+  missions?: Mission[];
+  missionRuns?: MissionRun[];
   routines?: Routine[];
+  routineRuns?: RoutineRun[];
   signals?: Signal[];
   checkpoints?: Checkpoint[];
   sentinels?: Sentinel[];
+  handoffPackets?: HandoffPacket[];
   sketches?: Sketch[];
   crystals?: Crystal[];
   facets?: Facet[];
@@ -680,7 +685,10 @@ export interface AuditEntry {
     | "auto_page"
     | "belief_project"
     | "belief_update"
-    | "relation_create";
+    | "relation_create"
+    | "mission_create"
+    | "mission_update"
+    | "handoff_generate";
   userId?: string;
   functionId: string;
   targetIds: string[];
@@ -735,6 +743,7 @@ export interface Action {
   metadata?: Record<string, unknown>;
   sketchId?: string;
   crystallizedInto?: string;
+  missionId?: string;
 }
 
 export type ActionEdgeType =
@@ -761,6 +770,41 @@ export interface Lease {
   expiresAt: string;
   renewedAt?: string;
   status: "active" | "expired" | "released";
+  missionId?: string;
+}
+
+export interface Mission {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  project: string;
+  cwd?: string;
+  branch?: string;
+  goal: string;
+  successCriteria: string[];
+  status: "draft" | "active" | "blocked" | "completed" | "cancelled";
+  phase: string;
+  owner: string;
+  summary: string;
+  risk: string;
+  confidence: number;
+  actionIds: string[];
+  checkpointIds: string[];
+  sentinelIds: string[];
+  leaseIds: string[];
+  routineIds: string[];
+  latestHandoffPacketId?: string;
+}
+
+export interface MissionRun {
+  id: string;
+  missionId: string;
+  startedAt: string;
+  updatedAt: string;
+  endedAt?: string;
+  actor: string;
+  status: "active" | "blocked" | "completed" | "cancelled";
+  notes: string[];
 }
 
 export interface Routine {
@@ -773,6 +817,7 @@ export interface Routine {
   frozen: boolean;
   tags: string[];
   sourceProceduralIds: string[];
+  missionId?: string;
 }
 
 export interface RoutineStep {
@@ -820,6 +865,7 @@ export interface Checkpoint {
   result?: unknown;
   expiresAt?: string;
   linkedActionIds: string[];
+  missionId?: string;
 }
 
 export interface Sketch {
@@ -856,6 +902,39 @@ export interface Sentinel {
   expiresAt?: string;
   linkedActionIds: string[];
   escalatedAt?: string;
+  missionId?: string;
+}
+
+export interface HandoffPacket {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  project: string;
+  scopeType: "action" | "mission" | "session";
+  scopeId: string;
+  summary: string;
+  recentChanges: string[];
+  knownFacts: string[];
+  relevantFiles: string[];
+  relevantConcepts: string[];
+  blockers: string[];
+  openQuestions: string[];
+  recommendedNextStep: string;
+  confidence: number;
+  sourceObservationIds: string[];
+  sourceActionIds: string[];
+  sourceBeliefIds?: string[];
+}
+
+export interface MissionStatusSummary {
+  status: Mission["status"];
+  blockers: string[];
+  actionCounts: Record<Action["status"], number>;
+  checkpointCounts: Record<Checkpoint["status"], number>;
+  sentinelCounts: Record<Sentinel["status"], number>;
+  leaseCounts: Record<Lease["status"], number>;
+  routineRunCounts: Record<RoutineRun["status"], number>;
+  derivedSummary: string;
 }
 
 export interface Crystal {

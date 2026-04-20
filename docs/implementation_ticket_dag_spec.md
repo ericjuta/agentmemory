@@ -17,7 +17,7 @@ companion to:
 
 ## Status
 
-Planning spec only.
+Core ticket DAG implemented as of April 20, 2026.
 
 This document exists because the implementation baseline has already moved past
 parts of the earlier plan.
@@ -25,10 +25,11 @@ parts of the earlier plan.
 Most importantly:
 
 - belief projection is already implemented
-- retrieval feedback is only partially implemented
-- mission and handoff state do not exist yet
-- this DAG is intentionally narrowed to the core implementation set that looks
-  worth shipping next
+- retrieval trace is implemented
+- coordination export/import now includes the existing durable coordination
+  state that was previously missing
+- mission and handoff state now exist in the live backend
+- the narrowed core implementation set in this DAG has been completed
 
 ## Live Baseline
 
@@ -40,23 +41,25 @@ Current state in the repo:
   - `src/functions/verify.ts`
   - `src/triggers/api.ts`
   - `test/beliefs.test.ts`
-- retrieval usefulness plumbing exists, but explicit retrieval trace does not
+- retrieval usefulness plumbing now includes explicit retrieval trace in
+  `mem::context`
   - `src/functions/access-tracker.ts`
   - `src/functions/context.ts`
   - `src/functions/summarize.ts`
-- there is no mission or handoff durable state
-  - no `src/functions/missions.ts`
-  - no `src/functions/handoffs.ts`
-  - no `Mission`, `MissionRun`, or `HandoffPacket` types
+- mission and handoff durable state now exist
+  - `src/functions/missions.ts`
+  - `src/functions/handoffs.ts`
+  - `Mission`, `MissionRun`, and `HandoffPacket` types in `src/types.ts`
 - branch awareness exists only as worktree/session lookup
   - `src/functions/branch-aware.ts`
-- the existing MCP `session_handoff` prompt is only a thin session + summary
-  dump
+- the existing MCP `session_handoff` prompt is now packet-backed
   - `src/mcp/server.ts`
-- export/import already includes beliefs, but it does not yet include some
-  coordination state that should be durable in the same lane
+- export/import now includes the coordination state added across this lane
   - `Lease`
   - `RoutineRun`
+  - `Mission`
+  - `MissionRun`
+  - `HandoffPacket`
 
 ## Planning Rules
 
@@ -98,6 +101,10 @@ Interpretation:
 
 ### IT-01: Retrieval Trace Core
 
+Status:
+
+- implemented
+
 Goal:
 
 - make `mem::context` explainable enough to debug ranking and selection
@@ -124,6 +131,10 @@ Notes:
 
 ### IT-02: Coordination Export/Import Hardening
 
+Status:
+
+- implemented
+
 Goal:
 
 - close existing portability gaps before adding more durable coordination state
@@ -149,6 +160,10 @@ Notes:
 - mission and handoff tickets should not deepen export/import drift
 
 ### IT-03: Mission State Core
+
+Status:
+
+- implemented
 
 Blocked by:
 
@@ -184,6 +199,10 @@ Notes:
 
 ### IT-04: Mission Linkage And Status Projection
 
+Status:
+
+- implemented
+
 Blocked by:
 
 - `IT-03`
@@ -215,6 +234,10 @@ Notes:
 - mission status should remain explainable and additive
 
 ### IT-05: Handoff Packet Core
+
+Status:
+
+- implemented
 
 Blocked by:
 
@@ -256,6 +279,10 @@ Notes:
 - do not auto-inject handoff packets into context yet
 
 ### IT-06: Handoff Delivery And Prompt Upgrade
+
+Status:
+
+- implemented
 
 Blocked by:
 

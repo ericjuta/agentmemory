@@ -9,6 +9,10 @@ checkpoints, sentinels, and routines into one persistent objective container.
 
 This is phase two work and depends on belief projection existing first.
 
+Status:
+
+- implemented in the live backend on April 20, 2026
+
 ## Problem
 
 The repo already has strong mechanism primitives:

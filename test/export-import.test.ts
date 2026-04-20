@@ -11,6 +11,12 @@ import type {
   Memory,
   SessionSummary,
   ExportData,
+  Lease,
+  Mission,
+  MissionRun,
+  Routine,
+  RoutineRun,
+  HandoffPacket,
 } from "../src/types.js";
 
 function mockKV() {
@@ -101,6 +107,96 @@ const testSummary: SessionSummary = {
   observationCount: 1,
 };
 
+const testLease: Lease = {
+  id: "lse_1",
+  actionId: "act_1",
+  agentId: "agent-1",
+  acquiredAt: "2026-02-01T10:00:00Z",
+  expiresAt: "2026-02-01T11:00:00Z",
+  status: "active",
+};
+
+const testRoutine: Routine = {
+  id: "rtn_1",
+  name: "Routine",
+  description: "Routine desc",
+  steps: [
+    {
+      order: 0,
+      title: "Step 1",
+      description: "Do thing",
+      actionTemplate: {},
+      dependsOn: [],
+    },
+  ],
+  createdAt: "2026-02-01T00:00:00Z",
+  updatedAt: "2026-02-01T00:00:00Z",
+  frozen: true,
+  tags: ["ops"],
+  sourceProceduralIds: [],
+};
+
+const testRoutineRun: RoutineRun = {
+  id: "run_1",
+  routineId: "rtn_1",
+  status: "running",
+  startedAt: "2026-02-01T10:05:00Z",
+  actionIds: ["act_1"],
+  stepStatus: { 0: "active" },
+  initiatedBy: "agent-1",
+};
+
+const testMission: Mission = {
+  id: "msn_1",
+  createdAt: "2026-02-01T00:00:00Z",
+  updatedAt: "2026-02-01T00:00:00Z",
+  project: "my-project",
+  goal: "Ship the slice",
+  successCriteria: ["tests green"],
+  status: "active",
+  phase: "implementation",
+  owner: "agent-1",
+  summary: "Mission underway",
+  risk: "medium",
+  confidence: 0.7,
+  actionIds: ["act_1"],
+  checkpointIds: [],
+  sentinelIds: [],
+  leaseIds: ["lse_1"],
+  routineIds: ["rtn_1"],
+};
+
+const testMissionRun: MissionRun = {
+  id: "mrn_1",
+  missionId: "msn_1",
+  startedAt: "2026-02-01T00:05:00Z",
+  updatedAt: "2026-02-01T00:05:00Z",
+  actor: "agent-1",
+  status: "active",
+  notes: ["Mission created"],
+};
+
+const testHandoffPacket: HandoffPacket = {
+  id: "hdf_1",
+  createdAt: "2026-02-01T00:10:00Z",
+  updatedAt: "2026-02-01T00:10:00Z",
+  project: "my-project",
+  scopeType: "mission",
+  scopeId: "msn_1",
+  summary: "Resume mission",
+  recentChanges: ["Trace core added"],
+  knownFacts: ["Tests are passing"],
+  relevantFiles: ["src/functions/context.ts"],
+  relevantConcepts: ["retrieval trace"],
+  blockers: [],
+  openQuestions: [],
+  recommendedNextStep: "Implement the next ticket",
+  confidence: 0.8,
+  sourceObservationIds: ["obs_1"],
+  sourceActionIds: ["act_1"],
+  sourceBeliefIds: ["bel_1"],
+};
+
 describe("Export/Import Functions", () => {
   let sdk: ReturnType<typeof mockSdk>;
   let kv: ReturnType<typeof mockKV>;
@@ -114,6 +210,12 @@ describe("Export/Import Functions", () => {
     await kv.set("mem:obs:ses_1", "obs_1", testObs);
     await kv.set("mem:memories", "mem_1", testMemory);
     await kv.set("mem:summaries", "ses_1", testSummary);
+    await kv.set("mem:leases", "lse_1", testLease);
+    await kv.set("mem:missions", "msn_1", testMission);
+    await kv.set("mem:mission-runs", "mrn_1", testMissionRun);
+    await kv.set("mem:routines", "rtn_1", testRoutine);
+    await kv.set("mem:routine-runs", "run_1", testRoutineRun);
+    await kv.set("mem:handoff-packets", "hdf_1", testHandoffPacket);
   });
 
   it("export produces valid ExportData structure", async () => {
@@ -126,6 +228,11 @@ describe("Export/Import Functions", () => {
     expect(result.observations["ses_1"].length).toBe(1);
     expect(result.memories.length).toBe(1);
     expect(result.summaries.length).toBe(1);
+    expect(result.leases).toEqual([testLease]);
+    expect(result.missions).toEqual([testMission]);
+    expect(result.missionRuns).toEqual([testMissionRun]);
+    expect(result.routineRuns).toEqual([testRoutineRun]);
+    expect(result.handoffPackets).toEqual([testHandoffPacket]);
   });
 
   it("import with merge strategy adds data", async () => {
@@ -136,6 +243,12 @@ describe("Export/Import Functions", () => {
       observations: {},
       memories: [{ ...testMemory, id: "mem_2", title: "New pattern" }],
       summaries: [],
+      leases: [testLease],
+      missions: [testMission],
+      missionRuns: [testMissionRun],
+      routines: [testRoutine],
+      routineRuns: [testRoutineRun],
+      handoffPackets: [testHandoffPacket],
     };
 
     const result = (await sdk.trigger("mem::import", {
@@ -229,6 +342,11 @@ describe("Export/Import Functions", () => {
     )) as ExportData;
     expect(reExported.sessions.length).toBe(exported.sessions.length);
     expect(reExported.memories.length).toBe(exported.memories.length);
+    expect(reExported.leases).toEqual(exported.leases);
+    expect(reExported.missions).toEqual(exported.missions);
+    expect(reExported.missionRuns).toEqual(exported.missionRuns);
+    expect(reExported.routineRuns).toEqual(exported.routineRuns);
+    expect(reExported.handoffPackets).toEqual(exported.handoffPackets);
   });
 
   it("import rejects unsupported version", async () => {

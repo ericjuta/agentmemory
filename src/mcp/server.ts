@@ -3,6 +3,7 @@ import type { StateKV } from "../state/kv.js";
 import { KV } from "../state/schema.js";
 import type {
   SessionSummary,
+  HandoffPacket,
   Memory,
   Session,
   GraphNode,
@@ -1533,6 +1534,36 @@ export function registerMcpEndpoints(
             const session = await kv.get<Session>(KV.sessions, sessionId);
             const summaries = await kv.list<SessionSummary>(KV.summaries);
             const summary = summaries.find((s) => s.sessionId === sessionId);
+            let handoffPacket =
+              (await kv
+                .list<HandoffPacket>(KV.handoffPackets)
+                .then((packets) =>
+                  packets
+                    .filter(
+                      (packet) =>
+                        packet.scopeType === "session" &&
+                        packet.scopeId === sessionId,
+                    )
+                    .sort(
+                      (a, b) =>
+                        new Date(b.updatedAt).getTime() -
+                        new Date(a.updatedAt).getTime(),
+                    )[0] || null,
+                )
+                .catch(() => null)) || null;
+            if (!handoffPacket && session) {
+              const generated = (await sdk
+                .trigger({
+                  function_id: "mem::handoff-generate",
+                  payload: {
+                    scopeType: "session",
+                    scopeId: sessionId,
+                    project: session.project,
+                  },
+                })
+                .catch(() => null)) as { handoffPacket?: HandoffPacket } | null;
+              handoffPacket = generated?.handoffPacket || null;
+            }
             return {
               status_code: 200,
               body: {
@@ -1541,7 +1572,7 @@ export function registerMcpEndpoints(
                     role: "user",
                     content: {
                       type: "text",
-                      text: `## Session Handoff\n\n### Session\n${JSON.stringify(session, null, 2)}\n\n### Summary\n${JSON.stringify(summary || "No summary available", null, 2)}`,
+                      text: `## Session Handoff\n\n### Session\n${JSON.stringify(session, null, 2)}\n\n### Summary\n${JSON.stringify(summary || "No summary available", null, 2)}\n\n### Handoff Packet\n${JSON.stringify(handoffPacket || "No handoff packet available", null, 2)}`,
                     },
                   },
                 ],

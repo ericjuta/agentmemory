@@ -22,6 +22,7 @@ export function registerSentinelsFunction(sdk: ISdk, kv: StateKV): void {
       config?: Record<string, unknown>;
       linkedActionIds?: string[];
       expiresInMs?: number;
+      missionId?: string;
     }) => {
       if (!data.name || typeof data.name !== "string") {
         return { success: false, error: "name is required" };
@@ -92,6 +93,12 @@ export function registerSentinelsFunction(sdk: ISdk, kv: StateKV): void {
           }
         }
       }
+      if (data.missionId) {
+        const mission = await kv.get(KV.missions, data.missionId);
+        if (!mission) {
+          return { success: false, error: "mission not found" };
+        }
+      }
 
       const now = new Date();
       const sentinel: Sentinel = {
@@ -105,6 +112,7 @@ export function registerSentinelsFunction(sdk: ISdk, kv: StateKV): void {
         expiresAt: data.expiresInMs
           ? new Date(now.getTime() + data.expiresInMs).toISOString()
           : undefined,
+        missionId: data.missionId,
       };
 
       await kv.set(KV.sentinels, sentinel.id, sentinel);

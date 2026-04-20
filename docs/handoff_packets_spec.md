@@ -7,6 +7,10 @@
 Create a durable, generated handoff artifact for resuming work across sessions
 or agents without relying on a human-written recap.
 
+Status:
+
+- implemented in the live backend on April 20, 2026
+
 This spec depends on:
 
 - working set

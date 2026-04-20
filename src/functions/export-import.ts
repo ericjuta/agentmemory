@@ -14,10 +14,15 @@ import type {
   ProceduralMemory,
   Action,
   ActionEdge,
+  Lease,
+  Mission,
+  MissionRun,
   Routine,
+  RoutineRun,
   Signal,
   Checkpoint,
   Sentinel,
+  HandoffPacket,
   Sketch,
   Crystal,
   Facet,
@@ -82,13 +87,18 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
         proceduralMemories,
         actions,
         actionEdges,
+        leases,
+        missions,
+        missionRuns,
         sentinels,
+        handoffPackets,
         sketches,
         crystals,
         facets,
         lessons,
         insights,
         routines,
+        routineRuns,
         signals,
         checkpoints,
         accessLogs,
@@ -101,13 +111,18 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
         kv.list<ProceduralMemory>(KV.procedural).catch(() => []),
         kv.list<Action>(KV.actions).catch(() => []),
         kv.list<ActionEdge>(KV.actionEdges).catch(() => []),
+        kv.list<Lease>(KV.leases).catch(() => []),
+        kv.list<Mission>(KV.missions).catch(() => []),
+        kv.list<MissionRun>(KV.missionRuns).catch(() => []),
         kv.list<Sentinel>(KV.sentinels).catch(() => []),
+        kv.list<HandoffPacket>(KV.handoffPackets).catch(() => []),
         kv.list<Sketch>(KV.sketches).catch(() => []),
         kv.list<Crystal>(KV.crystals).catch(() => []),
         kv.list<Facet>(KV.facets).catch(() => []),
         kv.list<Lesson>(KV.lessons).catch(() => []),
         kv.list<Insight>(KV.insights).catch(() => []),
         kv.list<Routine>(KV.routines).catch(() => []),
+        kv.list<RoutineRun>(KV.routineRuns).catch(() => []),
         kv.list<Signal>(KV.signals).catch(() => []),
         kv.list<Checkpoint>(KV.checkpoints).catch(() => []),
         kv.list<AccessLogExport>(KV.accessLog).catch(() => []),
@@ -131,13 +146,18 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
           proceduralMemories.length > 0 ? proceduralMemories : undefined,
         actions: actions.length > 0 ? actions : undefined,
         actionEdges: actionEdges.length > 0 ? actionEdges : undefined,
+        leases: leases.length > 0 ? leases : undefined,
+        missions: missions.length > 0 ? missions : undefined,
+        missionRuns: missionRuns.length > 0 ? missionRuns : undefined,
         sentinels: sentinels.length > 0 ? sentinels : undefined,
+        handoffPackets: handoffPackets.length > 0 ? handoffPackets : undefined,
         sketches: sketches.length > 0 ? sketches : undefined,
         crystals: crystals.length > 0 ? crystals : undefined,
         facets: facets.length > 0 ? facets : undefined,
         lessons: lessons.length > 0 ? lessons : undefined,
         insights: insights.length > 0 ? insights : undefined,
         routines: routines.length > 0 ? routines : undefined,
+        routineRuns: routineRuns.length > 0 ? routineRuns : undefined,
         signals: signals.length > 0 ? signals : undefined,
         checkpoints: checkpoints.length > 0 ? checkpoints : undefined,
         accessLogs: accessLogs.length > 0 ? accessLogs : undefined,
@@ -295,8 +315,20 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
         for (const e of await kv.list<ActionEdge>(KV.actionEdges).catch(() => [])) {
           await kv.delete(KV.actionEdges, e.id);
         }
+        for (const l of await kv.list<Lease>(KV.leases).catch(() => [])) {
+          await kv.delete(KV.leases, l.id);
+        }
+        for (const mission of await kv.list<Mission>(KV.missions).catch(() => [])) {
+          await kv.delete(KV.missions, mission.id);
+        }
+        for (const run of await kv.list<MissionRun>(KV.missionRuns).catch(() => [])) {
+          await kv.delete(KV.missionRuns, run.id);
+        }
         for (const r of await kv.list<Routine>(KV.routines).catch(() => [])) {
           await kv.delete(KV.routines, r.id);
+        }
+        for (const run of await kv.list<RoutineRun>(KV.routineRuns).catch(() => [])) {
+          await kv.delete(KV.routineRuns, run.id);
         }
         for (const s of await kv.list<Signal>(KV.signals).catch(() => [])) {
           await kv.delete(KV.signals, s.id);
@@ -306,6 +338,9 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
         }
         for (const s of await kv.list<Sentinel>(KV.sentinels).catch(() => [])) {
           await kv.delete(KV.sentinels, s.id);
+        }
+        for (const packet of await kv.list<HandoffPacket>(KV.handoffPackets).catch(() => [])) {
+          await kv.delete(KV.handoffPackets, packet.id);
         }
         for (const s of await kv.list<Sketch>(KV.sketches).catch(() => [])) {
           await kv.delete(KV.sketches, s.id);
@@ -493,6 +528,33 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
           await kv.set(KV.actionEdges, edge.id, edge);
         }
       }
+      if (importData.leases) {
+        for (const lease of importData.leases) {
+          if (strategy === "skip") {
+            const existing = await kv.get(KV.leases, lease.id).catch(() => null);
+            if (existing) { stats.skipped++; continue; }
+          }
+          await kv.set(KV.leases, lease.id, lease);
+        }
+      }
+      if (importData.missions) {
+        for (const mission of importData.missions) {
+          if (strategy === "skip") {
+            const existing = await kv.get(KV.missions, mission.id).catch(() => null);
+            if (existing) { stats.skipped++; continue; }
+          }
+          await kv.set(KV.missions, mission.id, mission);
+        }
+      }
+      if (importData.missionRuns) {
+        for (const run of importData.missionRuns) {
+          if (strategy === "skip") {
+            const existing = await kv.get(KV.missionRuns, run.id).catch(() => null);
+            if (existing) { stats.skipped++; continue; }
+          }
+          await kv.set(KV.missionRuns, run.id, run);
+        }
+      }
       if (importData.routines) {
         for (const routine of importData.routines) {
           if (strategy === "skip") {
@@ -500,6 +562,15 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
             if (existing) { stats.skipped++; continue; }
           }
           await kv.set(KV.routines, routine.id, routine);
+        }
+      }
+      if (importData.routineRuns) {
+        for (const run of importData.routineRuns) {
+          if (strategy === "skip") {
+            const existing = await kv.get(KV.routineRuns, run.id).catch(() => null);
+            if (existing) { stats.skipped++; continue; }
+          }
+          await kv.set(KV.routineRuns, run.id, run);
         }
       }
       if (importData.signals) {
@@ -527,6 +598,15 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
             if (existing) { stats.skipped++; continue; }
           }
           await kv.set(KV.sentinels, sentinel.id, sentinel);
+        }
+      }
+      if (importData.handoffPackets) {
+        for (const packet of importData.handoffPackets) {
+          if (strategy === "skip") {
+            const existing = await kv.get(KV.handoffPackets, packet.id).catch(() => null);
+            if (existing) { stats.skipped++; continue; }
+          }
+          await kv.set(KV.handoffPackets, packet.id, packet);
         }
       }
       if (importData.sketches) {

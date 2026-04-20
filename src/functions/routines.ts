@@ -14,9 +14,16 @@ export function registerRoutinesFunction(sdk: ISdk, kv: StateKV): void {
       tags?: string[];
       frozen?: boolean;
       sourceProceduralIds?: string[];
+      missionId?: string;
     }) => {
       if (!data.name || !Array.isArray(data.steps) || data.steps.length === 0) {
         return { success: false, error: "name and steps are required" };
+      }
+      if (data.missionId) {
+        const mission = await kv.get(KV.missions, data.missionId);
+        if (!mission) {
+          return { success: false, error: "mission not found" };
+        }
       }
 
       for (let i = 0; i < data.steps.length; i++) {
@@ -57,6 +64,7 @@ export function registerRoutinesFunction(sdk: ISdk, kv: StateKV): void {
         frozen: data.frozen ?? true,
         tags: data.tags || [],
         sourceProceduralIds: data.sourceProceduralIds || [],
+        missionId: data.missionId,
       };
 
       await kv.set(KV.routines, routine.id, routine);
@@ -136,6 +144,7 @@ export function registerRoutinesFunction(sdk: ISdk, kv: StateKV): void {
             sourceObservationIds: [],
             sourceMemoryIds: [],
             metadata: { routineId: routine.id, stepOrder: step.order },
+            missionId: override.missionId || template.missionId || routine.missionId,
           };
 
           await kv.set(KV.actions, action.id, action);

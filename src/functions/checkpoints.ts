@@ -13,6 +13,7 @@ export function registerCheckpointsFunction(sdk: ISdk, kv: StateKV): void {
       type?: Checkpoint["type"];
       linkedActionIds?: string[];
       expiresInMs?: number;
+      missionId?: string;
     }) => {
       if (!data.name) {
         return { success: false, error: "name is required" };
@@ -35,6 +36,7 @@ export function registerCheckpointsFunction(sdk: ISdk, kv: StateKV): void {
         expiresAt: data.expiresInMs
           ? new Date(now.getTime() + data.expiresInMs).toISOString()
           : undefined,
+        missionId: data.missionId,
       };
 
       if (data.linkedActionIds && data.linkedActionIds.length > 0) {
@@ -43,6 +45,12 @@ export function registerCheckpointsFunction(sdk: ISdk, kv: StateKV): void {
           if (!action) {
             return { success: false, error: `linked action not found: ${actionId}` };
           }
+        }
+      }
+      if (data.missionId) {
+        const mission = await kv.get(KV.missions, data.missionId);
+        if (!mission) {
+          return { success: false, error: "mission not found" };
         }
       }
 

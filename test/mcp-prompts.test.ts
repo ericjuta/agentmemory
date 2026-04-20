@@ -147,6 +147,28 @@ describe("MCP Prompts", () => {
       observationCount: 10,
     };
     await kv.set("mem:summaries", "ses_1", summary);
+    sdk.overrideTrigger("mem::handoff-generate", async () => ({
+      success: true,
+      handoffPacket: {
+        id: "hdf_1",
+        createdAt: "2026-02-01T00:00:00Z",
+        updatedAt: "2026-02-01T00:00:00Z",
+        project: "/test",
+        scopeType: "session",
+        scopeId: "ses_1",
+        summary: "Resume JWT auth work",
+        recentChanges: ["Implemented JWT auth"],
+        knownFacts: ["Used JWT"],
+        relevantFiles: ["src/auth.ts"],
+        relevantConcepts: ["auth"],
+        blockers: [],
+        openQuestions: [],
+        recommendedNextStep: "Add refresh-token handling",
+        confidence: 0.8,
+        sourceObservationIds: [],
+        sourceActionIds: [],
+      },
+    }));
 
     const fn = sdk.getFunction("mcp::prompts::get")!;
     const result = (await fn(
@@ -162,6 +184,8 @@ describe("MCP Prompts", () => {
     expect(result.status_code).toBe(200);
     expect(result.body.messages[0].content.text).toContain("Session Handoff");
     expect(result.body.messages[0].content.text).toContain("ses_1");
+    expect(result.body.messages[0].content.text).toContain("Handoff Packet");
+    expect(result.body.messages[0].content.text).toContain("Resume JWT auth work");
   });
 
   it("detect_patterns returns analysis", async () => {

@@ -1485,6 +1485,229 @@ export function registerApiTriggers(
     config: { api_path: "/agentmemory/memories", http_method: "GET" },
   });
 
+  sdk.registerFunction("api::mission-create",
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const goal = asNonEmptyString(body.goal);
+      const project = asNonEmptyString(body.project);
+      if (!goal || !project) {
+        return { status_code: 400, body: { error: "goal and project are required" } };
+      }
+      const successCriteria = parseOptionalStringArray(body.successCriteria);
+      if (successCriteria === null) {
+        return { status_code: 400, body: { error: "successCriteria must be an array of non-empty strings" } };
+      }
+      const confidence = parseOptionalFiniteNumber(body.confidence);
+      if (confidence === null) {
+        return { status_code: 400, body: { error: "confidence must be a finite number" } };
+      }
+      const result = await sdk.trigger({
+        function_id: "mem::mission-create",
+        payload: {
+          goal,
+          project,
+          cwd: asNonEmptyString(body.cwd) || undefined,
+          branch: asNonEmptyString(body.branch) || undefined,
+          successCriteria,
+          owner: asNonEmptyString(body.owner) || undefined,
+          phase: asNonEmptyString(body.phase) || undefined,
+          status: asNonEmptyString(body.status) || undefined,
+          summary: asNonEmptyString(body.summary) || undefined,
+          risk: asNonEmptyString(body.risk) || undefined,
+          confidence: confidence === undefined ? undefined : confidence,
+        },
+      });
+      return { status_code: 201, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::mission-create",
+    config: { api_path: "/agentmemory/missions", http_method: "POST" },
+  });
+
+  sdk.registerFunction("api::mission-update",
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const missionId = asNonEmptyString(body.missionId);
+      if (!missionId) {
+        return { status_code: 400, body: { error: "missionId is required" } };
+      }
+      const successCriteria = parseOptionalStringArray(body.successCriteria);
+      const actionIds = parseOptionalStringArray(body.actionIds);
+      const checkpointIds = parseOptionalStringArray(body.checkpointIds);
+      const sentinelIds = parseOptionalStringArray(body.sentinelIds);
+      const leaseIds = parseOptionalStringArray(body.leaseIds);
+      const routineIds = parseOptionalStringArray(body.routineIds);
+      if (
+        successCriteria === null ||
+        actionIds === null ||
+        checkpointIds === null ||
+        sentinelIds === null ||
+        leaseIds === null ||
+        routineIds === null
+      ) {
+        return {
+          status_code: 400,
+          body: { error: "successCriteria and linked id fields must be arrays of non-empty strings when provided" },
+        };
+      }
+      const confidence = parseOptionalFiniteNumber(body.confidence);
+      if (confidence === null) {
+        return { status_code: 400, body: { error: "confidence must be a finite number" } };
+      }
+      const result = await sdk.trigger({
+        function_id: "mem::mission-update",
+        payload: {
+          missionId,
+          status: asNonEmptyString(body.status) || undefined,
+          phase: asNonEmptyString(body.phase) || undefined,
+          summary: asNonEmptyString(body.summary) || undefined,
+          risk: asNonEmptyString(body.risk) || undefined,
+          owner: asNonEmptyString(body.owner) || undefined,
+          successCriteria,
+          actionIds,
+          checkpointIds,
+          sentinelIds,
+          leaseIds,
+          routineIds,
+          latestHandoffPacketId:
+            asNonEmptyString(body.latestHandoffPacketId) || undefined,
+          confidence: confidence === undefined ? undefined : confidence,
+        },
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::mission-update",
+    config: { api_path: "/agentmemory/missions/update", http_method: "POST" },
+  });
+
+  sdk.registerFunction("api::mission-list",
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const parsedLimit = parseOptionalInt(req.query_params?.["limit"]);
+      const result = await sdk.trigger({
+        function_id: "mem::mission-list",
+        payload: {
+          project: req.query_params?.["project"],
+          status: req.query_params?.["status"],
+          owner: req.query_params?.["owner"],
+          limit: parsedLimit,
+        },
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::mission-list",
+    config: { api_path: "/agentmemory/missions", http_method: "GET" },
+  });
+
+  sdk.registerFunction("api::mission-get",
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const missionId = asNonEmptyString(req.path_params?.["id"]);
+      if (!missionId) {
+        return { status_code: 400, body: { error: "mission id path param is required" } };
+      }
+      const result = await sdk.trigger({
+        function_id: "mem::mission-get",
+        payload: { missionId },
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::mission-get",
+    config: { api_path: "/agentmemory/missions/:id", http_method: "GET" },
+  });
+
+  sdk.registerFunction("api::handoff-generate",
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const scopeType = asNonEmptyString(body.scopeType);
+      const scopeId = asNonEmptyString(body.scopeId);
+      if (!scopeType || !scopeId) {
+        return { status_code: 400, body: { error: "scopeType and scopeId are required" } };
+      }
+      const result = await sdk.trigger({
+        function_id: "mem::handoff-generate",
+        payload: {
+          scopeType,
+          scopeId,
+          project: asNonEmptyString(body.project) || undefined,
+          deliverTo: asNonEmptyString(body.deliverTo) || undefined,
+          from: asNonEmptyString(body.from) || undefined,
+          threadId: asNonEmptyString(body.threadId) || undefined,
+          expiresInMs: parseOptionalPositiveInt(body.expiresInMs) || undefined,
+        },
+      });
+      return { status_code: 201, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::handoff-generate",
+    config: { api_path: "/agentmemory/handoffs/generate", http_method: "POST" },
+  });
+
+  sdk.registerFunction("api::handoff-list",
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const parsedLimit = parseOptionalInt(req.query_params?.["limit"]);
+      const result = await sdk.trigger({
+        function_id: "mem::handoff-list",
+        payload: {
+          scopeType: req.query_params?.["scopeType"],
+          scopeId: req.query_params?.["scopeId"],
+          project: req.query_params?.["project"],
+          limit: parsedLimit,
+        },
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::handoff-list",
+    config: { api_path: "/agentmemory/handoffs", http_method: "GET" },
+  });
+
+  sdk.registerFunction("api::handoff-get",
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const handoffPacketId = asNonEmptyString(req.path_params?.["id"]);
+      if (!handoffPacketId) {
+        return { status_code: 400, body: { error: "handoff id path param is required" } };
+      }
+      const result = await sdk.trigger({
+        function_id: "mem::handoff-get",
+        payload: { handoffPacketId },
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::handoff-get",
+    config: { api_path: "/agentmemory/handoffs/:id", http_method: "GET" },
+  });
+
   sdk.registerFunction("api::action-create", 
     async (
       req: ApiRequest<{

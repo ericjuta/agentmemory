@@ -10,7 +10,7 @@ const MAX_LEASE_TTL_MS = 60 * 60 * 1000;
 
 export function registerLeasesFunction(sdk: ISdk, kv: StateKV): void {
   sdk.registerFunction("mem::lease-acquire", 
-    async (data: { actionId: string; agentId: string; ttlMs?: number }) => {
+    async (data: { actionId: string; agentId: string; ttlMs?: number; missionId?: string }) => {
       if (!data.actionId || !data.agentId) {
         return { success: false, error: "actionId and agentId are required" };
       }
@@ -30,6 +30,12 @@ export function registerLeasesFunction(sdk: ISdk, kv: StateKV): void {
         }
         if (action.status === "blocked") {
           return { success: false, error: "action is blocked" };
+        }
+        if (data.missionId) {
+          const mission = await kv.get(KV.missions, data.missionId);
+          if (!mission) {
+            return { success: false, error: "mission not found" };
+          }
         }
 
         const existingLeases = await kv.list<Lease>(KV.leases);
@@ -65,6 +71,7 @@ export function registerLeasesFunction(sdk: ISdk, kv: StateKV): void {
           acquiredAt: now.toISOString(),
           expiresAt: new Date(now.getTime() + ttl).toISOString(),
           status: "active",
+          missionId: data.missionId || action.missionId,
         };
 
         await kv.set(KV.leases, lease.id, lease);
