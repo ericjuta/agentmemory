@@ -787,6 +787,19 @@ export async function upsertProfileRetrievalBlock(
   return upsertRetrievalBlock(kv, block);
 }
 
+function retrievalBlockEquals(a: RetrievalBlock, b: RetrievalBlock): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+async function runSequentially<T>(
+  items: T[],
+  worker: (item: T) => Promise<void>,
+): Promise<void> {
+  for (const item of items) {
+    await worker(item);
+  }
+}
+
 export async function refreshRetrievalBlocksFromState(
   kv: StateKV,
 ): Promise<number> {
@@ -860,16 +873,22 @@ export async function refreshRetrievalBlocksFromState(
   }
 
   const existing = await kv.list<RetrievalBlock>(KV.retrievalBlocks).catch(() => []);
+  const existingById = new Map(existing.map((block) => [block.id, block] as const));
   const nextIds = new Set(blocks.keys());
-  for (const block of existing) {
-    if (!nextIds.has(block.id)) {
-      await kv.delete(KV.retrievalBlocks, block.id).catch(() => {});
-      await removeRetrievalBlock(kv, block.id, { scheduleSave: false }).catch(() => {});
-    }
-  }
+  const staleBlocks = existing.filter((block) => !nextIds.has(block.id));
+  await runSequentially(staleBlocks, async (block) => {
+    await kv.delete(KV.retrievalBlocks, block.id).catch(() => {});
+    await removeRetrievalBlock(kv, block.id, { scheduleSave: false }).catch(() => {});
+  });
 
-  await Promise.all(
-    [...blocks.values()].map((block) => kv.set(KV.retrievalBlocks, block.id, block)),
-  );
+  const changedBlocks = [...blocks.values()].filter((block) => {
+    const existingBlock = existingById.get(block.id);
+    return !existingBlock || !retrievalBlockEquals(existingBlock, block);
+  });
+
+  await runSequentially(changedBlocks, async (block) => {
+    await kv.set(KV.retrievalBlocks, block.id, block);
+  });
+
   return blocks.size;
 }

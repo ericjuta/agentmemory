@@ -1,8 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+
+vi.mock("../src/logger.js", () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
 import { IndexPersistence } from "../src/state/index-persistence.js";
 import { SearchIndex } from "../src/state/search-index.js";
 import { VectorIndex } from "../src/state/vector-index.js";
 import type { CompressedObservation } from "../src/types.js";
+import { logger } from "../src/logger.js";
 
 function mockKV() {
   const store = new Map<string, Map<string, unknown>>();
@@ -120,5 +126,29 @@ describe("IndexPersistence", () => {
     const loaded = await persistence.load();
     expect(loaded.bm25).toBeNull();
     expect(loaded.vector).toBeNull();
+  });
+
+  it("swallows deferred save failures and logs them", async () => {
+    const bm25 = new SearchIndex();
+    const failingKv = {
+      ...mockKV(),
+      set: vi.fn(async () => {
+        throw new Error("state unavailable");
+      }),
+    };
+    const persistence = new IndexPersistence(failingKv as never, bm25, null);
+
+    persistence.scheduleSave();
+
+    vi.advanceTimersByTime(5000);
+    await vi.runAllTimersAsync();
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Failed to persist index",
+      expect.objectContaining({
+        scope: "mem:index:bm25",
+        error: "state unavailable",
+      }),
+    );
   });
 });

@@ -2,6 +2,7 @@ import { SearchIndex } from "./search-index.js";
 import { VectorIndex } from "./vector-index.js";
 import type { StateKV } from "./kv.js";
 import { KV } from "./schema.js";
+import { logger } from "../logger.js";
 
 const DEBOUNCE_MS = 5000;
 
@@ -17,7 +18,14 @@ export class IndexPersistence {
 
   scheduleSave(): void {
     if (this.timer) clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.save(), DEBOUNCE_MS);
+    this.timer = setTimeout(() => {
+      void this.save().catch((error) => {
+        logger.warn("Failed to persist index", {
+          scope: this.scope,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }, DEBOUNCE_MS);
   }
 
   async save(): Promise<void> {
