@@ -165,6 +165,7 @@ export type RetrievalBlockSourceType =
   | "memory"
   | "semantic_memory"
   | "procedural_memory"
+  | "belief"
   | "guardrail"
   | "decision"
   | "dossier"

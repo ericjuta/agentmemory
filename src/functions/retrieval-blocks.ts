@@ -1,4 +1,5 @@
 import type {
+  BeliefProjection,
   BranchOverlay,
   ComponentDossier,
   CompressedObservation,
@@ -22,6 +23,7 @@ import {
   indexRetrievalBlock,
   removeRetrievalBlock,
 } from "../state/retrieval-block-indexing.js";
+import { listProjectedBeliefs } from "./beliefs.js";
 
 function uniqueStrings(values: Array<string | undefined>): string[] {
   return [...new Set(values.filter((value): value is string => Boolean(value && value.trim())).map((value) => value.trim()))];
@@ -181,6 +183,23 @@ function formatBranchOverlay(overlay: BranchOverlay): string {
   return lines.join("\n");
 }
 
+function formatBelief(projection: BeliefProjection): string {
+  const lines = ["## Current Belief", projection.claim];
+  lines.push(
+    `Status: ${projection.status} (confidence ${projection.confidence.toFixed(2)})`,
+  );
+  lines.push(
+    `Evidence: ${projection.supportCount} support / ${projection.contradictionCount} contradiction`,
+  );
+  if (projection.files.length > 0) {
+    lines.push(`Files: ${projection.files.slice(0, 5).join(", ")}`);
+  }
+  if (projection.concepts.length > 0) {
+    lines.push(`Concepts: ${projection.concepts.slice(0, 8).join(", ")}`);
+  }
+  return lines.join("\n");
+}
+
 function formatGuardrail(guardrail: GuardrailMemory): string {
   const lines = ["## Guardrail"];
   lines.push(`Risk: ${guardrail.riskLevel}`);
@@ -268,7 +287,7 @@ function blockEntities(files: string[], concepts: string[], text: string): strin
 }
 
 export function buildTurnCapsuleRetrievalBlock(capsule: TurnCapsule): RetrievalBlock {
-  const canonicalText = formatTurnCapsule(capsule, true);
+  const canonicalText = formatTurnCapsule(capsule, false);
   return {
     id: retrievalBlockId("turn_capsule", capsule.id),
     sourceType: "turn_capsule",
@@ -493,6 +512,32 @@ export function buildGuardrailRetrievalBlock(guardrail: GuardrailMemory): Retrie
     createdAt: guardrail.createdAt,
     updatedAt: guardrail.updatedAt,
     eventAt: guardrail.updatedAt,
+  };
+}
+
+export function buildBeliefRetrievalBlock(projection: BeliefProjection): RetrievalBlock {
+  const canonicalText = formatBelief(projection);
+  return {
+    id: retrievalBlockId("belief", projection.beliefId),
+    sourceType: "belief",
+    sourceId: projection.beliefId,
+    project: projection.files[0]?.startsWith("/") ? projection.files[0] : "global",
+    scope: "project",
+    freshnessLane: "warm",
+    canonicalText,
+    title: projection.claim.slice(0, 100),
+    files: projection.files.slice(0, 12),
+    concepts: projection.concepts.slice(0, 16),
+    entities: blockEntities(projection.files, projection.concepts, canonicalText),
+    sourceObservationIds: [],
+    hadFailure: projection.contradictionCount > 0,
+    hadDecision: true,
+    hadAssistantConclusion: true,
+    isResumeArtifact: false,
+    importance: normalizeImportance(projection.confidence * 10, 7),
+    createdAt: projection.updatedAt,
+    updatedAt: projection.updatedAt,
+    eventAt: projection.updatedAt,
   };
 }
 
@@ -727,6 +772,14 @@ export async function refreshRetrievalBlocksFromState(
   const decisions = await kv.list<DecisionMemory>(KV.decisions).catch(() => []);
   const dossiers = await kv.list<ComponentDossier>(KV.componentDossiers).catch(() => []);
   const profiles = await kv.list<ProjectProfile>(KV.profiles).catch(() => []);
+  const beliefProjects = uniqueStrings([
+    ...sessions.map((session) => session.project),
+    ...profiles.map((profile) => profile.project),
+    ...guardrails.map((guardrail) => guardrail.project),
+    ...decisions.map((decision) => decision.project),
+    ...dossiers.map((dossier) => dossier.project),
+    ...handoffs.map((handoff) => handoff.project),
+  ]);
 
   const blocks = new Map<string, RetrievalBlock>();
   const put = (block: RetrievalBlock | null) => {
@@ -751,6 +804,14 @@ export async function refreshRetrievalBlocksFromState(
   }
   for (const dossier of dossiers) put(buildDossierRetrievalBlock(dossier));
   for (const profile of profiles) put(buildProfileRetrievalBlock(profile));
+  for (const project of beliefProjects) {
+    const beliefs = await listProjectedBeliefs(kv, project).catch(() => []);
+    for (const belief of beliefs.filter((item) => item.status === "active")) {
+      const block = buildBeliefRetrievalBlock(belief);
+      block.project = project;
+      put(block);
+    }
+  }
 
   for (const session of sessions) {
     const observations = await kv

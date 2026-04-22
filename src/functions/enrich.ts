@@ -1,115 +1,42 @@
 import type { ISdk } from "iii-sdk";
-import type { Memory } from "../types.js";
+import type { Session } from "../types.js";
 import { KV } from "../state/schema.js";
-import { StateKV } from "../state/kv.js";
+import type { StateKV } from "../state/kv.js";
 import { logger } from "../logger.js";
+import { detectWorktreeInfo } from "./branch-utils.js";
+import { retrieveRelevantBlocks } from "./retrieval-engine.js";
 
 const MAX_CONTEXT_LENGTH = 4000;
 
-function escapeXml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
-
 export function registerEnrichFunction(sdk: ISdk, kv: StateKV): void {
-  sdk.registerFunction("mem::enrich", 
+  sdk.registerFunction(
+    "mem::enrich",
     async (data: {
       sessionId: string;
       files: string[];
       terms?: string[];
       toolName?: string;
     }) => {
-      const parts: string[] = [];
+      const session = await kv.get<Session>(KV.sessions, data.sessionId).catch(() => null);
+      const project = session?.project || "";
+      const branch =
+        session?.branch ||
+        (session?.cwd ? (await detectWorktreeInfo(session.cwd)).branch || undefined : undefined);
+      const query = [...(data.files || []), ...(data.terms || [])].filter(Boolean).join(" ");
 
-      const fileContextPromise = sdk
-        .trigger<{ sessionId: string; files: string[] }, { context: string }>({
-          function_id: "mem::file-context",
-          payload: {
-            sessionId: data.sessionId,
-            files: data.files,
-          },
-        })
-        .catch(() => ({ context: "" }));
+      const result = await retrieveRelevantBlocks(kv, {
+        project,
+        sessionId: data.sessionId,
+        branch,
+        query,
+        focusFiles: data.files || [],
+        focusConcepts: data.terms || [],
+        budget: Math.max(1, Math.floor(MAX_CONTEXT_LENGTH / 3)),
+        purpose: "enrich",
+        maxBlocks: 8,
+      });
 
-      const searchQueries: string[] = [
-        ...data.files.map((f) => f.split("/").pop() || f),
-        ...(data.terms || []),
-      ].filter((q) => q.length > 0);
-
-      const searchPromise =
-        searchQueries.length > 0
-          ? sdk
-              .trigger<
-                { query: string; limit: number },
-                { results: Array<{ observation: { narrative: string } }> }
-              >({
-                function_id: "mem::search",
-                payload: {
-                  query: searchQueries.join(" "),
-                  limit: 5,
-                },
-              })
-              .catch(() => ({ results: [] }))
-          : Promise.resolve({ results: [] });
-
-      const bugMemoriesPromise = kv
-        .list<Memory>(KV.memories)
-        .then((memories) =>
-          memories
-            .filter(
-              (m) =>
-                m.type === "bug" &&
-                m.isLatest &&
-                m.files.some((f) =>
-                  data.files.some((df) => f.includes(df) || df.includes(f)),
-                ),
-            )
-            .sort(
-              (a, b) =>
-                new Date(b.updatedAt || b.createdAt).getTime() -
-                new Date(a.updatedAt || a.createdAt).getTime(),
-            ),
-        )
-        .catch(() => []);
-
-      const [fileContext, searchResult, bugMemories] = await Promise.all([
-        fileContextPromise,
-        searchPromise,
-        bugMemoriesPromise,
-      ]);
-
-      if (fileContext.context) {
-        parts.push(fileContext.context);
-      }
-
-      if (searchResult.results.length > 0) {
-        const observations = searchResult.results
-          .map((r) => r.observation?.narrative)
-          .filter(Boolean)
-          .map((n) => escapeXml(n as string))
-          .join("\n");
-        if (observations) {
-          parts.push(
-            `<agentmemory-relevant-context>\n${observations}\n</agentmemory-relevant-context>`,
-          );
-        }
-      }
-
-      if (bugMemories.length > 0) {
-        const bugs = bugMemories
-          .slice(0, 3)
-          .map((m) => `- ${escapeXml(m.title)}: ${escapeXml(m.content)}`)
-          .join("\n");
-        parts.push(
-          `<agentmemory-past-errors>\n${bugs}\n</agentmemory-past-errors>`,
-        );
-      }
-
-      let context = parts.join("\n\n");
+      let context = result.context;
       let truncated = false;
       if (context.length > MAX_CONTEXT_LENGTH) {
         context = context.slice(0, MAX_CONTEXT_LENGTH);
@@ -118,12 +45,18 @@ export function registerEnrichFunction(sdk: ISdk, kv: StateKV): void {
 
       logger.info("Enrichment completed", {
         sessionId: data.sessionId,
+        toolName: data.toolName,
         fileCount: data.files.length,
         contextLength: context.length,
         truncated,
       });
 
-      return { context, truncated };
+      return {
+        context,
+        truncated,
+        blocks: result.blocks.length,
+        trace: result.trace,
+      };
     },
   );
 }

@@ -5,7 +5,8 @@ vi.mock("../src/logger.js", () => ({
 }));
 
 import { registerEnrichFunction } from "../src/functions/enrich.js";
-import type { Memory } from "../src/types.js";
+import type { Memory, Session, TurnCapsule } from "../src/types.js";
+import { KV } from "../src/state/schema.js";
 
 function mockKV() {
   const store = new Map<string, Map<string, unknown>>();
@@ -28,27 +29,8 @@ function mockKV() {
   };
 }
 
-function makeMemory(overrides: Partial<Memory> = {}): Memory {
-  return {
-    id: "mem_1",
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    type: "bug",
-    title: "Known bug",
-    content: "Null pointer in handler",
-    concepts: ["bug"],
-    files: ["src/handler.ts"],
-    sessionIds: ["ses_1"],
-    strength: 5,
-    version: 1,
-    isLatest: true,
-    ...overrides,
-  };
-}
-
 function mockSdk() {
   const functions = new Map<string, Function>();
-  const triggerOverrides = new Map<string, Function>();
   return {
     registerFunction: (idOrOpts: string | { id: string }, handler: Function) => {
       const id = typeof idOrOpts === "string" ? idOrOpts : idOrOpts.id;
@@ -61,17 +43,39 @@ function mockSdk() {
     ) => {
       const id = typeof idOrInput === "string" ? idOrInput : idOrInput.function_id;
       const payload = typeof idOrInput === "string" ? data : idOrInput.payload;
-      if (triggerOverrides.has(id)) {
-        return triggerOverrides.get(id)!(payload);
-      }
       const fn = functions.get(id);
       if (!fn) throw new Error(`No function: ${id}`);
       return fn(payload);
     },
-    overrideTrigger: (id: string, handler: Function) => {
-      triggerOverrides.set(id, handler);
-    },
-    getFunction: (id: string) => functions.get(id),
+  };
+}
+
+function makeSession(): Session {
+  return {
+    id: "ses_1",
+    project: "/project",
+    cwd: "/project",
+    startedAt: new Date().toISOString(),
+    status: "active",
+    observationCount: 0,
+  };
+}
+
+function makeMemory(overrides: Partial<Memory> = {}): Memory {
+  return {
+    id: "mem_1",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    type: "bug",
+    title: "Known bug",
+    content: "Null pointer in handler",
+    concepts: ["bug"],
+    files: ["src/handler.ts"],
+    sessionIds: ["ses_1"],
+    strength: 7,
+    version: 1,
+    isLatest: true,
+    ...overrides,
   };
 }
 
@@ -79,135 +83,122 @@ describe("Enrich Function", () => {
   let sdk: ReturnType<typeof mockSdk>;
   let kv: ReturnType<typeof mockKV>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     sdk = mockSdk();
     kv = mockKV();
     registerEnrichFunction(sdk as never, kv as never);
+    const session = makeSession();
+    await kv.set(KV.sessions, session.id, session);
   });
 
-  it("returns file context and relevant memories", async () => {
-    sdk.overrideTrigger(
-      "mem::file-context",
-      async () => ({ context: "File was edited in session ses_1" }),
-    );
-    sdk.overrideTrigger("mem::search", async () => ({
-      results: [
-        { observation: { narrative: "User fixed a bug in handler" } },
-      ],
-    }));
-
-    const bugMem = makeMemory({
-      id: "bug_1",
+  it("reuses the unified retrieval engine with file and term focus", async () => {
+    const capsule: TurnCapsule = {
+      id: "ses_1:turn-1",
+      sessionId: "ses_1",
+      turnId: "turn-1",
+      project: "/project",
+      cwd: "/project",
+      createdAt: "2026-03-28T10:00:01.000Z",
+      updatedAt: "2026-03-28T10:00:02.000Z",
+      userPrompt: "Fix handler issue",
+      assistantConclusion: "Handler retrieval is now unified.",
       files: ["src/handler.ts"],
-      type: "bug",
+      concepts: ["handler retrieval"],
+      hadFailure: false,
+      hadDecision: true,
+      sourceObservationIds: ["obs-1"],
+      importantObservationIds: ["obs-1"],
+      maxImportance: 8,
+    };
+    await kv.set(KV.turnCapsules, capsule.id, capsule);
+
+    const bugMemory = makeMemory({
+      id: "bug_1",
+      title: "Handler race",
+      content: "Race condition in handler retry path",
+      files: ["src/handler.ts"],
+      concepts: ["handler retrieval"],
     });
-    await kv.set("mem:memories", "bug_1", bugMem);
+    await kv.set(KV.memories, bugMemory.id, bugMemory);
 
     const result = (await sdk.trigger("mem::enrich", {
       sessionId: "ses_1",
       files: ["src/handler.ts"],
-    })) as { context: string; truncated: boolean };
+      terms: ["handleError"],
+      toolName: "Grep",
+    })) as {
+      context: string;
+      truncated: boolean;
+      blocks: number;
+      trace: { queryTerms: string[] };
+    };
 
-    expect(result.context).toContain("File was edited in session ses_1");
-    expect(result.context).toContain("agentmemory-relevant-context");
-    expect(result.context).toContain("agentmemory-past-errors");
+    expect(result.context).toContain("## Current Turn");
+    expect(result.context).toContain("Handler retrieval is now unified.");
+    expect(result.context).toContain("## Bug Memory: Handler race");
+    expect(result.blocks).toBeGreaterThanOrEqual(2);
+    expect(result.trace.queryTerms).toContain("handleerror");
     expect(result.truncated).toBe(false);
   });
 
-  it("extracts terms from Grep/Glob pattern for search", async () => {
-    let capturedQuery = "";
-    sdk.overrideTrigger("mem::file-context", async () => ({ context: "" }));
-    sdk.overrideTrigger("mem::search", async (data: any) => {
-      capturedQuery = data.query;
-      return { results: [] };
+  it("truncates the unified context payload at 4000 chars", async () => {
+    const hugeMemory = makeMemory({
+      id: "big_1",
+      title: "Large memory",
+      content: "x".repeat(3900),
+      files: ["src/big.ts"],
+      concepts: ["large memory"],
+      strength: 10,
     });
-
-    await sdk.trigger("mem::enrich", {
-      sessionId: "ses_1",
-      files: ["src/utils.ts"],
-      terms: ["handleError"],
-      toolName: "Grep",
-    });
-
-    expect(capturedQuery).toContain("handleError");
-  });
-
-  it("truncates context at 4000 chars", async () => {
-    const longContext = "x".repeat(5000);
-    sdk.overrideTrigger(
-      "mem::file-context",
-      async () => ({ context: longContext }),
-    );
-    sdk.overrideTrigger("mem::search", async () => ({ results: [] }));
+    await kv.set(KV.memories, hugeMemory.id, hugeMemory);
 
     const result = (await sdk.trigger("mem::enrich", {
       sessionId: "ses_1",
       files: ["src/big.ts"],
+      terms: ["large"],
     })) as { context: string; truncated: boolean };
 
     expect(result.context.length).toBe(4000);
     expect(result.truncated).toBe(true);
   });
 
-  it("returns empty context when no data found", async () => {
-    sdk.overrideTrigger("mem::file-context", async () => ({ context: "" }));
-    sdk.overrideTrigger("mem::search", async () => ({ results: [] }));
-
+  it("returns empty context when no retrieval blocks match", async () => {
     const result = (await sdk.trigger("mem::enrich", {
       sessionId: "ses_1",
       files: ["src/new-file.ts"],
-    })) as { context: string; truncated: boolean };
+    })) as { context: string; truncated: boolean; blocks: number };
 
     expect(result.context).toBe("");
     expect(result.truncated).toBe(false);
+    expect(result.blocks).toBe(0);
   });
 
-  it("handles failed triggers without crashing", async () => {
-    sdk.overrideTrigger("mem::file-context", async () => {
-      throw new Error("file-context failed");
-    });
-    sdk.overrideTrigger("mem::search", async () => {
-      throw new Error("search failed");
-    });
-
-    const result = (await sdk.trigger("mem::enrich", {
-      sessionId: "ses_1",
-      files: ["src/handler.ts"],
-    })) as { context: string; truncated: boolean };
-
-    expect(result.context).toBeDefined();
-    expect(result.truncated).toBe(false);
-  });
-
-  it("includes bug memories that overlap with requested files", async () => {
-    sdk.overrideTrigger("mem::file-context", async () => ({ context: "" }));
-    sdk.overrideTrigger("mem::search", async () => ({ results: [] }));
-
-    const bugMem = makeMemory({
+  it("keeps overlapping bug memory and excludes unrelated memory", async () => {
+    const matchingBug = makeMemory({
       id: "bug_match",
-      type: "bug",
       title: "Race condition",
       content: "Race condition in worker pool",
       files: ["src/worker.ts"],
       isLatest: true,
     });
-    const nonBugMem = makeMemory({
-      id: "pattern_1",
-      type: "pattern",
-      title: "Code pattern",
-      content: "Singleton pattern used",
-      files: ["src/worker.ts"],
+    const unrelated = makeMemory({
+      id: "fact_1",
+      type: "fact",
+      title: "Unrelated fact",
+      content: "UI note unrelated to this tool call",
+      files: ["src/other.ts"],
+      concepts: ["ui"],
       isLatest: true,
     });
-    await kv.set("mem:memories", "bug_match", bugMem);
-    await kv.set("mem:memories", "pattern_1", nonBugMem);
+    await kv.set(KV.memories, matchingBug.id, matchingBug);
+    await kv.set(KV.memories, unrelated.id, unrelated);
 
     const result = (await sdk.trigger("mem::enrich", {
       sessionId: "ses_1",
       files: ["src/worker.ts"],
-    })) as { context: string; truncated: boolean };
+    })) as { context: string };
 
     expect(result.context).toContain("Race condition");
-    expect(result.context).not.toContain("Singleton pattern");
+    expect(result.context).not.toContain("Unrelated fact");
   });
 });

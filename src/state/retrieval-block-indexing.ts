@@ -45,6 +45,10 @@ export function configureRetrievalBlockIndexingRuntime(
   runtime.scheduleSave = next.scheduleSave;
 }
 
+export function getRetrievalBlockIndexingRuntime(): Readonly<RetrievalIndexingRuntime> {
+  return runtime;
+}
+
 export function getRetrievalSearchIndex(): SearchIndex {
   if (!index) index = new SearchIndex();
   return index;
