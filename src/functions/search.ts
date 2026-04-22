@@ -5,6 +5,10 @@ import { StateKV } from '../state/kv.js'
 import { SearchIndex } from '../state/search-index.js'
 import { recordAccessBatch } from './access-tracker.js'
 import { logger } from "../logger.js";
+import {
+  getObservationIndexingRuntime,
+  indexCompressedObservation,
+} from "../state/observation-indexing.js";
 
 let index: SearchIndex | null = null
 
@@ -16,6 +20,7 @@ export function getSearchIndex(): SearchIndex {
 export async function rebuildIndex(kv: StateKV): Promise<number> {
   const idx = getSearchIndex()
   idx.clear()
+  getObservationIndexingRuntime().vectorIndex?.clear()
 
   const sessions = await kv.list<Session>(KV.sessions)
   if (!sessions.length) return 0
@@ -43,7 +48,7 @@ export async function rebuildIndex(kv: StateKV): Promise<number> {
   for (const observations of obsPerSession) {
     for (const obs of observations) {
       if (obs.title && obs.narrative) {
-        idx.add(obs)
+        await indexCompressedObservation(kv, idx, obs, { scheduleSave: false })
         count++
       }
     }

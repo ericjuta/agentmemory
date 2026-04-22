@@ -101,6 +101,7 @@ import {
 } from "./health/maintenance-gate.js";
 import { initMetrics, OTEL_CONFIG } from "./telemetry/setup.js";
 import { VERSION } from "./version.js";
+import { configureObservationIndexingRuntime } from "./state/observation-indexing.js";
 
 function hasGetMeter(
   sdk: unknown,
@@ -159,9 +160,13 @@ async function main() {
 
   const vectorIndex = embeddingProvider ? new VectorIndex() : null;
 
+  let indexPersistence: IndexPersistence | null = null;
+
   const onEvict = (obsId: string) => {
     getSearchIndex().remove(obsId);
     vectorIndex?.remove(obsId);
+    void kv.delete(KV.embeddings(obsId), "data").catch(() => {});
+    indexPersistence?.scheduleSave();
     // Background graph cleanup - mark nodes stale when all source observations gone
     if (isGraphExtractionEnabled()) {
       pruneGraphForObservation(kv, obsId).catch(() => {});
@@ -318,7 +323,12 @@ async function main() {
     };
   });
 
-  const indexPersistence = new IndexPersistence(kv, bm25Index, vectorIndex);
+  indexPersistence = new IndexPersistence(kv, bm25Index, vectorIndex);
+  configureObservationIndexingRuntime({
+    embeddingProvider,
+    vectorIndex,
+    scheduleSave: () => indexPersistence?.scheduleSave(),
+  });
 
   const loaded = await indexPersistence.load().catch((err) => {
     console.warn(`[agentmemory] Failed to load persisted index:`, err);
@@ -504,6 +514,7 @@ async function main() {
   const indexVerifyHandle = createAdaptiveTimer(
     async () => {
       const bm25Size = bm25Index.size;
+      const vectorSize = vectorIndex?.size ?? 0;
 
       // Count actual compressed observations across all sessions
       const sessions = await kv.list<{ id: string }>(KV.sessions).catch(() => []);
@@ -515,10 +526,19 @@ async function main() {
 
       const drift = Math.abs(bm25Size - kvObsCount);
       const driftPct = kvObsCount > 0 ? drift / kvObsCount : 0;
+      const vectorDrift = Math.abs(vectorSize - kvObsCount);
+      const vectorDriftPct = kvObsCount > 0 ? vectorDrift / kvObsCount : 0;
 
-      if (driftPct > 0.1 && drift > 50) {
-        // More than 10% drift and at least 50 observations off
-        console.warn(`[agentmemory] Index drift detected: index=${bm25Size} kv=${kvObsCount} (${(driftPct * 100).toFixed(1)}%), rebuilding`);
+      const bm25NeedsRebuild = driftPct > 0.1 && drift > 50;
+      const vectorNeedsRebuild =
+        !!vectorIndex &&
+        ((kvObsCount > 0 && vectorSize === 0) ||
+          (vectorDriftPct > 0.1 && vectorDrift > 50));
+
+      if (bm25NeedsRebuild || vectorNeedsRebuild) {
+        console.warn(
+          `[agentmemory] Index drift detected: bm25=${bm25Size} vector=${vectorSize} kv=${kvObsCount}, rebuilding`,
+        );
         const rebuilt = await rebuildIndex(kv).catch(() => 0);
         if (rebuilt > 0) {
           indexPersistence.scheduleSave();

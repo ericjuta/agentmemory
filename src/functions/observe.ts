@@ -18,6 +18,7 @@ import { getSearchIndex } from "./search.js";
 import { logger } from "../logger.js";
 import { upsertTurnCapsuleFromRaw } from "./turn-capsules.js";
 import type { CompressionTracker } from "../state/compression-tracker.js";
+import { indexCompressedObservation } from "../state/observation-indexing.js";
 
 const SUPPORTED_HOOK_TYPES = new Set<HookType>([
   "session_start",
@@ -536,7 +537,7 @@ export function registerObserveFunction(
             obsId,
             storedSynthetic,
           );
-          getSearchIndex().add(synthetic);
+          await indexCompressedObservation(kv, getSearchIndex(), storedSynthetic);
           bestEffortTrigger(sdk, "stream::set", {
             stream_name: STREAM.name,
             group_id: STREAM.group(payload.sessionId),

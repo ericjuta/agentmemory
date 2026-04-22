@@ -23,6 +23,7 @@ import { logger } from "../logger.js";
 import { upsertTurnCapsuleFromCompressed } from "./turn-capsules.js";
 import { Semaphore } from "../state/semaphore.js";
 import type { CompressionTracker } from "../state/compression-tracker.js";
+import { indexCompressedObservation } from "../state/observation-indexing.js";
 
 /** Cap concurrent LLM compression calls to avoid starving the engine. */
 const compressSemaphore = new Semaphore(6);
@@ -156,7 +157,7 @@ export function registerCompressFunction(
               compressed,
             );
 
-            getSearchIndex().add(compressed);
+            await indexCompressedObservation(kv, getSearchIndex(), compressed);
 
             const streamResults = await Promise.allSettled([
               sdk.trigger({

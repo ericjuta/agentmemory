@@ -1,9 +1,11 @@
 function float32ToBase64(arr: Float32Array): string {
-  return Buffer.from(arr.buffer).toString("base64");
+  return Buffer.from(arr.buffer, arr.byteOffset, arr.byteLength).toString("base64");
 }
 
 function base64ToFloat32(b64: string): Float32Array {
-  return new Float32Array(Buffer.from(b64, "base64").buffer);
+  const buf = Buffer.from(b64, "base64");
+  const bytes = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+  return new Float32Array(bytes);
 }
 
 function cosineSimilarity(a: Float32Array, b: Float32Array): number {
