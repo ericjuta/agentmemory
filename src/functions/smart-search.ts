@@ -6,12 +6,11 @@ import type {
 } from "../types.js";
 import { KV } from "../state/schema.js";
 import type { StateKV } from "../state/kv.js";
-import { recordAccessBatch } from "./access-tracker.js";
+import { deferRecordAccessBatch } from "./access-tracker.js";
 import { logger } from "../logger.js";
 import { retrieveRelevantBlocks } from "./retrieval-engine.js";
 import {
   collectRetrievalBlocksFromState,
-  refreshRetrievalBlocksFromState,
 } from "./retrieval-blocks.js";
 
 function toCompact(block: RetrievalBlock, score: number): CompactSearchResult {
@@ -52,10 +51,6 @@ export function registerSmartSearchFunction(
 
         let allBlocks = await kv.list<RetrievalBlock>(KV.retrievalBlocks).catch(() => []);
         if (allBlocks.length === 0) {
-          await refreshRetrievalBlocksFromState(kv).catch(() => {});
-          allBlocks = await kv.list<RetrievalBlock>(KV.retrievalBlocks).catch(() => []);
-        }
-        if (allBlocks.length === 0) {
           allBlocks = await collectRetrievalBlocksFromState(kv).catch(() => []);
         }
         const expanded = await Promise.all(
@@ -84,7 +79,7 @@ export function registerSmartSearchFunction(
         );
         const results = expanded.filter((item): item is NonNullable<typeof item> => item !== null);
 
-        void recordAccessBatch(
+        deferRecordAccessBatch(
           kv,
           results.map((item) =>
             item.block.sourceType === "observation"
@@ -120,7 +115,7 @@ export function registerSmartSearchFunction(
         .slice(0, limit)
         .map((item) => toCompact(item.block, item.score));
 
-      void recordAccessBatch(
+      deferRecordAccessBatch(
         kv,
         retrieval.searchResults
           .slice(0, limit)

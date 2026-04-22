@@ -140,8 +140,7 @@ describe("IndexPersistence", () => {
 
     persistence.scheduleSave();
 
-    vi.advanceTimersByTime(5000);
-    await vi.runAllTimersAsync();
+    await vi.advanceTimersByTimeAsync(5000);
 
     expect(logger.warn).toHaveBeenCalledWith(
       "Failed to persist index",
@@ -150,5 +149,52 @@ describe("IndexPersistence", () => {
         error: "state unavailable",
       }),
     );
+  });
+
+  it("does not start a second deferred save while one is still in flight", async () => {
+    const bm25 = new SearchIndex();
+    let resolveSet: (() => void) | null = null;
+    const pendingSet = new Promise<string>((resolve) => {
+      resolveSet = () => resolve("saved");
+    });
+    const slowKv = {
+      ...mockKV(),
+      set: vi.fn(() => pendingSet),
+    };
+    const persistence = new IndexPersistence(slowKv as never, bm25, null);
+
+    persistence.scheduleSave();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(slowKv.set).toHaveBeenCalledTimes(1);
+
+    persistence.scheduleSave();
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(slowKv.set).toHaveBeenCalledTimes(1);
+
+    resolveSet?.();
+    await Promise.resolve();
+    expect(slowKv.set).toHaveBeenCalledTimes(1);
+  });
+
+  it("backs off deferred retries after a failed save", async () => {
+    const bm25 = new SearchIndex();
+    const retryingKv = {
+      ...mockKV(),
+      set: vi
+        .fn()
+        .mockRejectedValueOnce(new Error("state unavailable"))
+        .mockResolvedValue("saved"),
+    };
+    const persistence = new IndexPersistence(retryingKv as never, bm25, null);
+
+    persistence.scheduleSave();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(retryingKv.set).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(retryingKv.set).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(retryingKv.set).toHaveBeenCalledTimes(2);
   });
 });

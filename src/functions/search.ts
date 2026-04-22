@@ -8,7 +8,7 @@ import type { ISdk } from "iii-sdk";
 import { KV } from "../state/schema.js";
 import type { StateKV } from "../state/kv.js";
 import { SearchIndex } from "../state/search-index.js";
-import { recordAccessBatch } from "./access-tracker.js";
+import { deferRecordAccessBatch } from "./access-tracker.js";
 import { logger } from "../logger.js";
 import {
   getObservationIndexingRuntime,
@@ -155,7 +155,7 @@ export function registerSearchFunction(sdk: ISdk, kv: StateKV): void {
       if (format === "compact") {
         const compact = fullResults.map(compactResult).slice(0, effectiveLimit);
         const packed = applyTokenBudget(compact);
-        void recordAccessBatch(
+        deferRecordAccessBatch(
           kv,
           packed.items.map((item) => item.sourceId || item.obsId),
         );
@@ -178,7 +178,7 @@ export function registerSearchFunction(sdk: ISdk, kv: StateKV): void {
           timestamp: item.block.eventAt,
         }));
         const packed = applyTokenBudget(narrative);
-        void recordAccessBatch(
+        deferRecordAccessBatch(
           kv,
           packed.items.map((item) => item.blockId),
         );
@@ -208,7 +208,7 @@ export function registerSearchFunction(sdk: ISdk, kv: StateKV): void {
         }))
         .slice(0, effectiveLimit);
       const packed = applyTokenBudget(verbose);
-      void recordAccessBatch(
+      deferRecordAccessBatch(
         kv,
         packed.items.map((item) => item.block.id),
       );

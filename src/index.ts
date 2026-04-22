@@ -184,7 +184,6 @@ async function main() {
     void kv
       .delete(KV.retrievalBlockEmbeddings(retrievalBlockId("observation", obsId)), "data")
       .catch(() => {});
-    retrievalIndexPersistence?.scheduleSave();
     // Background graph cleanup - mark nodes stale when all source observations gone
     if (isGraphExtractionEnabled()) {
       pruneGraphForObservation(kv, obsId).catch(() => {});
@@ -356,7 +355,6 @@ async function main() {
   configureRetrievalBlockIndexingRuntime({
     embeddingProvider,
     vectorIndex: retrievalVectorIndex,
-    scheduleSave: () => retrievalIndexPersistence?.scheduleSave(),
   });
 
   const loaded = await indexPersistence.load().catch((err) => {
@@ -612,9 +610,13 @@ async function main() {
     indexVerifyHandle.stop();
     dedupMap.stop();
     indexPersistence.stop();
+    retrievalIndexPersistence?.stop();
     await new Promise<void>((resolve) => viewerServer.close(() => resolve()));
     await indexPersistence.save().catch((err) => {
       console.warn(`[agentmemory] Failed to save index on shutdown:`, err);
+    });
+    await retrievalIndexPersistence?.save().catch((err) => {
+      console.warn(`[agentmemory] Failed to save retrieval index on shutdown:`, err);
     });
     await sdk.shutdown();
     process.exit(0);

@@ -171,7 +171,8 @@ describe("Smart Search Function", () => {
 
   it("compact mode records access for every returned observation id (#119)", async () => {
     await sdk.trigger("mem::smart-search", { query: "auth" });
-    // recordAccessBatch is fire-and-forget — let the microtask queue drain.
+    // Access logging is deferred off the request path — allow one timer turn.
+    await new Promise((r) => setTimeout(r, 0));
     await new Promise((r) => setImmediate(r));
 
     const log1 = (await kv.get("mem:access", "obs_1")) as {
@@ -187,6 +188,7 @@ describe("Smart Search Function", () => {
 
   it("expand mode records access for expanded observation ids (#119)", async () => {
     await sdk.trigger("mem::smart-search", { expandIds: ["obs_1"] });
+    await new Promise((r) => setTimeout(r, 0));
     await new Promise((r) => setImmediate(r));
 
     const log = (await kv.get("mem:access", "obs_1")) as {
@@ -195,7 +197,7 @@ describe("Smart Search Function", () => {
     expect(log?.count).toBe(1);
   });
 
-  it("falls back to live state when retrieval block persistence fails", async () => {
+  it("falls back to live state without trying to repersist retrieval blocks", async () => {
     const sdk = mockSdk();
     const baseKv = mockKV();
     const session: Session = {
@@ -216,10 +218,12 @@ describe("Smart Search Function", () => {
     await baseKv.set(KV.sessions, session.id, session);
     await baseKv.set(KV.observations(session.id), obs.id, obs);
 
+    let retrievalBlockWrites = 0;
     const kv = {
       ...baseKv,
       set: async <T>(scope: string, key: string, data: T): Promise<T> => {
         if (scope === KV.retrievalBlocks) {
+          retrievalBlockWrites += 1;
           throw new Error("retrieval block persistence disabled");
         }
         return baseKv.set(scope, key, data);
@@ -236,5 +240,6 @@ describe("Smart Search Function", () => {
     expect(result.mode).toBe("compact");
     expect(result.results[0]?.obsId).toBe("obs_fallback");
     expect(result.results[0]?.title).toContain("Auth recovery");
+    expect(retrievalBlockWrites).toBe(0);
   });
 });

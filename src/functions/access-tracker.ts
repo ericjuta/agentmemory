@@ -90,6 +90,18 @@ export async function recordAccessBatch(
   await Promise.allSettled(unique.map((id) => recordAccess(kv, id, ts)));
 }
 
+export function deferRecordAccessBatch(
+  kv: StateKV,
+  memoryIds: string[],
+  timestampMs?: number,
+): void {
+  if (!memoryIds || memoryIds.length === 0) return;
+  const timer = setTimeout(() => {
+    void recordAccessBatch(kv, memoryIds, timestampMs);
+  }, 0);
+  timer.unref?.();
+}
+
 export async function deleteAccessLog(
   kv: StateKV,
   memoryId: string,
@@ -101,4 +113,3 @@ export async function deleteAccessLog(
     });
   } catch {}
 }
-

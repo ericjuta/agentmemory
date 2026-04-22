@@ -114,6 +114,7 @@ export function registerHealthMonitor(
       } catch (err) {
         kvFailureStreak++;
         kvLastFailureAt = nowIso;
+        persistCircuit.recordFailure();
         kvConnectivity = {
           status: "error",
           error: err instanceof Error ? err.message : "kv_probe_failed",
@@ -160,17 +161,22 @@ export function registerHealthMonitor(
     snapshot.alerts = evaluated.alerts;
     latestHealthSnapshot = snapshot;
 
-    if (!persistCircuit.isAllowed) {
-      // Circuit open — skip persist, keep in-memory snapshot only
-      snapshotPersistError = "circuit_open";
+    if (!persistCircuit.isAllowed || kvConnectivity.status !== "ok") {
+      const persistError = !persistCircuit.isAllowed
+        ? "circuit_open"
+        : `skipped_due_kv_probe_error:${kvConnectivity.error ?? "unknown"}`;
+      const persistFailureCount = Math.max(snapshotPersistFailureStreak, 1);
+      const persistLastFailureAt =
+        kvConnectivity.status !== "ok" ? nowIso : (snapshotPersistLastFailureAt ?? nowIso);
+      snapshotPersistError = persistError;
       latestHealthSnapshot = {
         ...snapshot,
         snapshotPersistence: {
           status: "error",
-          consecutiveFailures: snapshotPersistFailureStreak,
+          consecutiveFailures: persistFailureCount,
           lastSuccessAt: snapshotPersistLastSuccessAt,
-          lastFailureAt: snapshotPersistLastFailureAt,
-          error: snapshotPersistError,
+          lastFailureAt: persistLastFailureAt,
+          error: persistError,
         },
       };
     } else {

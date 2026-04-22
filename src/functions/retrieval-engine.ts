@@ -20,7 +20,6 @@ import { GraphRetrieval } from "./graph-retrieval.js";
 import { extractEntitiesFromQuery } from "./query-expansion.js";
 import {
   collectRetrievalBlocksFromState,
-  refreshRetrievalBlocksFromState,
 } from "./retrieval-blocks.js";
 
 function estimateTokens(text: string): number {
@@ -239,22 +238,12 @@ export async function retrieveRelevantBlocks(
   kv: StateKV,
   query: UnifiedRetrievalQuery,
 ): Promise<UnifiedRetrievalResult> {
+  const hasProjectCoverage = (blocks: RetrievalBlock[]): boolean =>
+    blocks.some(
+      (block) => block.project === query.project || block.project === "global",
+    );
   let allBlocks = await kv.list<RetrievalBlock>(KV.retrievalBlocks).catch(() => []);
-  if (
-    allBlocks.length === 0 ||
-    !allBlocks.some(
-      (block) => block.project === query.project || block.project === "global",
-    )
-  ) {
-    await refreshRetrievalBlocksFromState(kv).catch(() => {});
-    allBlocks = await kv.list<RetrievalBlock>(KV.retrievalBlocks).catch(() => []);
-  }
-  if (
-    allBlocks.length === 0 ||
-    !allBlocks.some(
-      (block) => block.project === query.project || block.project === "global",
-    )
-  ) {
+  if (allBlocks.length === 0 || !hasProjectCoverage(allBlocks)) {
     allBlocks = await collectRetrievalBlocksFromState(kv).catch(() => []);
   }
   const blocks = allBlocks

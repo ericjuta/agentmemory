@@ -5,9 +5,14 @@ import { KV } from "./schema.js";
 import { logger } from "../logger.js";
 
 const DEBOUNCE_MS = 5000;
+const RETRY_BACKOFF_MS = 15000;
+const MAX_RETRY_BACKOFF_MS = 60000;
 
 export class IndexPersistence {
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private inFlight: Promise<void> | null = null;
+  private dirty = false;
+  private nextDelayMs = DEBOUNCE_MS;
 
   constructor(
     private kv: StateKV,
@@ -17,15 +22,9 @@ export class IndexPersistence {
   ) {}
 
   scheduleSave(): void {
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = setTimeout(() => {
-      void this.save().catch((error) => {
-        logger.warn("Failed to persist index", {
-          scope: this.scope,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
-    }, DEBOUNCE_MS);
+    this.dirty = true;
+    if (this.inFlight) return;
+    this.armTimer(this.nextDelayMs);
   }
 
   async save(): Promise<void> {
@@ -33,6 +32,47 @@ export class IndexPersistence {
       clearTimeout(this.timer);
       this.timer = null;
     }
+    this.dirty = false;
+    if (this.inFlight) {
+      await this.inFlight;
+      return;
+    }
+    await this.saveNow();
+    this.nextDelayMs = DEBOUNCE_MS;
+  }
+
+  private armTimer(delayMs: number): void {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      void this.flushDeferredSave();
+    }, delayMs);
+  }
+
+  private async flushDeferredSave(): Promise<void> {
+    if (this.inFlight || !this.dirty) return;
+    this.dirty = false;
+    this.inFlight = this.saveNow();
+    try {
+      await this.inFlight;
+      this.nextDelayMs = DEBOUNCE_MS;
+    } catch (error) {
+      this.dirty = true;
+      this.nextDelayMs = Math.min(
+        MAX_RETRY_BACKOFF_MS,
+        Math.max(RETRY_BACKOFF_MS, this.nextDelayMs * 2),
+      );
+      logger.warn("Failed to persist index", {
+        scope: this.scope,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      this.inFlight = null;
+      if (this.dirty) this.armTimer(this.nextDelayMs);
+    }
+  }
+
+  private async saveNow(): Promise<void> {
     await this.kv.set(this.scope, "data", this.bm25.serialize());
     if (this.vector && this.vector.size > 0) {
       await this.kv.set(this.scope, "vectors", this.vector.serialize());
@@ -68,5 +108,6 @@ export class IndexPersistence {
       clearTimeout(this.timer);
       this.timer = null;
     }
+    this.dirty = false;
   }
 }
