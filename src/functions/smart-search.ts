@@ -2,65 +2,99 @@ import type { ISdk } from "iii-sdk";
 import type {
   CompactSearchResult,
   CompressedObservation,
-  HybridSearchResult,
+  RetrievalBlock,
 } from "../types.js";
 import { KV } from "../state/schema.js";
-import { StateKV } from "../state/kv.js";
+import type { StateKV } from "../state/kv.js";
 import { recordAccessBatch } from "./access-tracker.js";
 import { logger } from "../logger.js";
+import { retrieveRelevantBlocks } from "./retrieval-engine.js";
+import { refreshRetrievalBlocksFromState } from "./retrieval-blocks.js";
+
+function toCompact(block: RetrievalBlock, score: number): CompactSearchResult {
+  const legacyId = block.sourceType === "observation" ? block.sourceId : block.id;
+  return {
+    obsId: legacyId,
+    blockId: block.id,
+    sessionId: block.sessionId || "",
+    title: block.title,
+    type: block.sourceType,
+    score,
+    timestamp: block.eventAt,
+    sourceType: block.sourceType,
+    sourceId: block.sourceId,
+  };
+}
 
 export function registerSmartSearchFunction(
   sdk: ISdk,
   kv: StateKV,
-  searchFn: (query: string, limit: number) => Promise<HybridSearchResult[]>,
+  _legacySearchFn?: (query: string, limit: number) => Promise<unknown>,
 ): void {
-  sdk.registerFunction("mem::smart-search", 
+  sdk.registerFunction(
+    "mem::smart-search",
     async (data: {
       query?: string;
-      expandIds?: Array<string | { obsId: string; sessionId: string }>;
+      expandIds?: Array<string | { obsId?: string; blockId?: string; sessionId?: string }>;
       limit?: number;
+      project?: string;
     }) => {
-
       if (data.expandIds && data.expandIds.length > 0) {
-        const raw = data.expandIds.slice(0, 20);
-        const items = raw.map((entry) => {
-          if (typeof entry === "string") return { obsId: entry, sessionId: undefined as string | undefined };
-          if (entry && typeof entry === "object" && typeof (entry as any).obsId === "string") {
-            return { obsId: (entry as any).obsId, sessionId: (entry as any).sessionId as string | undefined };
-          }
+        const requested = data.expandIds.slice(0, 20).map((entry) => {
+          if (typeof entry === "string") return { id: entry, sessionId: undefined as string | undefined };
+          if (entry?.blockId) return { id: entry.blockId, sessionId: entry.sessionId };
+          if (entry?.obsId) return { id: entry.obsId, sessionId: entry.sessionId };
           return null;
         }).filter((item): item is NonNullable<typeof item> => item !== null);
 
-        const expanded: Array<{
-          obsId: string;
-          sessionId: string;
-          observation: CompressedObservation;
-        }> = [];
-
-        const results = await Promise.all(
-          items.map(({ obsId, sessionId }) =>
-            findObservation(kv, obsId, sessionId).then((obs) =>
-              obs ? { obsId, sessionId: obs.sessionId, observation: obs } : null,
-            ),
-          ),
-        );
-        for (const r of results) {
-          if (r) expanded.push(r);
+        let allBlocks = await kv.list<RetrievalBlock>(KV.retrievalBlocks).catch(() => []);
+        if (allBlocks.length === 0) {
+          await refreshRetrievalBlocksFromState(kv).catch(() => {});
+          allBlocks = await kv.list<RetrievalBlock>(KV.retrievalBlocks).catch(() => []);
         }
+        const expanded = await Promise.all(
+          requested.map(async ({ id, sessionId }) => {
+            const block =
+              (await kv.get<RetrievalBlock>(KV.retrievalBlocks, id).catch(() => null)) ||
+              allBlocks.find((candidate) => candidate.sourceId === id);
+            if (!block) return null;
+            const observation =
+              block.sourceType === "observation" && (block.sessionId || sessionId)
+                ? await kv
+                    .get<CompressedObservation>(
+                      KV.observations(block.sessionId || sessionId!),
+                      block.sourceId,
+                    )
+                    .catch(() => null)
+                : null;
+            return {
+              obsId: id,
+              blockId: block.id,
+              sessionId: block.sessionId || sessionId || "",
+              block,
+              observation,
+            };
+          }),
+        );
+        const results = expanded.filter((item): item is NonNullable<typeof item> => item !== null);
 
         void recordAccessBatch(
           kv,
-          expanded.map((e) => e.observation.id),
+          results.map((item) =>
+            item.block.sourceType === "observation"
+              ? item.block.sourceId
+              : item.block.id,
+          ),
         );
 
-        const truncated = data.expandIds.length > raw.length;
+        const truncated = data.expandIds.length > requested.length;
         logger.info("Smart search expanded", {
           requested: data.expandIds.length,
-          attempted: raw.length,
-          returned: expanded.length,
+          attempted: requested.length,
+          returned: results.length,
           truncated,
         });
-        return { mode: "expanded", results: expanded, truncated };
+        return { mode: "expanded", results, truncated };
       }
 
       if (!data.query || typeof data.query !== "string" || !data.query.trim()) {
@@ -68,20 +102,27 @@ export function registerSmartSearchFunction(
       }
 
       const limit = Math.max(1, Math.min(data.limit ?? 20, 100));
-      const hybridResults = await searchFn(data.query, limit);
+      const retrieval = await retrieveRelevantBlocks(kv, {
+        project: data.project,
+        query: data.query,
+        budget: limit * 300,
+        purpose: "smart-search",
+        maxBlocks: Math.max(limit * 4, 20),
+      });
 
-      const compact: CompactSearchResult[] = hybridResults.map((r) => ({
-        obsId: r.observation.id,
-        sessionId: r.sessionId,
-        title: r.observation.title,
-        type: r.observation.type,
-        score: r.combinedScore,
-        timestamp: r.observation.timestamp,
-      }));
+      const compact = retrieval.searchResults
+        .slice(0, limit)
+        .map((item) => toCompact(item.block, item.score));
 
       void recordAccessBatch(
         kv,
-        compact.map((r) => r.obsId),
+        retrieval.searchResults
+          .slice(0, limit)
+          .map((item) =>
+            item.block.sourceType === "observation"
+              ? item.block.sourceId
+              : item.block.id,
+          ),
       );
 
       logger.info("Smart search compact", {
@@ -91,30 +132,4 @@ export function registerSmartSearchFunction(
       return { mode: "compact", results: compact };
     },
   );
-}
-
-async function findObservation(
-  kv: StateKV,
-  obsId: string,
-  sessionIdHint?: string,
-): Promise<CompressedObservation | null> {
-  if (sessionIdHint) {
-    const obs = await kv
-      .get<CompressedObservation>(KV.observations(sessionIdHint), obsId)
-      .catch(() => null);
-    if (obs) return obs;
-  }
-
-  const sessions = await kv.list<{ id: string }>(KV.sessions);
-  for (let i = 0; i < sessions.length; i += 5) {
-    const batch = sessions.slice(i, i + 5);
-    const results = await Promise.all(
-      batch.map((s) =>
-        kv.get<CompressedObservation>(KV.observations(s.id), obsId).catch(() => null),
-      ),
-    );
-    const found = results.find((r) => r !== null);
-    if (found) return found;
-  }
-  return null;
 }

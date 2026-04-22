@@ -211,7 +211,7 @@ function buildTraceCandidate(
 }
 
 export interface UnifiedRetrievalQuery {
-  project: string;
+  project?: string;
   sessionId?: string;
   branch?: string;
   query?: string;
@@ -245,7 +245,11 @@ export async function retrieveRelevantBlocks(
     allBlocks = await kv.list<RetrievalBlock>(KV.retrievalBlocks).catch(() => []);
   }
   const blocks = allBlocks
-    .filter((block) => block.project === query.project || block.project === "global")
+    .filter((block) =>
+      query.project
+        ? block.project === query.project || block.project === "global"
+        : true,
+    )
     .filter((block) => branchMatches(block, query.branch));
 
   const terms = uniqueStrings([
@@ -649,7 +653,7 @@ export async function retrieveRelevantBlocks(
   );
   const context =
     renderedBlocksWithGraph.length > 0
-      ? `<agentmemory-context project="${escapeXmlAttr(query.project)}">\n${renderedBlocksWithGraph.join("\n\n")}\n</agentmemory-context>`
+      ? `<agentmemory-context project="${escapeXmlAttr(query.project || "*")}">\n${renderedBlocksWithGraph.join("\n\n")}\n</agentmemory-context>`
       : "";
 
   const searchResults: RetrievalSearchResult[] = await Promise.all(

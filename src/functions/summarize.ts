@@ -16,7 +16,11 @@ import { scoreSummary } from "../eval/quality.js";
 import type { MetricsStore } from "../eval/metrics-store.js";
 import { safeAudit } from "./audit.js";
 import { logger } from "../logger.js";
-import { upsertSummaryRetrievalBlock } from "./retrieval-blocks.js";
+import {
+  upsertProceduralRetrievalBlock,
+  upsertSemanticRetrievalBlock,
+  upsertSummaryRetrievalBlock,
+} from "./retrieval-blocks.js";
 
 function parseSummaryXml(
   xml: string,
@@ -156,6 +160,7 @@ export function registerSummarizeFunction(
               sem.accessCount = (sem.accessCount || 0) + 1;
               sem.lastAccessedAt = new Date().toISOString();
               await kv.set(KV.semantic, memId, sem).catch(() => {});
+              await upsertSemanticRetrievalBlock(kv, sem).catch(() => {});
               continue;
             }
             // Try Procedural store
@@ -164,6 +169,7 @@ export function registerSummarizeFunction(
               proc.strength = Math.max(0.1, Math.min(1, proc.strength + strengthDelta / 10));
               proc.frequency = (proc.frequency || 0) + 1;
               await kv.set(KV.procedural, memId, proc).catch(() => {});
+              await upsertProceduralRetrievalBlock(kv, proc).catch(() => {});
             }
           }
 

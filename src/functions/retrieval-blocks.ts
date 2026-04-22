@@ -410,6 +410,14 @@ export function buildObservationRetrievalBlock(
   };
 }
 
+function shouldIndexObservation(observation: CompressedObservation): boolean {
+  return (
+    observation.importance >= 6 ||
+    observation.type === "error" ||
+    observation.type === "decision"
+  );
+}
+
 export function buildMemoryRetrievalBlock(memory: Memory): RetrievalBlock {
   const canonicalText = formatMemory(memory);
   return {
@@ -717,6 +725,29 @@ export async function upsertMemoryRetrievalBlock(
   memory: Memory,
 ): Promise<RetrievalBlock> {
   return upsertRetrievalBlock(kv, buildMemoryRetrievalBlock(memory));
+}
+
+export async function upsertObservationRetrievalBlock(
+  kv: StateKV,
+  observation: CompressedObservation,
+  project: string,
+): Promise<RetrievalBlock | null> {
+  if (!shouldIndexObservation(observation)) return null;
+  return upsertRetrievalBlock(kv, buildObservationRetrievalBlock(observation, project));
+}
+
+export async function upsertSemanticRetrievalBlock(
+  kv: StateKV,
+  memory: SemanticMemory,
+): Promise<RetrievalBlock> {
+  return upsertRetrievalBlock(kv, buildSemanticRetrievalBlock(memory));
+}
+
+export async function upsertProceduralRetrievalBlock(
+  kv: StateKV,
+  memory: ProceduralMemory,
+): Promise<RetrievalBlock> {
+  return upsertRetrievalBlock(kv, buildProceduralRetrievalBlock(memory));
 }
 
 export async function upsertGuardrailRetrievalBlock(

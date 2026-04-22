@@ -19,6 +19,10 @@ import { recordAudit } from "./audit.js";
 import { getConsolidationDecayDays, isConsolidationEnabled, getEnvVar } from "../config.js";
 import { logger } from "../logger.js";
 import { Semaphore } from "../state/semaphore.js";
+import {
+  upsertProceduralRetrievalBlock,
+  upsertSemanticRetrievalBlock,
+} from "./retrieval-blocks.js";
 
 const consolidationSemaphore = new Semaphore(2);
 
@@ -132,6 +136,7 @@ export function registerConsolidationPipelineFunction(
                 existing.updatedAt = now;
                 existing.confidence = Math.max(existing.confidence, confidence);
                 await kv.set(KV.semantic, existing.id, existing);
+                await upsertSemanticRetrievalBlock(kv, existing);
               } else {
                 const sem: SemanticMemory = {
                   id: generateId("sem"),
@@ -146,6 +151,7 @@ export function registerConsolidationPipelineFunction(
                   updatedAt: now,
                 };
                 await kv.set(KV.semantic, sem.id, sem);
+                await upsertSemanticRetrievalBlock(kv, sem);
                 newFacts++;
               }
             }
@@ -224,6 +230,7 @@ export function registerConsolidationPipelineFunction(
                 existing.updatedAt = now;
                 existing.strength = Math.min(1, existing.strength + 0.1);
                 await kv.set(KV.procedural, existing.id, existing);
+                await upsertProceduralRetrievalBlock(kv, existing);
               } else {
                 const proc: ProceduralMemory = {
                   id: generateId("proc"),
@@ -237,6 +244,7 @@ export function registerConsolidationPipelineFunction(
                   updatedAt: now,
                 };
                 await kv.set(KV.procedural, proc.id, proc);
+                await upsertProceduralRetrievalBlock(kv, proc);
                 newProcs++;
               }
             }
@@ -266,6 +274,7 @@ export function registerConsolidationPipelineFunction(
         for (const s of semantic) {
           if (!changedSemanticIds.has(s.id)) continue;
           await kv.set(KV.semantic, s.id, s);
+          await upsertSemanticRetrievalBlock(kv, s);
         }
 
         const procedural = selectDecayBatch(
@@ -278,6 +287,7 @@ export function registerConsolidationPipelineFunction(
         for (const p of procedural) {
           if (!changedProceduralIds.has(p.id)) continue;
           await kv.set(KV.procedural, p.id, p);
+          await upsertProceduralRetrievalBlock(kv, p);
         }
 
         results.decay = {

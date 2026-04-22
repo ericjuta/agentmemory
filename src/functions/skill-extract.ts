@@ -10,6 +10,7 @@ import { KV, generateId, fingerprintId } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
 import { recordAudit } from "./audit.js";
 import { logger } from "../logger.js";
+import { upsertProceduralRetrievalBlock } from "./retrieval-blocks.js";
 
 const SKILL_EXTRACT_SYSTEM = `You are a skill extraction engine. Given a completed multi-step task session, extract a reusable procedural skill document.
 
@@ -174,6 +175,7 @@ export function registerSkillExtractFunctions(
           }
           existing.updatedAt = new Date().toISOString();
           await kv.set(KV.procedural, existing.id, existing);
+          await upsertProceduralRetrievalBlock(kv, existing);
 
           try {
             await recordAudit(kv, "skill_extract", "mem::skill-extract", [], {
@@ -215,6 +217,7 @@ export function registerSkillExtractFunctions(
         };
 
         await kv.set(KV.procedural, skill.id, skill);
+        await upsertProceduralRetrievalBlock(kv, skill);
 
         try {
           await recordAudit(kv, "skill_extract", "mem::skill-extract", [], {

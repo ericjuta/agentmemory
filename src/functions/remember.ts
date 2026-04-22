@@ -168,11 +168,44 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
         );
         for (const obs of observations) {
           await kv.delete(KV.observations(data.sessionId), obs.id);
+          await kv
+            .delete(KV.retrievalBlocks, retrievalBlockId("observation", obs.id))
+            .catch(() => {});
+          await removeRetrievalBlock(kv, retrievalBlockId("observation", obs.id)).catch(
+            () => {},
+          );
           deleted++;
         }
+        const capsules = await kv.list<{ id: string; sessionId: string }>(KV.turnCapsules);
+        for (const capsule of capsules.filter((item) => item.sessionId === data.sessionId)) {
+          await kv.delete(KV.turnCapsules, capsule.id).catch(() => {});
+          await kv
+            .delete(KV.retrievalBlocks, retrievalBlockId("turn_capsule", capsule.id))
+            .catch(() => {});
+          await removeRetrievalBlock(
+            kv,
+            retrievalBlockId("turn_capsule", capsule.id),
+          ).catch(() => {});
+          deleted++;
+        }
+        await kv.delete(KV.workingSets, data.sessionId).catch(() => {});
+        await kv
+          .delete(KV.retrievalBlocks, retrievalBlockId("working_set", data.sessionId))
+          .catch(() => {});
+        await removeRetrievalBlock(
+          kv,
+          retrievalBlockId("working_set", data.sessionId),
+        ).catch(() => {});
         await kv.delete(KV.sessions, data.sessionId);
         await kv.delete(KV.summaries, data.sessionId);
-        deleted += 2;
+        await kv
+          .delete(KV.retrievalBlocks, retrievalBlockId("session_summary", data.sessionId))
+          .catch(() => {});
+        await removeRetrievalBlock(
+          kv,
+          retrievalBlockId("session_summary", data.sessionId),
+        ).catch(() => {});
+        deleted += 3;
       }
 
       logger.info("Memory forgotten", { deleted });

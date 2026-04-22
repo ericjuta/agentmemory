@@ -24,6 +24,7 @@ import { upsertTurnCapsuleFromCompressed } from "./turn-capsules.js";
 import { Semaphore } from "../state/semaphore.js";
 import type { CompressionTracker } from "../state/compression-tracker.js";
 import { indexCompressedObservation } from "../state/observation-indexing.js";
+import { upsertObservationRetrievalBlock } from "./retrieval-blocks.js";
 
 /** Cap concurrent LLM compression calls to avoid starving the engine. */
 const compressSemaphore = new Semaphore(6);
@@ -158,6 +159,12 @@ export function registerCompressFunction(
             );
 
             await indexCompressedObservation(kv, getSearchIndex(), compressed);
+            const sessionProject =
+              (await kv.get<{ project?: string }>(KV.sessions, data.sessionId).catch(() => null))
+                ?.project || "";
+            if (sessionProject) {
+              await upsertObservationRetrievalBlock(kv, compressed, sessionProject);
+            }
 
             const streamResults = await Promise.allSettled([
               sdk.trigger({

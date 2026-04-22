@@ -29,6 +29,7 @@ Output XML:
 import { getXmlTag, getXmlChildren } from "../prompts/xml.js";
 import { logger } from "../logger.js";
 import { Semaphore } from "../state/semaphore.js";
+import { upsertMemoryRetrievalBlock } from "./retrieval-blocks.js";
 
 const consolidateLock = new Semaphore(1);
 const DEFAULT_MAX_SESSION_SCANS = 25;
@@ -219,6 +220,7 @@ export function registerConsolidateFunction(
               isLatest: true,
             };
             await kv.set(KV.memories, evolved.id, evolved);
+            await upsertMemoryRetrievalBlock(kv, evolved);
             await recordAudit(kv, "evolve", "mem::consolidate", [evolved.id], {
               action: "evolve_memory",
               oldId: existingMatch.id,
@@ -238,6 +240,7 @@ export function registerConsolidateFunction(
               isLatest: true,
             };
             await kv.set(KV.memories, memory.id, memory);
+            await upsertMemoryRetrievalBlock(kv, memory);
             await recordAudit(kv, "remember", "mem::consolidate", [memory.id], {
               action: "create_memory",
               concept,
