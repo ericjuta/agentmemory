@@ -158,6 +158,49 @@ export interface SessionWorkingSet {
   latestHadDecision: boolean;
 }
 
+export type RetrievalBlockSourceType =
+  | "turn_capsule"
+  | "working_set"
+  | "session_summary"
+  | "memory"
+  | "semantic_memory"
+  | "procedural_memory"
+  | "guardrail"
+  | "decision"
+  | "dossier"
+  | "handoff"
+  | "branch_overlay"
+  | "observation"
+  | "profile";
+
+export interface RetrievalBlock {
+  id: string;
+  sourceType: RetrievalBlockSourceType;
+  sourceId: string;
+  project: string;
+  branch?: string;
+  sessionId?: string;
+  turnId?: string;
+  scope: "session" | "branch" | "project" | "global";
+  freshnessLane: "hot" | "warm" | "cold";
+  canonicalText: string;
+  title: string;
+  files: string[];
+  concepts: string[];
+  entities: string[];
+  sourceObservationIds: string[];
+  hadFailure: boolean;
+  hadDecision: boolean;
+  hadAssistantConclusion: boolean;
+  isResumeArtifact: boolean;
+  importance: number;
+  createdAt: string;
+  updatedAt: string;
+  eventAt: string;
+  embeddingModel?: string;
+  embeddingVersion?: string;
+}
+
 export interface HookPayload {
   hookType: HookType;
   sessionId: string;
@@ -213,6 +256,16 @@ export interface SearchResult {
   observation: CompressedObservation;
   score: number;
   sessionId: string;
+}
+
+export interface RetrievalSearchResult {
+  block: RetrievalBlock;
+  score: number;
+  lexicalScore: number;
+  vectorScore: number;
+  graphScore: number;
+  sessionId?: string;
+  observation?: CompressedObservation | null;
 }
 
 export interface ContextBlock {
@@ -405,11 +458,14 @@ export interface HybridSearchResult {
 
 export interface CompactSearchResult {
   obsId: string;
+  blockId?: string;
   sessionId: string;
   title: string;
-  type: ObservationType;
+  type: ObservationType | RetrievalBlockSourceType;
   score: number;
   timestamp: string;
+  sourceType?: RetrievalBlockSourceType;
+  sourceId?: string;
 }
 
 export interface TimelineEntry {

@@ -4,7 +4,7 @@ import { stem } from "./stemmer.js";
 import { getSynonyms } from "./synonyms.js";
 
 interface IndexEntry {
-  obsId: string;
+  id: string;
   sessionId: string;
   termCount: number;
 }
@@ -20,7 +20,26 @@ export class SearchIndex {
   private readonly b = 0.75;
 
   add(obs: CompressedObservation): void {
-    const terms = this.extractTerms(obs);
+    this.addDocument(
+      obs.id,
+      obs.sessionId,
+      [
+        obs.title,
+        obs.subtitle || "",
+        obs.narrative,
+        ...obs.facts,
+        ...obs.concepts,
+        ...obs.files,
+        obs.type,
+      ].join(" "),
+    );
+  }
+
+  addDocument(id: string, sessionId: string, text: string): void {
+    if (this.entries.has(id)) {
+      this.remove(id);
+    }
+    const terms = this.tokenize(text.toLowerCase());
     const termFreq = new Map<string, number>();
     let termCount = 0;
 
@@ -29,19 +48,19 @@ export class SearchIndex {
       termCount++;
     }
 
-    this.entries.set(obs.id, {
-      obsId: obs.id,
-      sessionId: obs.sessionId,
+    this.entries.set(id, {
+      id,
+      sessionId,
       termCount,
     });
-    this.docTermCounts.set(obs.id, termFreq);
+    this.docTermCounts.set(id, termFreq);
     this.totalDocLength += termCount;
 
     for (const term of termFreq.keys()) {
       if (!this.invertedIndex.has(term)) {
         this.invertedIndex.set(term, new Set());
       }
-      this.invertedIndex.get(term)!.add(obs.id);
+      this.invertedIndex.get(term)!.add(id);
     }
 
     this.sortedTerms = null;
@@ -74,6 +93,17 @@ export class SearchIndex {
     query: string,
     limit = 20,
   ): Array<{ obsId: string; sessionId: string; score: number }> {
+    return this.searchDocuments(query, limit).map((result) => ({
+      obsId: result.id,
+      sessionId: result.sessionId,
+      score: result.score,
+    }));
+  }
+
+  searchDocuments(
+    query: string,
+    limit = 20,
+  ): Array<{ id: string; sessionId: string; score: number }> {
     const rawTerms = this.tokenize(query.toLowerCase());
     if (rawTerms.length === 0) return [];
 
@@ -147,9 +177,9 @@ export class SearchIndex {
     }
 
     return Array.from(scores.entries())
-      .map(([obsId, score]) => {
-        const entry = this.entries.get(obsId)!;
-        return { obsId, sessionId: entry.sessionId, score };
+      .map(([id, score]) => {
+        const entry = this.entries.get(id)!;
+        return { id, sessionId: entry.sessionId, score };
       })
       .sort((a, b) => b.score - a.score)
       .slice(0, limit);
@@ -226,19 +256,6 @@ export class SearchIndex {
     } catch {
       return new SearchIndex();
     }
-  }
-
-  private extractTerms(obs: CompressedObservation): string[] {
-    const parts = [
-      obs.title,
-      obs.subtitle || "",
-      obs.narrative,
-      ...obs.facts,
-      ...obs.concepts,
-      ...obs.files,
-      obs.type,
-    ];
-    return this.tokenize(parts.join(" ").toLowerCase());
   }
 
   private tokenize(text: string): string[] {

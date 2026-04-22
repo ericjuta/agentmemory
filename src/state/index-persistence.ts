@@ -12,6 +12,7 @@ export class IndexPersistence {
     private kv: StateKV,
     private bm25: SearchIndex,
     private vector: VectorIndex | null,
+    private scope = KV.bm25Index,
   ) {}
 
   scheduleSave(): void {
@@ -24,9 +25,9 @@ export class IndexPersistence {
       clearTimeout(this.timer);
       this.timer = null;
     }
-    await this.kv.set(KV.bm25Index, "data", this.bm25.serialize());
+    await this.kv.set(this.scope, "data", this.bm25.serialize());
     if (this.vector && this.vector.size > 0) {
-      await this.kv.set(KV.bm25Index, "vectors", this.vector.serialize());
+      await this.kv.set(this.scope, "vectors", this.vector.serialize());
     }
   }
 
@@ -38,14 +39,14 @@ export class IndexPersistence {
     let vector: VectorIndex | null = null;
 
     const bm25Data = await this.kv
-      .get<string>(KV.bm25Index, "data")
+      .get<string>(this.scope, "data")
       .catch(() => null);
     if (bm25Data && typeof bm25Data === "string") {
       bm25 = SearchIndex.deserialize(bm25Data);
     }
 
     const vecData = await this.kv
-      .get<string>(KV.bm25Index, "vectors")
+      .get<string>(this.scope, "vectors")
       .catch(() => null);
     if (vecData && typeof vecData === "string") {
       vector = VectorIndex.deserialize(vecData);

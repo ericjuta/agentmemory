@@ -16,6 +16,7 @@ import type {
 } from "../types.js";
 import { recordAudit } from "./audit.js";
 import { listProjectedBeliefs } from "./beliefs.js";
+import { upsertHandoffRetrievalBlock } from "./retrieval-blocks.js";
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
@@ -379,6 +380,7 @@ export function registerHandoffsFunction(sdk: ISdk, kv: StateKV): void {
       };
 
       await kv.set(KV.handoffPackets, packet.id, packet);
+      await upsertHandoffRetrievalBlock(kv, packet);
       await recordAudit(kv, "handoff_generate", "mem::handoff-generate", [packet.id], {
         scopeType: packet.scopeType,
         scopeId: packet.scopeId,

@@ -23,6 +23,11 @@ import { KV } from "./state/schema.js";
 import { VectorIndex } from "./state/vector-index.js";
 import { HybridSearch } from "./state/hybrid-search.js";
 import { IndexPersistence } from "./state/index-persistence.js";
+import {
+  configureRetrievalBlockIndexingRuntime,
+  getRetrievalSearchIndex,
+  rebuildRetrievalBlockIndex,
+} from "./state/retrieval-block-indexing.js";
 import { registerPrivacyFunction } from "./functions/privacy.js";
 import { registerObserveFunction } from "./functions/observe.js";
 import { registerCompressFunction, getCompressMetrics } from "./functions/compress.js";
@@ -85,6 +90,10 @@ import { registerQueryExpansionFunction } from "./functions/query-expansion.js";
 import { registerTemporalGraphFunctions } from "./functions/temporal-graph.js";
 import { registerRetentionFunctions } from "./functions/retention.js";
 import { registerCompressFileFunction } from "./functions/compress-file.js";
+import {
+  refreshRetrievalBlocksFromState,
+  retrievalBlockId,
+} from "./functions/retrieval-blocks.js";
 import { registerApiTriggers } from "./triggers/api.js";
 import { registerEventTriggers } from "./triggers/events.js";
 import { registerMcpEndpoints } from "./mcp/server.js";
@@ -159,14 +168,25 @@ async function main() {
   const compressionTracker = new CompressionTracker();
 
   const vectorIndex = embeddingProvider ? new VectorIndex() : null;
+  const retrievalVectorIndex = embeddingProvider ? new VectorIndex() : null;
 
   let indexPersistence: IndexPersistence | null = null;
+  let retrievalIndexPersistence: IndexPersistence | null = null;
 
   const onEvict = (obsId: string) => {
     getSearchIndex().remove(obsId);
     vectorIndex?.remove(obsId);
     void kv.delete(KV.embeddings(obsId), "data").catch(() => {});
     indexPersistence?.scheduleSave();
+    void kv
+      .delete(KV.retrievalBlocks, retrievalBlockId("observation", obsId))
+      .catch(() => {});
+    getRetrievalSearchIndex().remove(retrievalBlockId("observation", obsId));
+    retrievalVectorIndex?.remove(retrievalBlockId("observation", obsId));
+    void kv
+      .delete(KV.retrievalBlockEmbeddings(retrievalBlockId("observation", obsId)), "data")
+      .catch(() => {});
+    retrievalIndexPersistence?.scheduleSave();
     // Background graph cleanup - mark nodes stale when all source observations gone
     if (isGraphExtractionEnabled()) {
       pruneGraphForObservation(kv, obsId).catch(() => {});
@@ -324,10 +344,21 @@ async function main() {
   });
 
   indexPersistence = new IndexPersistence(kv, bm25Index, vectorIndex);
+  retrievalIndexPersistence = new IndexPersistence(
+    kv,
+    getRetrievalSearchIndex(),
+    retrievalVectorIndex,
+    KV.retrievalBlockIndex,
+  );
   configureObservationIndexingRuntime({
     embeddingProvider,
     vectorIndex,
     scheduleSave: () => indexPersistence?.scheduleSave(),
+  });
+  configureRetrievalBlockIndexingRuntime({
+    embeddingProvider,
+    vectorIndex: retrievalVectorIndex,
+    scheduleSave: () => retrievalIndexPersistence?.scheduleSave(),
   });
 
   const loaded = await indexPersistence.load().catch((err) => {
@@ -361,6 +392,21 @@ async function main() {
       indexPersistence.scheduleSave();
     }
   }
+
+  const retrievalBlockCount = await refreshRetrievalBlocksFromState(kv).catch((err) => {
+    console.warn(`[agentmemory] Failed to refresh retrieval blocks from state:`, err);
+    return 0;
+  });
+  const rebuiltRetrievalIndexCount = await rebuildRetrievalBlockIndex(kv).catch((err) => {
+    console.warn(`[agentmemory] Failed to rebuild retrieval block index:`, err);
+    return 0;
+  });
+  if (rebuiltRetrievalIndexCount > 0) {
+    retrievalIndexPersistence.scheduleSave();
+  }
+  console.log(
+    `[agentmemory] Retrieval blocks: ${retrievalBlockCount} stored, ${rebuiltRetrievalIndexCount} indexed`,
+  );
 
   console.log(
     `[agentmemory] Ready. ${embeddingProvider ? "Triple-stream (BM25+Vector+Graph)" : "BM25+Graph"} search active.`,

@@ -5,6 +5,11 @@ import { StateKV } from "../state/kv.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
 import { deleteAccessLog } from "./access-tracker.js";
 import { logger } from "../logger.js";
+import {
+  retrievalBlockId,
+  upsertMemoryRetrievalBlock,
+} from "./retrieval-blocks.js";
+import { removeRetrievalBlock } from "../state/retrieval-block-indexing.js";
 
 export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
   sdk.registerFunction("mem::remember", 
@@ -95,6 +100,7 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
           await kv.set(KV.memories, supersededMemory.id, supersededMemory);
         }
         await kv.set(KV.memories, memory.id, memory);
+        await upsertMemoryRetrievalBlock(kv, memory);
 
         if (supersededId) {
           await sdk.trigger({
@@ -126,6 +132,12 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
       if (data.memoryId) {
         await kv.delete(KV.memories, data.memoryId);
         await deleteAccessLog(kv, data.memoryId);
+        await kv
+          .delete(KV.retrievalBlocks, retrievalBlockId("memory", data.memoryId))
+          .catch(() => {});
+        await removeRetrievalBlock(kv, retrievalBlockId("memory", data.memoryId)).catch(
+          () => {},
+        );
         deleted++;
       }
 
@@ -136,6 +148,12 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
       ) {
         for (const obsId of data.observationIds) {
           await kv.delete(KV.observations(data.sessionId), obsId);
+          await kv
+            .delete(KV.retrievalBlocks, retrievalBlockId("observation", obsId))
+            .catch(() => {});
+          await removeRetrievalBlock(kv, retrievalBlockId("observation", obsId)).catch(
+            () => {},
+          );
           deleted++;
         }
       }

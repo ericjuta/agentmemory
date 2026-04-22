@@ -2,6 +2,7 @@
 import type { SessionWorkingSet, TurnCapsule } from "../types.js";
 import { KV } from "../state/schema.js";
 import type { StateKV } from "../state/kv.js";
+import { upsertWorkingSetRetrievalBlock } from "./retrieval-blocks.js";
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
@@ -53,4 +54,5 @@ export async function updateSessionWorkingSet(
   };
 
   await kv.set(KV.workingSets, capsule.sessionId, next);
+  await upsertWorkingSetRetrievalBlock(kv, next);
 }

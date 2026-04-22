@@ -3,6 +3,7 @@ import type { StateKV } from "../state/kv.js";
 import { KV, fingerprintId } from "../state/schema.js";
 import type { DecisionMemory } from "../types.js";
 import { recordAudit } from "./audit.js";
+import { upsertDecisionRetrievalBlock } from "./retrieval-blocks.js";
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
@@ -182,6 +183,7 @@ export function registerDecisionsFunction(sdk: ISdk, kv: StateKV): void {
       }
 
       await kv.set(KV.decisions, record.id, record);
+      await upsertDecisionRetrievalBlock(kv, record);
       await recordAudit(kv, "decision_save", "mem::decision-save", [record.id], {
         project: record.project,
         branch: record.branch,

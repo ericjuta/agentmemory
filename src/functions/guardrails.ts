@@ -3,6 +3,7 @@ import type { StateKV } from "../state/kv.js";
 import { KV, fingerprintId } from "../state/schema.js";
 import type { GuardrailMemory } from "../types.js";
 import { recordAudit } from "./audit.js";
+import { upsertGuardrailRetrievalBlock } from "./retrieval-blocks.js";
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
@@ -227,6 +228,7 @@ export function registerGuardrailsFunction(sdk: ISdk, kv: StateKV): void {
       }
 
       await kv.set(KV.guardrails, guardrail.id, guardrail);
+      await upsertGuardrailRetrievalBlock(kv, guardrail);
       await recordAudit(kv, "guardrail_save", "mem::guardrail-save", [guardrail.id], {
         scopeType: guardrail.scopeType,
         scopeId: guardrail.scopeId,

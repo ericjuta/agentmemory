@@ -8,6 +8,7 @@ import { KV } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
 import { recordAudit } from "./audit.js";
 import { logger } from "../logger.js";
+import { upsertProfileRetrievalBlock } from "./retrieval-blocks.js";
 
 export function registerProfileFunction(sdk: ISdk, kv: StateKV): void {
   sdk.registerFunction("mem::profile", 
@@ -110,6 +111,7 @@ export function registerProfileFunction(sdk: ISdk, kv: StateKV): void {
       };
 
       await kv.set(KV.profiles, project, profile);
+      await upsertProfileRetrievalBlock(kv, profile);
       await recordAudit(kv, "share", "mem::profile", [project], {
         sessionCount: projectSessions.length,
         totalObservations: totalObs,

@@ -13,6 +13,7 @@ import type {
 import { recordAudit } from "./audit.js";
 import { listScopedDecisions } from "./decisions.js";
 import { listScopedGuardrails } from "./guardrails.js";
+import { upsertDossierRetrievalBlock } from "./retrieval-blocks.js";
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
@@ -198,6 +199,7 @@ export async function refreshComponentDossier(
   dossier.lastRefreshedAt = now;
 
   await kv.set(KV.componentDossiers, dossier.id, dossier);
+  await upsertDossierRetrievalBlock(kv, dossier);
   return dossier;
 }
 
