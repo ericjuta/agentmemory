@@ -5,6 +5,7 @@ vi.mock("../src/logger.js", () => ({
 }));
 
 import { registerSmartSearchFunction } from "../src/functions/smart-search.js";
+import { KV } from "../src/state/schema.js";
 import type {
   CompressedObservation,
   HybridSearchResult,
@@ -192,5 +193,48 @@ describe("Smart Search Function", () => {
       count: number;
     } | null;
     expect(log?.count).toBe(1);
+  });
+
+  it("falls back to live state when retrieval block persistence fails", async () => {
+    const sdk = mockSdk();
+    const baseKv = mockKV();
+    const session: Session = {
+      id: "ses_fallback",
+      project: "my-project",
+      cwd: "/tmp",
+      startedAt: "2026-02-01T00:00:00Z",
+      status: "completed",
+      observationCount: 1,
+    };
+    const obs = makeObs({
+      id: "obs_fallback",
+      sessionId: session.id,
+      title: "Auth recovery",
+      narrative: "Recovered search from raw state without persisted retrieval blocks.",
+      importance: 9,
+    });
+    await baseKv.set(KV.sessions, session.id, session);
+    await baseKv.set(KV.observations(session.id), obs.id, obs);
+
+    const kv = {
+      ...baseKv,
+      set: async <T>(scope: string, key: string, data: T): Promise<T> => {
+        if (scope === KV.retrievalBlocks) {
+          throw new Error("retrieval block persistence disabled");
+        }
+        return baseKv.set(scope, key, data);
+      },
+    };
+
+    registerSmartSearchFunction(sdk as never, kv as never);
+
+    const result = (await sdk.trigger("mem::smart-search", {
+      query: "auth recovery",
+      project: "my-project",
+    })) as { mode: string; results: CompactSearchResult[] };
+
+    expect(result.mode).toBe("compact");
+    expect(result.results[0]?.obsId).toBe("obs_fallback");
+    expect(result.results[0]?.title).toContain("Auth recovery");
   });
 });

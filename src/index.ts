@@ -26,7 +26,6 @@ import { IndexPersistence } from "./state/index-persistence.js";
 import {
   configureRetrievalBlockIndexingRuntime,
   getRetrievalSearchIndex,
-  rebuildRetrievalBlockIndex,
 } from "./state/retrieval-block-indexing.js";
 import { registerPrivacyFunction } from "./functions/privacy.js";
 import { registerObserveFunction } from "./functions/observe.js";
@@ -91,7 +90,6 @@ import { registerTemporalGraphFunctions } from "./functions/temporal-graph.js";
 import { registerRetentionFunctions } from "./functions/retention.js";
 import { registerCompressFileFunction } from "./functions/compress-file.js";
 import {
-  refreshRetrievalBlocksFromState,
   retrievalBlockId,
 } from "./functions/retrieval-blocks.js";
 import { registerApiTriggers } from "./triggers/api.js";
@@ -377,6 +375,22 @@ async function main() {
       `[agentmemory] Loaded persisted vector index (${vectorIndex.size} vectors)`,
     );
   }
+  const loadedRetrieval = await retrievalIndexPersistence.load().catch((err) => {
+    console.warn(`[agentmemory] Failed to load persisted retrieval index:`, err);
+    return null;
+  });
+  if (loadedRetrieval?.bm25 && loadedRetrieval.bm25.size > 0) {
+    getRetrievalSearchIndex().restoreFrom(loadedRetrieval.bm25);
+    console.log(
+      `[agentmemory] Loaded persisted retrieval BM25 index (${getRetrievalSearchIndex().size} docs)`,
+    );
+  }
+  if (loadedRetrieval?.vector && retrievalVectorIndex && loadedRetrieval.vector.size > 0) {
+    retrievalVectorIndex.restoreFrom(loadedRetrieval.vector);
+    console.log(
+      `[agentmemory] Loaded persisted retrieval vector index (${retrievalVectorIndex.size} vectors)`,
+    );
+  }
 
   const needsRebuild = bm25Index.size === 0;
 
@@ -393,19 +407,9 @@ async function main() {
     }
   }
 
-  const retrievalBlockCount = await refreshRetrievalBlocksFromState(kv).catch((err) => {
-    console.warn(`[agentmemory] Failed to refresh retrieval blocks from state:`, err);
-    return 0;
-  });
-  const rebuiltRetrievalIndexCount = await rebuildRetrievalBlockIndex(kv).catch((err) => {
-    console.warn(`[agentmemory] Failed to rebuild retrieval block index:`, err);
-    return 0;
-  });
-  if (rebuiltRetrievalIndexCount > 0) {
-    retrievalIndexPersistence.scheduleSave();
-  }
+  const retrievalBlockCount = (await kv.list(KV.retrievalBlocks).catch(() => [])).length;
   console.log(
-    `[agentmemory] Retrieval blocks: ${retrievalBlockCount} stored, ${rebuiltRetrievalIndexCount} indexed`,
+    `[agentmemory] Retrieval blocks: ${retrievalBlockCount} stored, ${getRetrievalSearchIndex().size} indexed`,
   );
 
   console.log(

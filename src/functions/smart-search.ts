@@ -9,7 +9,10 @@ import type { StateKV } from "../state/kv.js";
 import { recordAccessBatch } from "./access-tracker.js";
 import { logger } from "../logger.js";
 import { retrieveRelevantBlocks } from "./retrieval-engine.js";
-import { refreshRetrievalBlocksFromState } from "./retrieval-blocks.js";
+import {
+  collectRetrievalBlocksFromState,
+  refreshRetrievalBlocksFromState,
+} from "./retrieval-blocks.js";
 
 function toCompact(block: RetrievalBlock, score: number): CompactSearchResult {
   const legacyId = block.sourceType === "observation" ? block.sourceId : block.id;
@@ -51,6 +54,9 @@ export function registerSmartSearchFunction(
         if (allBlocks.length === 0) {
           await refreshRetrievalBlocksFromState(kv).catch(() => {});
           allBlocks = await kv.list<RetrievalBlock>(KV.retrievalBlocks).catch(() => []);
+        }
+        if (allBlocks.length === 0) {
+          allBlocks = await collectRetrievalBlocksFromState(kv).catch(() => []);
         }
         const expanded = await Promise.all(
           requested.map(async ({ id, sessionId }) => {

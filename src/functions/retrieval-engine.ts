@@ -10,13 +10,18 @@ import type {
 import { KV } from "../state/schema.js";
 import type { StateKV } from "../state/kv.js";
 import {
+  buildRetrievalBlockLexicalText,
   getRetrievalBlockIndexingRuntime,
   getRetrievalSearchIndex,
   getRetrievalVectorIndex,
 } from "../state/retrieval-block-indexing.js";
+import { SearchIndex } from "../state/search-index.js";
 import { GraphRetrieval } from "./graph-retrieval.js";
 import { extractEntitiesFromQuery } from "./query-expansion.js";
-import { refreshRetrievalBlocksFromState } from "./retrieval-blocks.js";
+import {
+  collectRetrievalBlocksFromState,
+  refreshRetrievalBlocksFromState,
+} from "./retrieval-blocks.js";
 
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 3);
@@ -244,6 +249,14 @@ export async function retrieveRelevantBlocks(
     await refreshRetrievalBlocksFromState(kv).catch(() => {});
     allBlocks = await kv.list<RetrievalBlock>(KV.retrievalBlocks).catch(() => []);
   }
+  if (
+    allBlocks.length === 0 ||
+    !allBlocks.some(
+      (block) => block.project === query.project || block.project === "global",
+    )
+  ) {
+    allBlocks = await collectRetrievalBlocksFromState(kv).catch(() => []);
+  }
   const blocks = allBlocks
     .filter((block) =>
       query.project
@@ -280,7 +293,18 @@ export async function retrieveRelevantBlocks(
   ]).join(" ");
   const lexicalScores = new Map<string, number>();
   if (lexicalQuery.trim()) {
-    const lexicalResults = getRetrievalSearchIndex().searchDocuments(lexicalQuery, 120);
+    let lexicalResults = getRetrievalSearchIndex().searchDocuments(lexicalQuery, 120);
+    if (blocks.length > 0 && lexicalResults.length === 0) {
+      const fallbackIndex = new SearchIndex();
+      for (const block of blocks) {
+        fallbackIndex.addDocument(
+          block.id,
+          block.sessionId || block.project,
+          buildRetrievalBlockLexicalText(block),
+        );
+      }
+      lexicalResults = fallbackIndex.searchDocuments(lexicalQuery, 120);
+    }
     const maxLexical = lexicalResults[0]?.score || 0;
     for (const result of lexicalResults) {
       candidateIds.add(result.id);

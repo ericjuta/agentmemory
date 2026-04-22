@@ -800,9 +800,9 @@ async function runSequentially<T>(
   }
 }
 
-export async function refreshRetrievalBlocksFromState(
+export async function collectRetrievalBlocksFromState(
   kv: StateKV,
-): Promise<number> {
+): Promise<RetrievalBlock[]> {
   const sessions = await kv.list<Session>(KV.sessions).catch(() => []);
   const turnCapsules = await kv.list<TurnCapsule>(KV.turnCapsules).catch(() => []);
   const workingSets = await kv.list<SessionWorkingSet>(KV.workingSets).catch(() => []);
@@ -871,6 +871,15 @@ export async function refreshRetrievalBlocksFromState(
       }
     }
   }
+
+  return [...blocks.values()];
+}
+
+export async function refreshRetrievalBlocksFromState(
+  kv: StateKV,
+): Promise<number> {
+  const nextBlocks = await collectRetrievalBlocksFromState(kv);
+  const blocks = new Map(nextBlocks.map((block) => [block.id, block] as const));
 
   const existing = await kv.list<RetrievalBlock>(KV.retrievalBlocks).catch(() => []);
   const existingById = new Map(existing.map((block) => [block.id, block] as const));
