@@ -205,6 +205,15 @@ export interface RetrievalBlock {
   embeddingVersion?: string;
 }
 
+export interface RetrievalBlockRetryEntry {
+  blockId: string;
+  sourceType: RetrievalBlockSourceType;
+  retries: number;
+  firstFailedAt: string;
+  lastFailedAt: string;
+  lastError: string;
+}
+
 export interface HookPayload {
   hookType: HookType;
   sessionId: string;

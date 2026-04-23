@@ -1,4 +1,8 @@
-import type { EmbeddingProvider, RetrievalBlock } from "../types.js";
+import type {
+  EmbeddingProvider,
+  RetrievalBlock,
+  RetrievalBlockRetryEntry,
+} from "../types.js";
 import { KV, fingerprintId } from "./schema.js";
 import type { StateKV } from "./kv.js";
 import { SearchIndex } from "./search-index.js";
@@ -11,6 +15,12 @@ export interface StoredRetrievalBlockEmbedding {
   textFingerprint: string;
   embedding: string;
   updatedAt: string;
+}
+
+export interface RetrievalBlockIndexResult {
+  success: boolean;
+  retriable: boolean;
+  error?: string;
 }
 
 type RetrievalIndexingRuntime = {
@@ -35,6 +45,57 @@ function base64ToFloat32(b64: string): Float32Array {
   const buf = Buffer.from(b64, "base64");
   const bytes = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
   return new Float32Array(bytes);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isRetriableRetrievalBlockIndexingError(message: string): boolean {
+  const normalized = message.toLowerCase();
+  if (
+    normalized.includes("gemini embedding failed (429)") ||
+    normalized.includes("resource_exhausted")
+  ) {
+    return true;
+  }
+  if (
+    normalized.includes("statekv") &&
+    (normalized.includes("timed out") || normalized.includes("temporarily unavailable"))
+  ) {
+    return true;
+  }
+  return (
+    normalized.includes("invocation timeout") &&
+    /state::(set|list|get|update|delete)/.test(normalized)
+  );
+}
+
+async function queueRetrievalBlockRetry(
+  kv: StateKV,
+  block: RetrievalBlock,
+  lastError: string,
+): Promise<void> {
+  const now = new Date().toISOString();
+  const existing = await kv
+    .get<RetrievalBlockRetryEntry>(KV.retrievalBlockRetry, block.id)
+    .catch(() => null);
+  const entry: RetrievalBlockRetryEntry = {
+    blockId: block.id,
+    sourceType: block.sourceType,
+    retries: existing?.retries ?? 0,
+    firstFailedAt: existing?.firstFailedAt ?? now,
+    lastFailedAt: now,
+    lastError,
+  };
+  await kv.set(KV.retrievalBlockRetry, block.id, entry).catch((queueError) => {
+    logger.warn("Failed to queue retrieval block retry", {
+      blockId: block.id,
+      sourceType: block.sourceType,
+      error: errorMessage(queueError),
+      originalError: lastError,
+    });
+  });
 }
 
 export function configureRetrievalBlockIndexingRuntime(
@@ -134,18 +195,34 @@ async function syncRetrievalBlockEmbedding(
 export async function indexRetrievalBlock(
   kv: StateKV,
   block: RetrievalBlock,
-  options?: { scheduleSave?: boolean },
-): Promise<void> {
+  options?: { scheduleSave?: boolean; queueRetry?: boolean },
+): Promise<RetrievalBlockIndexResult> {
   const bm25 = getRetrievalSearchIndex();
   bm25.addDocument(block.id, block.sessionId || block.project, buildRetrievalBlockLexicalText(block));
   try {
     await syncRetrievalBlockEmbedding(kv, block);
+    await Promise.resolve(kv.delete(KV.retrievalBlockRetry, block.id)).catch(() => {});
+    return { success: true, retriable: false };
   } catch (err) {
+    const message = errorMessage(err);
+    const retriable = isRetriableRetrievalBlockIndexingError(message);
+    if (retriable && options?.queueRetry !== false) {
+      await queueRetrievalBlockRetry(kv, block, message);
+    } else {
+      await Promise.resolve(kv.delete(KV.retrievalBlockRetry, block.id)).catch(() => {});
+    }
     logger.warn("Failed to index retrieval block embedding", {
       blockId: block.id,
       sourceType: block.sourceType,
-      error: err instanceof Error ? err.message : String(err),
+      error: message,
+      retriable,
+      queuedRetry: retriable && options?.queueRetry !== false,
     });
+    return {
+      success: false,
+      retriable,
+      error: message,
+    };
   } finally {
     if (options?.scheduleSave !== false) {
       runtime.scheduleSave?.();
@@ -160,7 +237,8 @@ export async function removeRetrievalBlock(
 ): Promise<void> {
   getRetrievalSearchIndex().remove(blockId);
   runtime.vectorIndex?.remove(blockId);
-  await kv.delete(KV.retrievalBlockEmbeddings(blockId), "data").catch(() => {});
+  await Promise.resolve(kv.delete(KV.retrievalBlockEmbeddings(blockId), "data")).catch(() => {});
+  await Promise.resolve(kv.delete(KV.retrievalBlockRetry, blockId)).catch(() => {});
   if (options?.scheduleSave !== false) {
     runtime.scheduleSave?.();
   }

@@ -93,6 +93,7 @@ import {
   deleteStoredRetrievalBlock,
   retrievalBlockId,
 } from "./functions/retrieval-blocks.js";
+import { registerRetrievalBlockRetryFunction } from "./functions/retrieval-block-retry.js";
 import { registerApiTriggers } from "./triggers/api.js";
 import { registerEventTriggers } from "./triggers/events.js";
 import { registerMcpEndpoints } from "./mcp/server.js";
@@ -223,6 +224,7 @@ async function main() {
   registerAutoForgetFunction(sdk, kv, onEvict);
   registerExportImportFunction(sdk, kv);
   registerEnrichFunction(sdk, kv);
+  registerRetrievalBlockRetryFunction(sdk, kv);
 
   const claudeBridgeConfig = loadClaudeBridgeConfig();
   if (claudeBridgeConfig.enabled) {
@@ -362,6 +364,7 @@ async function main() {
   configureRetrievalBlockIndexingRuntime({
     embeddingProvider,
     vectorIndex: retrievalVectorIndex,
+    scheduleSave: () => retrievalIndexPersistence?.scheduleSave(),
   });
 
   const loaded = await indexPersistence.load().catch((err) => {
@@ -533,6 +536,22 @@ async function main() {
     console.log(`[agentmemory] Compress retry: enabled (every 5m, adaptive)`);
   }
 
+  let retrievalBlockRetryHandle: AdaptiveTimerHandle | undefined;
+  if (process.env.RETRIEVAL_BLOCK_RETRY_ENABLED !== "false") {
+    retrievalBlockRetryHandle = createAdaptiveTimer(
+      async () =>
+        runMaintenanceTask("Retrieval block retry", async () => {
+          const result = await sdk.trigger<
+            Record<string, never>,
+            { retried?: number; removed?: number; succeeded?: number }
+          >({ function_id: "mem::retrieval-block-retry", payload: {} });
+          return (result?.retried || 0) + (result?.removed || 0) + (result?.succeeded || 0);
+        }),
+      { baseMs: 300_000, minMs: 60_000, maxMs: 900_000, label: "Retrieval block retry" },
+    );
+    console.log(`[agentmemory] Retrieval block retry: enabled (every 5m, adaptive)`);
+  }
+
   let evictionHandle: AdaptiveTimerHandle | undefined;
   if (process.env.EVICTION_ENABLED !== "false") {
     evictionHandle = createAdaptiveTimer(
@@ -615,6 +634,7 @@ async function main() {
     autoForgetHandle?.stop();
     consolidationHandle?.stop();
     compressRetryHandle?.stop();
+    retrievalBlockRetryHandle?.stop();
     evictionHandle?.stop();
     indexVerifyHandle?.stop();
     dedupMap.stop();
