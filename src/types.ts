@@ -80,6 +80,8 @@ export interface Memory {
   content: string;
   concepts: string[];
   files: string[];
+  project?: string;
+  branch?: string;
   sessionIds: string[];
   strength: number;
   version: number;

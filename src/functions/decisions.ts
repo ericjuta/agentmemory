@@ -3,6 +3,7 @@ import type { StateKV } from "../state/kv.js";
 import { KV, fingerprintId } from "../state/schema.js";
 import type { DecisionMemory } from "../types.js";
 import { recordAudit } from "./audit.js";
+import { filePathMatches } from "./file-path-match.js";
 import { upsertDecisionRetrievalBlock } from "./retrieval-blocks.js";
 
 function uniqueStrings(values: string[]): string[] {
@@ -76,7 +77,9 @@ export async function listScopedDecisions(
   }
   if (filter.filePath) {
     decisions = decisions.filter((decision) =>
-      decision.relatedFiles.includes(filter.filePath as string),
+      decision.relatedFiles.some((filePath) =>
+        filePathMatches(filePath, filter.filePath as string),
+      ),
     );
   }
   if (filter.concept) {

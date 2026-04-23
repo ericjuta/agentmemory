@@ -12,7 +12,9 @@ import type {
 } from "../types.js";
 import { recordAudit } from "./audit.js";
 import { listScopedDecisions } from "./decisions.js";
+import { basename, filePathMatches } from "./file-path-match.js";
 import { listScopedGuardrails } from "./guardrails.js";
+import { loadScopedRetrievalBlocks } from "./retrieval-block-scope-index.js";
 import { upsertDossierRetrievalBlock } from "./retrieval-blocks.js";
 
 function uniqueStrings(values: string[]): string[] {
@@ -37,11 +39,6 @@ function branchMatches(
   return !value.branch || value.branch === requested;
 }
 
-function basename(filePath: string): string {
-  const parts = filePath.split("/");
-  return parts[parts.length - 1] || filePath;
-}
-
 async function projectObservations(
   kv: StateKV,
   project: string,
@@ -58,22 +55,63 @@ async function projectObservations(
   return sortByUpdatedAt(buckets.flatMap((bucket) => bucket));
 }
 
+async function relevantProjectObservations(
+  kv: StateKV,
+  project: string,
+  filePath: string,
+  branch?: string,
+): Promise<CompressedObservation[]> {
+  const scoped = await loadScopedRetrievalBlocks(kv, {
+    project,
+    branch,
+  }).catch(() => ({ blocks: [], complete: false }));
+
+  if (scoped.complete) {
+    const matchedBlocks = scoped.blocks.filter(
+      (block) =>
+        block.sourceType === "observation" &&
+        block.sessionId &&
+        block.files.some((candidate) => filePathMatches(candidate, filePath)),
+    );
+    const observations = await Promise.all(
+      matchedBlocks.map((block) =>
+        kv
+          .get<CompressedObservation>(
+            KV.observations(block.sessionId!),
+            block.sourceId,
+          )
+          .catch(() => null),
+      ),
+    );
+    return sortByUpdatedAt(
+      observations.filter(
+        (observation): observation is CompressedObservation => observation !== null,
+      ),
+    );
+  }
+
+  return (await projectObservations(kv, project, branch)).filter((observation) =>
+    observation.files.some((candidate) => filePathMatches(candidate, filePath)),
+  );
+}
+
 function buildSummary(
   filePath: string,
   observations: CompressedObservation[],
   insights: Insight[],
   decisions: DecisionMemory[],
+  guardrails: { explanation: string }[],
 ): string {
-  const latestObservation = observations[0];
-  const parts = [
-    latestObservation?.narrative || "",
-    insights[0]?.content || "",
-    decisions[0]?.decision || "",
-  ].filter(Boolean);
+  const parts = uniqueStrings([
+    observations[0]?.narrative || "",
+    guardrails[0]?.explanation ? `Risk: ${guardrails[0].explanation}` : "",
+    decisions[0]?.decision ? `Decision: ${decisions[0].decision}` : "",
+    insights[0]?.content ? `Insight: ${insights[0].content}` : "",
+  ]).slice(0, 3);
   if (parts.length === 0) {
     return `${basename(filePath)} has no synthesized dossier context yet.`;
   }
-  return parts[0];
+  return parts.join(" ");
 }
 
 export async function refreshComponentDossier(
@@ -81,32 +119,30 @@ export async function refreshComponentDossier(
   input: { project: string; filePath: string; branch?: string },
 ): Promise<ComponentDossier> {
   const { project, filePath, branch } = input;
-  const observations = (await projectObservations(kv, project, branch)).filter((observation) =>
-    observation.files.includes(filePath),
-  );
+  const observations = await relevantProjectObservations(kv, project, filePath, branch);
   const lessons = sortByUpdatedAt(
     (await kv.list<Lesson>(KV.lessons).catch(() => []))
       .filter((lesson) => !lesson.deleted)
       .filter((lesson) => !lesson.project || lesson.project === project),
   ).filter((lesson) => {
     const text = `${lesson.content} ${lesson.context}`.toLowerCase();
-    return text.includes(filePath.toLowerCase()) || text.includes(basename(filePath).toLowerCase());
+    return (
+      text.includes(filePath.toLowerCase()) ||
+      text.includes(basename(filePath).toLowerCase())
+    );
   });
   const insights = sortByUpdatedAt(
     (await kv.list<Insight>(KV.insights).catch(() => []))
       .filter((insight) => !insight.deleted)
       .filter((insight) => !insight.project || insight.project === project),
   );
-  const relatedInsights = (() => {
-    const matching = insights.filter((insight) => {
-      const text = `${insight.title} ${insight.content}`.toLowerCase();
-      return (
-        text.includes(filePath.toLowerCase()) ||
-        text.includes(basename(filePath).toLowerCase())
-      );
-    });
-    return matching.length > 0 ? matching : insights.slice(0, 3);
-  })();
+  const relatedInsights = insights.filter((insight) => {
+    const text = `${insight.title} ${insight.content}`.toLowerCase();
+    return (
+      text.includes(filePath.toLowerCase()) ||
+      text.includes(basename(filePath).toLowerCase())
+    );
+  });
   const guardrails = await listScopedGuardrails(kv, {
     project,
     branch,
@@ -182,12 +218,20 @@ export async function refreshComponentDossier(
 
   dossier.updatedAt = now;
   dossier.branch = branch;
-  dossier.summary = buildSummary(filePath, observations, relatedInsights, decisions);
+  dossier.summary = buildSummary(
+    filePath,
+    observations,
+    relatedInsights,
+    decisions,
+    guardrails,
+  );
   dossier.currentState =
-    observations[0]?.narrative ||
-    relatedInsights[0]?.content ||
-    decisions[0]?.rationale ||
-    `No recent observation state recorded for ${basename(filePath)}.`;
+    uniqueStrings([
+      observations[0]?.narrative || "",
+      guardrails[0]?.explanation ? `Risk: ${guardrails[0].explanation}` : "",
+      decisions[0]?.rationale ? `Decision rationale: ${decisions[0].rationale}` : "",
+      relatedInsights[0]?.content || "",
+    ])[0] || `No recent observation state recorded for ${basename(filePath)}.`;
   dossier.keyFacts = keyFacts;
   dossier.activeRisks = activeRisks;
   dossier.openQuestions = openQuestions;

@@ -3,6 +3,7 @@ import type { StateKV } from "../state/kv.js";
 import { KV, fingerprintId } from "../state/schema.js";
 import type { GuardrailMemory } from "../types.js";
 import { recordAudit } from "./audit.js";
+import { filePathMatches } from "./file-path-match.js";
 import { upsertGuardrailRetrievalBlock } from "./retrieval-blocks.js";
 
 function uniqueStrings(values: string[]): string[] {
@@ -103,7 +104,9 @@ export async function listScopedGuardrails(
   }
   if (filter.filePath) {
     guardrails = guardrails.filter((guardrail) =>
-      guardrail.relatedFiles.includes(filter.filePath as string),
+      guardrail.relatedFiles.some((filePath) =>
+        filePathMatches(filePath, filter.filePath as string),
+      ),
     );
   }
   if (filter.concept) {

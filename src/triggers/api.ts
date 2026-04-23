@@ -1128,6 +1128,9 @@ export function registerApiTriggers(
         type?: string;
         concepts?: string[];
         files?: string[];
+        project?: string;
+        branch?: string;
+        sessionId?: string;
       }>,
     ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
@@ -1138,6 +1141,18 @@ export function registerApiTriggers(
         !req.body.content.trim()
       ) {
         return { status_code: 400, body: { error: "content is required" } };
+      }
+      if (
+        (req.body.project !== undefined && typeof req.body.project !== "string") ||
+        (req.body.branch !== undefined && typeof req.body.branch !== "string") ||
+        (req.body.sessionId !== undefined && typeof req.body.sessionId !== "string")
+      ) {
+        return {
+          status_code: 400,
+          body: {
+            error: "project, branch, and sessionId must be strings when provided",
+          },
+        };
       }
       const result = await sdk.trigger({ function_id: "mem::remember", payload: req.body });
       return { status_code: 201, body: result };

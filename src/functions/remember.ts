@@ -1,5 +1,5 @@
 import { TriggerAction, type ISdk } from "iii-sdk";
-import type { Memory } from "../types.js";
+import type { Memory, Session } from "../types.js";
 import { KV, generateId, jaccardSimilarity } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
@@ -18,6 +18,9 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
       type?: string;
       concepts?: string[];
       files?: string[];
+      project?: string;
+      branch?: string;
+      sessionId?: string;
       ttlDays?: number;
       sourceObservationIds?: string[];
     }) => {
@@ -52,6 +55,12 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
       const now = new Date().toISOString();
 
       return withKeyedLock("mem:remember", async () => {
+        const session =
+          data.sessionId
+            ? await kv.get<Session>(KV.sessions, data.sessionId).catch(() => null)
+            : null;
+        const project = data.project?.trim() || session?.project;
+        const branch = data.branch?.trim() || session?.branch;
         const existingMemories = await kv.list<Memory>(KV.memories);
         let supersededId: string | undefined;
         let supersededVersion = 1;
@@ -59,6 +68,8 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
         const lowerContent = data.content.toLowerCase();
         for (const existing of existingMemories) {
           if (existing.isLatest === false) continue;
+          if ((existing.project || "") !== (project || "")) continue;
+          if ((existing.branch || "") !== (branch || "")) continue;
           const similarity = jaccardSimilarity(
             lowerContent,
             existing.content.toLowerCase(),
@@ -80,7 +91,9 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
           content: data.content,
           concepts: data.concepts || [],
           files: data.files || [],
-          sessionIds: [],
+          project,
+          branch,
+          sessionIds: data.sessionId ? [data.sessionId] : [],
           strength: 7,
           version: supersededId ? supersededVersion + 1 : 1,
           parentId: supersededId,
