@@ -16,7 +16,10 @@ import { isAutoCompressEnabled } from "../config.js";
 import { buildSyntheticCompression } from "./compress-synthetic.js";
 import { getSearchIndex } from "./search.js";
 import { logger } from "../logger.js";
-import { upsertTurnCapsuleFromRaw } from "./turn-capsules.js";
+import {
+  upsertTurnCapsuleFromCompressed,
+  upsertTurnCapsuleFromRaw,
+} from "./turn-capsules.js";
 import type { CompressionTracker } from "../state/compression-tracker.js";
 import { indexCompressedObservation } from "../state/observation-indexing.js";
 import { upsertObservationRetrievalBlock } from "./retrieval-blocks.js";
@@ -540,6 +543,7 @@ export function registerObserveFunction(
           );
           await indexCompressedObservation(kv, getSearchIndex(), storedSynthetic);
           await upsertObservationRetrievalBlock(kv, storedSynthetic, payload.project);
+          await upsertTurnCapsuleFromCompressed(kv, storedSynthetic);
           bestEffortTrigger(sdk, "stream::set", {
             stream_name: STREAM.name,
             group_id: STREAM.group(payload.sessionId),

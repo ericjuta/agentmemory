@@ -225,4 +225,67 @@ describe("observe freshness plumbing", () => {
       persistenceClass: "diagnostics_only",
     });
   });
+
+  it("feeds synthetic compression signals back into the current turn capsule", async () => {
+    const previousAutoCompress = process.env["AGENTMEMORY_AUTO_COMPRESS"];
+    process.env["AGENTMEMORY_AUTO_COMPRESS"] = "false";
+
+    const sdk = mockSdk();
+    const kv = mockKV();
+    try {
+      registerObserveFunction(sdk as never, kv as never);
+
+      await sdk.trigger("mem::observe", {
+        hookType: "prompt_submit",
+        sessionId: "session-1",
+        project: "/project",
+        cwd: "/project",
+        timestamp: "2026-03-29T12:00:00.000Z",
+        data: {
+          turn_id: "turn-3",
+          prompt: "Tighten auth write path",
+        },
+      });
+
+      await sdk.trigger("mem::observe", {
+        hookType: "post_tool_use",
+        sessionId: "session-1",
+        project: "/project",
+        cwd: "/project",
+        timestamp: "2026-03-29T12:00:02.000Z",
+        data: {
+          turn_id: "turn-3",
+          tool_name: "Edit",
+          tool_input: {
+            file_path: "/project/src/observe.ts",
+            query: "auth write path",
+          },
+          tool_output: {
+            changed_files: ["/project/src/auth.ts"],
+            status: "ok",
+          },
+        },
+      });
+
+      const stored = await kv.list<any>(KV.observations("session-1"));
+      const synthetic = stored.find((observation) => observation.type === "file_edit");
+      expect(synthetic?.files).toContain("/project/src/auth.ts");
+      expect(synthetic?.concepts).toContain("auth");
+      expect(synthetic?.facts.some((fact: string) => fact.includes("status"))).toBe(true);
+
+      const capsule = await kv.get<any>(KV.turnCapsules, "session-1:turn-3");
+      expect(capsule.files).toContain("/project/src/auth.ts");
+      expect(capsule.concepts).toContain("auth");
+      expect(capsule.maxImportance).toBeGreaterThanOrEqual(6);
+
+      const workingSet = await kv.get<any>(KV.workingSets, "session-1");
+      expect(workingSet.latestImportantFiles).toContain("/project/src/auth.ts");
+    } finally {
+      if (previousAutoCompress === undefined) {
+        delete process.env["AGENTMEMORY_AUTO_COMPRESS"];
+      } else {
+        process.env["AGENTMEMORY_AUTO_COMPRESS"] = previousAutoCompress;
+      }
+    }
+  });
 });

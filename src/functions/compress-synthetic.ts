@@ -3,6 +3,12 @@ import type {
   CompressedObservation,
   ObservationType,
 } from "../types.js";
+import {
+  extractObservationConcepts,
+  extractObservationFacts,
+  extractObservationFiles,
+  scoreSyntheticObservation,
+} from "./observation-signals.js";
 
 // Zero-LLM compression path. Converts a RawObservation into a
 // CompressedObservation using only heuristics — no Claude call, no token
@@ -41,24 +47,6 @@ function inferType(
   return "other";
 }
 
-function extractFiles(input: unknown): string[] {
-  if (!input || typeof input !== "object") return [];
-  const o = input as Record<string, unknown>;
-  const out = new Set<string>();
-  for (const key of [
-    "file_path",
-    "filepath",
-    "path",
-    "filePath",
-    "file",
-    "pattern",
-  ]) {
-    const v = o[key];
-    if (typeof v === "string" && v.length > 0 && v.length < 512) out.add(v);
-  }
-  return [...out];
-}
-
 function stringifyForNarrative(v: unknown): string {
   if (v == null) return "";
   if (typeof v === "string") return v;
@@ -80,6 +68,25 @@ export function buildSyntheticCompression(
   const inputStr = stringifyForNarrative(raw.toolInput);
   const outputStr = stringifyForNarrative(raw.toolOutput);
   const promptStr = raw.userPrompt ?? "";
+  const files = extractObservationFiles(raw.toolInput, raw.toolOutput, raw.raw);
+  const concepts = extractObservationConcepts(
+    raw.toolInput,
+    raw.toolOutput,
+    raw.raw,
+    { prompt: raw.userPrompt, assistant_text: raw.assistantResponse },
+  );
+  const facts = extractObservationFacts(
+    raw.toolInput,
+    raw.toolOutput,
+    raw.raw,
+    { prompt: raw.userPrompt, assistant_text: raw.assistantResponse },
+  );
+  const type = inferType(toolName, raw.hookType);
+  const score = scoreSyntheticObservation(raw, type, {
+    files,
+    concepts,
+    facts,
+  });
 
   const narrativeParts = [promptStr, inputStr, outputStr].filter(
     (s) => s.length > 0,
@@ -95,14 +102,14 @@ export function buildSyntheticCompression(
     sourceTimestamp: raw.sourceTimestamp,
     capabilities: raw.capabilities,
     persistenceClass: raw.persistenceClass,
-    type: inferType(toolName, raw.hookType),
+    type,
     title: truncate(toolName || "observation", 80),
     subtitle: inputStr ? truncate(inputStr, 120) : undefined,
-    facts: [],
+    facts,
     narrative: truncate(narrativeParts.join(" | "), 400),
-    concepts: [],
-    files: extractFiles(raw.toolInput),
-    importance: 5,
-    confidence: 0.3,
+    concepts,
+    files,
+    importance: score.importance,
+    confidence: score.confidence,
   };
 }

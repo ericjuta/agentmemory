@@ -92,7 +92,7 @@ describe("turn capsules", () => {
 
     const capsule = await kv.get<any>(KV.turnCapsules, "session-1:turn-1");
     expect(capsule.files).toEqual(["/project/src/triggers/api.ts"]);
-    expect(capsule.concepts).toEqual(["graph build"]);
+    expect(capsule.concepts).toContain("graph build");
     expect(capsule.hadFailure).toBe(true);
     expect(capsule.maxImportance).toBe(8);
     expect(capsule.importantObservationIds).toEqual(["obs-2"]);

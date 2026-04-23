@@ -137,7 +137,7 @@ describe("mem::observe auto-compress gate (#138)", () => {
     expect(obs.type).toBe("file_read");
     expect(obs.title).toBe("Read");
     expect(obs.files).toContain("src/foo.ts");
-    expect(obs.confidence).toBe(0.3);
+    expect(obs.confidence).toBeGreaterThan(0.3);
   });
 
   it("AGENTMEMORY_AUTO_COMPRESS=true: fires mem::compress exactly once", async () => {
@@ -203,7 +203,7 @@ describe("buildSyntheticCompression", () => {
     expect(typeof buildSyntheticCompression).toBe("function");
   });
 
-  it("extracts file paths from tool_input into the files array", async () => {
+  it("extracts file paths and query concepts into the synthetic observation", async () => {
     const { buildSyntheticCompression } = await import(
       "../src/functions/compress-synthetic.js"
     );
@@ -217,7 +217,7 @@ describe("buildSyntheticCompression", () => {
       raw: {},
     });
     expect(synth.files).toContain("/app/src/bar.ts");
-    expect(synth.files).toContain("foo");
+    expect(synth.concepts).toContain("foo");
     expect(synth.type).toBe("file_edit");
   });
 
@@ -251,5 +251,29 @@ describe("buildSyntheticCompression", () => {
       raw: {},
     });
     expect(synth.type).toBe("error");
+  });
+
+  it("derives facts and higher importance from structured tool output", async () => {
+    const { buildSyntheticCompression } = await import(
+      "../src/functions/compress-synthetic.js"
+    );
+    const synth = buildSyntheticCompression({
+      id: "obs_5",
+      sessionId: "ses_1",
+      timestamp: new Date().toISOString(),
+      hookType: "post_tool_use",
+      toolName: "Bash",
+      toolInput: { command: "npm test", file_path: "/app/src/auth.ts" },
+      toolOutput: {
+        status: "ok",
+        changed_files: ["/app/src/auth.ts", "/app/src/session.ts"],
+        exit_code: 0,
+      },
+      raw: {},
+    });
+    expect(synth.files).toContain("/app/src/session.ts");
+    expect(synth.facts.some((fact) => fact.includes("status"))).toBe(true);
+    expect(synth.facts.some((fact) => fact.includes("exit code"))).toBe(true);
+    expect(synth.importance).toBeGreaterThanOrEqual(6);
   });
 });

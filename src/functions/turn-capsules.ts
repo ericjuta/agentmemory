@@ -7,6 +7,10 @@ import type {
 import { KV } from "../state/schema.js";
 import type { StateKV } from "../state/kv.js";
 import { updateSessionWorkingSet } from "./working-set.js";
+import {
+  extractObservationConcepts,
+  extractObservationFiles,
+} from "./observation-signals.js";
 import { upsertTurnCapsuleRetrievalBlock } from "./retrieval-blocks.js";
 
 function turnCapsuleKey(sessionId: string, turnId: string): string {
@@ -19,47 +23,6 @@ function uniqueStrings(values: Array<string | undefined>): string[] {
 
 function mergeStrings(existing: string[], next: string[]): string[] {
   return [...new Set([...existing, ...next])];
-}
-
-function extractFiles(value: unknown): string[] {
-  if (!value || typeof value !== "object") return [];
-  const data = value as Record<string, unknown>;
-  const files: string[] = [];
-
-  for (const key of ["file_path", "path", "dir_path"]) {
-    if (typeof data[key] === "string" && data[key]) {
-      files.push(data[key] as string);
-    }
-  }
-  if (Array.isArray(data.paths)) {
-    for (const entry of data.paths) {
-      if (typeof entry === "string" && entry) files.push(entry);
-    }
-  }
-  if (Array.isArray(data.files)) {
-    for (const entry of data.files) {
-      if (typeof entry === "string" && entry) files.push(entry);
-    }
-  }
-  return uniqueStrings(files);
-}
-
-function extractConcepts(value: unknown): string[] {
-  if (!value || typeof value !== "object") return [];
-  const data = value as Record<string, unknown>;
-  const concepts: string[] = [];
-
-  for (const key of ["query", "pattern", "glob"]) {
-    if (typeof data[key] === "string" && data[key]) {
-      concepts.push(data[key] as string);
-    }
-  }
-  if (Array.isArray(data.search_terms)) {
-    for (const entry of data.search_terms) {
-      if (typeof entry === "string" && entry) concepts.push(entry);
-    }
-  }
-  return uniqueStrings(concepts);
 }
 
 function buildDefaultCapsule(
@@ -106,15 +69,22 @@ export async function upsertTurnCapsuleFromRaw(
   const files = mergeStrings(
     existing.files,
     uniqueStrings([
-      ...extractFiles(raw.toolInput),
-      ...extractFiles(rawData),
+      ...extractObservationFiles(
+        raw.toolInput,
+        raw.toolOutput,
+        rawData,
+      ),
     ]),
   );
   const concepts = mergeStrings(
     existing.concepts,
     uniqueStrings([
-      ...extractConcepts(raw.toolInput),
-      ...extractConcepts(rawData),
+      ...extractObservationConcepts(
+        raw.toolInput,
+        raw.toolOutput,
+        rawData,
+        { prompt: raw.userPrompt, assistant_text: raw.assistantResponse },
+      ),
     ]),
   );
 

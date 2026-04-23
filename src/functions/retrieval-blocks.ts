@@ -120,7 +120,20 @@ function formatObservation(
   observation: CompressedObservation,
   currentSession: boolean,
 ): string {
-  return `## ${currentSession ? "Current Session Observation" : "Recent Observation"}\n- [${observation.type}] ${observation.title}: ${observation.narrative}`;
+  const lines = [
+    `## ${currentSession ? "Current Session Observation" : "Recent Observation"}`,
+    `- [${observation.type}] ${observation.title}: ${observation.narrative}`,
+  ];
+  if (observation.facts.length > 0) {
+    lines.push(`Facts: ${observation.facts.slice(0, 4).join(" | ")}`);
+  }
+  if (observation.files.length > 0) {
+    lines.push(`Files: ${observation.files.slice(0, 6).join(", ")}`);
+  }
+  if (observation.concepts.length > 0) {
+    lines.push(`Concepts: ${observation.concepts.slice(0, 8).join(", ")}`);
+  }
+  return lines.join("\n");
 }
 
 function formatMemory(memory: Memory): string {
@@ -419,7 +432,16 @@ function shouldIndexObservation(observation: CompressedObservation): boolean {
   return (
     observation.importance >= 6 ||
     observation.type === "error" ||
-    observation.type === "decision"
+    observation.type === "decision" ||
+    ((observation.type === "file_edit" ||
+      observation.type === "file_write" ||
+      observation.type === "command_run" ||
+      observation.type === "search" ||
+      observation.type === "web_fetch" ||
+      observation.type === "subagent") &&
+      (observation.files.length > 0 ||
+        observation.concepts.length > 0 ||
+        observation.facts.length > 0))
   );
 }
 
