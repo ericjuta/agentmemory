@@ -31,6 +31,19 @@ function sortByUpdatedAt<T extends { updatedAt?: string; createdAt?: string; tim
   });
 }
 
+function expandConceptTerms(values: string[]): string[] {
+  return uniqueStrings([
+    ...values,
+    ...values.flatMap((value) =>
+      value
+        .toLowerCase()
+        .split(/[^a-z0-9_./:-]+/)
+        .map((token) => token.trim())
+        .filter((token) => token.length >= 3),
+    ),
+  ]);
+}
+
 function branchMatches(
   value: { branch?: string },
   requested?: string,
@@ -83,11 +96,14 @@ async function relevantProjectObservations(
           .catch(() => null),
       ),
     );
-    return sortByUpdatedAt(
+    const matchedObservations = sortByUpdatedAt(
       observations.filter(
         (observation): observation is CompressedObservation => observation !== null,
       ),
     );
+    if (matchedObservations.length > 0) {
+      return matchedObservations;
+    }
   }
 
   return (await projectObservations(kv, project, branch)).filter((observation) =>
@@ -136,13 +152,6 @@ export async function refreshComponentDossier(
       .filter((insight) => !insight.deleted)
       .filter((insight) => !insight.project || insight.project === project),
   );
-  const relatedInsights = insights.filter((insight) => {
-    const text = `${insight.title} ${insight.content}`.toLowerCase();
-    return (
-      text.includes(filePath.toLowerCase()) ||
-      text.includes(basename(filePath).toLowerCase())
-    );
-  });
   const guardrails = await listScopedGuardrails(kv, {
     project,
     branch,
@@ -156,6 +165,25 @@ export async function refreshComponentDossier(
     filePath,
     activeOnly: true,
     limit: 20,
+  });
+  const dossierConcepts = new Set(
+    expandConceptTerms([
+      ...observations.flatMap((observation) => observation.concepts),
+      ...guardrails.flatMap((guardrail) => guardrail.relatedConcepts),
+      ...decisions.flatMap((decision) => decision.relatedConcepts),
+      basename(filePath),
+    ]).map((concept) => concept.toLowerCase()),
+  );
+  const relatedInsights = insights.filter((insight) => {
+    const text = `${insight.title} ${insight.content}`.toLowerCase();
+    return (
+      text.includes(filePath.toLowerCase()) ||
+      text.includes(basename(filePath).toLowerCase()) ||
+      insight.sourceConceptCluster.some((concept) =>
+        dossierConcepts.has(concept.toLowerCase()),
+      ) ||
+      insight.tags.some((tag) => dossierConcepts.has(tag.toLowerCase()))
+    );
   });
   const overlays = sortByUpdatedAt(
     (await kv.list<BranchOverlay>(KV.branchOverlays).catch(() => []))
