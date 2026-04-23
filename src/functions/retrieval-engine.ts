@@ -24,6 +24,7 @@ import {
 
 const QUERY_EMBEDDING_CACHE_MAX_ENTRIES = 128;
 const QUERY_EMBEDDING_CACHE_TTL_MS = 5 * 60_000;
+const QUERY_EMBEDDING_TIMEOUT_MS = 2500;
 
 type CachedQueryEmbedding = {
   embedding: Float32Array;
@@ -200,6 +201,27 @@ function setCachedQueryEmbedding(
   }
 }
 
+async function embedQueryWithTimeout(
+  embed: (text: string) => Promise<Float32Array>,
+  text: string,
+): Promise<Float32Array> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      embed(text),
+      new Promise<Float32Array>((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          reject(
+            new Error(`query embedding timed out after ${QUERY_EMBEDDING_TIMEOUT_MS}ms`),
+          );
+        }, QUERY_EMBEDDING_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+  }
+}
+
 function branchMatches(block: RetrievalBlock, branch?: string): boolean {
   if (!branch) return true;
   return !block.branch || block.branch === branch;
@@ -350,7 +372,10 @@ export async function retrieveRelevantBlocks(
       const cacheKey = `${runtime.embeddingProvider.name}:${lexicalQuery}`;
       let queryEmbedding = getCachedQueryEmbedding(cacheKey);
       if (!queryEmbedding) {
-        queryEmbedding = await runtime.embeddingProvider.embed(lexicalQuery);
+        queryEmbedding = await embedQueryWithTimeout(
+          runtime.embeddingProvider.embed.bind(runtime.embeddingProvider),
+          lexicalQuery,
+        );
         setCachedQueryEmbedding(cacheKey, queryEmbedding);
       }
       const vectorResults = vectorIndex.search(queryEmbedding, 120);

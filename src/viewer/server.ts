@@ -14,7 +14,7 @@ const ALLOWED_ORIGINS = (
   .split(",")
   .map((o) => o.trim());
 const VIEWER_PROXY_TIMEOUT_MS = Number.parseInt(
-  process.env.VIEWER_PROXY_TIMEOUT_MS || "30000",
+  process.env.VIEWER_PROXY_TIMEOUT_MS || "60000",
   10,
 );
 
@@ -188,7 +188,7 @@ async function proxyToRestApi(
     () => controller.abort(),
     Number.isFinite(VIEWER_PROXY_TIMEOUT_MS) && VIEWER_PROXY_TIMEOUT_MS > 0
       ? VIEWER_PROXY_TIMEOUT_MS
-      : 30000,
+      : 60000,
   );
   let upstream: Response;
   try {
