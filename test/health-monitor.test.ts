@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { registerHealthMonitor, getLatestHealth } from "../src/health/monitor.js";
+import {
+  filterGhostWorkers,
+  registerHealthMonitor,
+  getLatestHealth,
+} from "../src/health/monitor.js";
 import { KV } from "../src/state/schema.js";
 
 describe("registerHealthMonitor", () => {
@@ -45,5 +49,33 @@ describe("registerHealthMonitor", () => {
     );
 
     monitor.stop();
+  });
+
+  it("filters the duplicate anonymous zero-function ghost worker", () => {
+    const workers = filterGhostWorkers([
+      {
+        id: "real",
+        name: "agentmemory",
+        status: "connected",
+        function_count: 289,
+        connected_at_ms: 1001,
+        ip_address: "172.18.0.3",
+        runtime: "node",
+        version: "0.11.0",
+      },
+      {
+        id: "ghost",
+        name: null,
+        status: "connected",
+        function_count: 0,
+        connected_at_ms: 1000,
+        ip_address: "172.18.0.3",
+        runtime: null,
+        version: null,
+      },
+    ]);
+
+    expect(workers).toHaveLength(1);
+    expect(workers[0]?.id).toBe("real");
   });
 });

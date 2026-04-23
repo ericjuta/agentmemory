@@ -959,11 +959,21 @@ This restarts both the engine and worker, clearing stale channels. Data is prese
 # Restart without rebuilding (clears stale engine state)
 docker compose restart
 
+# Rebuild the worker image explicitly
+docker compose build agentmemory-worker
+
 # Rebuild after code changes
 docker compose up -d --build
 
 # Rebuild only the worker (faster, keeps engine running)
 docker compose up -d --build agentmemory-worker
+
+# Force-recreate the worker from the current local image
+docker compose up -d --force-recreate agentmemory-worker
+
+# Common live-fix sequence after worker code changes
+docker compose build agentmemory-worker
+docker compose up -d --force-recreate agentmemory-worker
 
 # View worker logs
 docker compose logs -f agentmemory-worker

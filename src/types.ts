@@ -348,9 +348,21 @@ export interface FunctionMetrics {
   avgQualityScore: number;
 }
 
+export interface HealthWorker {
+  id: string;
+  name: string | null;
+  status: string;
+  connected_at_ms?: number;
+  function_count?: number;
+  ip_address?: string | null;
+  runtime?: string | null;
+  version?: string | null;
+  [key: string]: unknown;
+}
+
 export interface HealthSnapshot {
   connectionState: string;
-  workers: Array<{ id: string; name: string; status: string }>;
+  workers: HealthWorker[];
   memory: {
     heapUsed: number;
     heapTotal: number;

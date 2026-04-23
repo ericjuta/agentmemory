@@ -2,6 +2,7 @@
 import type { ISdk } from "iii-sdk";
 import { getHeapStatistics } from "node:v8";
 import type { HealthSnapshot } from "../types.js";
+import type { HealthWorker } from "../types.js";
 import type { StateKV } from "../state/kv.js";
 import { KV } from "../state/schema.js";
 import { evaluateHealth } from "./thresholds.js";
@@ -12,10 +13,49 @@ let latestHealthSnapshot: HealthSnapshot | null = null;
 const BASE_INTERVAL_MS = 30_000;
 const MAX_INTERVAL_MS = 300_000; // 5 min cap when backing off
 
+const GHOST_WORKER_CONNECTED_DELTA_MS = 5_000;
+
 export interface PipelineMetrics {
   compressActive: number;
   compressPending: number;
   totalInflight: number;
+}
+
+function isGhostWorkerCandidate(worker: HealthWorker): boolean {
+  return (
+    worker.status === "connected" &&
+    (worker.function_count ?? 0) === 0 &&
+    !worker.name &&
+    !worker.runtime &&
+    !worker.version
+  );
+}
+
+function sharesWorkerOrigin(a: HealthWorker, b: HealthWorker): boolean {
+  if (a.ip_address && b.ip_address && a.ip_address === b.ip_address) {
+    return true;
+  }
+  if (
+    typeof a.connected_at_ms === "number" &&
+    typeof b.connected_at_ms === "number" &&
+    Math.abs(a.connected_at_ms - b.connected_at_ms) <= GHOST_WORKER_CONNECTED_DELTA_MS
+  ) {
+    return true;
+  }
+  return false;
+}
+
+export function filterGhostWorkers(workers: HealthWorker[]): HealthWorker[] {
+  return workers.filter((worker) => {
+    if (!isGhostWorkerCandidate(worker)) return true;
+    return !workers.some((other) => {
+      if (other.id === worker.id) return false;
+      if (other.status !== "connected") return false;
+      if ((other.function_count ?? 0) <= 0) return false;
+      if (!other.name) return false;
+      return sharesWorkerOrigin(worker, other);
+    });
+  });
 }
 
 export function registerHealthMonitor(
@@ -75,7 +115,7 @@ export function registerHealthMonitor(
         unknown,
         { workers?: HealthSnapshot["workers"] }
       >({ function_id: "engine::workers::list", payload: {} });
-      if (result?.workers) workers = result.workers;
+      if (result?.workers) workers = filterGhostWorkers(result.workers);
     } catch {}
 
     // Skip KV probe when persist circuit is open — engine is already struggling
