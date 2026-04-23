@@ -302,7 +302,10 @@ export async function retrieveRelevantBlocks(
       (block) => block.project === query.project || block.project === "global",
     );
   let allBlocks = await kv.list<RetrievalBlock>(KV.retrievalBlocks).catch(() => []);
-  if (allBlocks.length === 0 || !hasProjectCoverage(allBlocks)) {
+  const shouldRefreshBlocks =
+    allBlocks.length === 0 ||
+    (Boolean(query.project) && !hasProjectCoverage(allBlocks));
+  if (shouldRefreshBlocks) {
     allBlocks = await collectRetrievalBlocksFromState(kv).catch(() => []);
   }
   const blocks = allBlocks
