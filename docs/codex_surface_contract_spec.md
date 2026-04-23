@@ -11,6 +11,8 @@ This document is about surface shape and user experience, not sender-side
 payload details. The main native Codex sender contract belongs in the Codex
 repo. The narrow ingest companion remains
 [`docs/codex_payload_quality_spec.md`](./codex_payload_quality_spec.md).
+For backend performance and quality hardening of the direct TUI path, see
+[`docs/codex_tui_hardening_spec.md`](./codex_tui_hardening_spec.md).
 
 ## Problem
 
@@ -176,5 +178,6 @@ OpenClaw:
 - [`README.md`](../README.md)
 - [`docs/codex_payload_quality_spec.md`](./codex_payload_quality_spec.md)
 - [`docs/codex_followups_spec.md`](./codex_followups_spec.md)
+- [`docs/codex_tui_hardening_spec.md`](./codex_tui_hardening_spec.md)
 - [`src/triggers/api.ts`](../src/triggers/api.ts)
 - [`test/codex-compat.test.ts`](../test/codex-compat.test.ts)
