@@ -5,6 +5,7 @@ vi.mock("../src/logger.js", () => ({
 }));
 
 import { registerEnrichFunction } from "../src/functions/enrich.js";
+import { registerContextFunction } from "../src/functions/context.js";
 import type { Memory, Session, TurnCapsule } from "../src/types.js";
 import { KV } from "../src/state/schema.js";
 
@@ -86,6 +87,7 @@ describe("Enrich Function", () => {
   beforeEach(async () => {
     sdk = mockSdk();
     kv = mockKV();
+    registerContextFunction(sdk as never, kv as never, 1600);
     registerEnrichFunction(sdk as never, kv as never);
     const session = makeSession();
     await kv.set(KV.sessions, session.id, session);
@@ -129,6 +131,7 @@ describe("Enrich Function", () => {
     })) as {
       context: string;
       truncated: boolean;
+      items: Array<{ sourceType: string; relevantFiles: string[] }>;
       blocks: number;
       trace: { queryTerms: string[] };
     };
@@ -137,6 +140,10 @@ describe("Enrich Function", () => {
     expect(result.context).toContain("Handler retrieval is now unified.");
     expect(result.context).toContain("## Bug Memory: Handler race");
     expect(result.blocks).toBeGreaterThanOrEqual(2);
+    expect(result.items.some((item) => item.sourceType === "turn_capsule")).toBe(true);
+    expect(
+      result.items.some((item) => item.relevantFiles.includes("src/handler.ts")),
+    ).toBe(true);
     expect(result.trace.queryTerms).toContain("handleerror");
     expect(result.truncated).toBe(false);
   });

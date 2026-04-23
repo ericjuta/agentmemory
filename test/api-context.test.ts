@@ -53,4 +53,37 @@ describe("api::context", () => {
     expect(response.body.trace.query).toBe("retrieval trace");
     expect(response.body.trace.queryTerms).toContain("retrieval");
   });
+
+  it("accepts unified retrieval intent and file/context focus fields", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerContextFunction(sdk as never, kv as never, 900);
+    registerApiTriggers(sdk as never, kv as never);
+
+    const session: Session = {
+      id: "session-api-context-intent",
+      project: "/project",
+      cwd: "/project",
+      startedAt: "2026-03-29T13:10:00.000Z",
+      status: "active",
+      observationCount: 0,
+    };
+    await kv.set(KV.sessions, session.id, session);
+
+    const response = (await sdk.trigger("api::context", {
+      body: {
+        sessionId: session.id,
+        intent: "file_enrich",
+        files: ["/project/src/triggers/api.ts"],
+        terms: ["retrieval trace"],
+      },
+      headers: {},
+    })) as {
+      status_code: number;
+      body: { trace: { queryTerms: string[] } };
+    };
+
+    expect(response.status_code).toBe(200);
+    expect(response.body.trace.queryTerms).toContain("retrieval");
+  });
 });

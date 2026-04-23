@@ -13,6 +13,20 @@ export function mockKV() {
       store.get(scope)!.set(key, data);
       return data;
     },
+    update: async (
+      scope: string,
+      key: string,
+      operations: Array<{ type: string; path: string; value: unknown }>,
+    ): Promise<unknown> => {
+      const current = structuredClone((store.get(scope)?.get(key) as Record<string, unknown>) ?? {});
+      for (const operation of operations) {
+        if (operation.type !== "set") continue;
+        current[operation.path] = operation.value;
+      }
+      if (!store.has(scope)) store.set(scope, new Map());
+      store.get(scope)!.set(key, current);
+      return current;
+    },
     delete: async (scope: string, key: string): Promise<void> => {
       store.get(scope)?.delete(key);
     },

@@ -1,10 +1,8 @@
 import type { ISdk } from "iii-sdk";
-import type { Session } from "../types.js";
+import type { RetrievalContextItem, Session } from "../types.js";
 import { KV } from "../state/schema.js";
 import type { StateKV } from "../state/kv.js";
 import { logger } from "../logger.js";
-import { retrieveRelevantBlocks } from "./retrieval-engine.js";
-import { resolveSessionBranch } from "./session-branch.js";
 
 const MAX_CONTEXT_LENGTH = 4000;
 
@@ -18,21 +16,23 @@ export function registerEnrichFunction(sdk: ISdk, kv: StateKV): void {
       toolName?: string;
       }) => {
       const session = await kv.get<Session>(KV.sessions, data.sessionId).catch(() => null);
-      const project = session?.project || "";
-      const branch = await resolveSessionBranch(kv, session);
-      const query = [...(data.files || []), ...(data.terms || [])].filter(Boolean).join(" ");
-
-      const result = await retrieveRelevantBlocks(kv, {
-        project,
+      const result = (await sdk.trigger({
+        function_id: "mem::context",
+        payload: {
         sessionId: data.sessionId,
-        branch,
-        query,
-        focusFiles: data.files || [],
-        focusConcepts: data.terms || [],
+        project: session?.project,
+        intent: "file_enrich",
+        files: data.files || [],
+        terms: data.terms || [],
         budget: Math.max(1, Math.floor(MAX_CONTEXT_LENGTH / 3)),
-        purpose: "enrich",
         maxBlocks: 8,
-      });
+        },
+      })) as {
+        context: string;
+        items?: RetrievalContextItem[];
+        blocks: number;
+        trace: unknown;
+      };
 
       let context = result.context;
       let truncated = false;
@@ -52,7 +52,8 @@ export function registerEnrichFunction(sdk: ISdk, kv: StateKV): void {
       return {
         context,
         truncated,
-        blocks: result.blocks.length,
+        items: result.items || [],
+        blocks: result.blocks,
         trace: result.trace,
       };
     },

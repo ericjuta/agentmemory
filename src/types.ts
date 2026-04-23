@@ -4,6 +4,7 @@ export interface Session {
   project: string;
   cwd: string;
   branch?: string;
+  latestHandoffPacketId?: string;
   startedAt: string;
   endedAt?: string;
   status: "active" | "completed" | "abandoned";
@@ -277,6 +278,13 @@ export interface ContextBlock {
   sourceIds?: string[];
 }
 
+export type RetrievalIntent =
+  | "resume"
+  | "user_turn"
+  | "manual_recall"
+  | "file_enrich"
+  | "next_action";
+
 export type RetrievalTraceLane = "hot" | "warm" | "cold";
 
 export type RetrievalTraceDecision =
@@ -329,6 +337,53 @@ export interface RetrievalTrace {
   selected: RetrievalTraceCandidate[];
   skipped: RetrievalTraceCandidate[];
   usefulnessLink: ContextInjection | null;
+}
+
+export interface RetrievalContextItem {
+  sourceType: RetrievalBlockSourceType;
+  sourceId: string;
+  title: string;
+  why: string;
+  freshness: RetrievalTraceLane;
+  confidence: number;
+  relevantFiles: string[];
+  concepts: string[];
+  blocker?: string | null;
+  recommendedNextStep?: string | null;
+}
+
+export interface SessionBootstrap {
+  context: string;
+  items: RetrievalContextItem[];
+  latestHandoff: HandoffPacket | null;
+  nextAction:
+    | {
+        actionId?: string;
+        title?: string;
+        description?: string;
+        priority?: number;
+        score?: number;
+        tags?: string[];
+      }
+    | null;
+  guardrails: GuardrailMemory[];
+  activeDecisions: DecisionMemory[];
+  branchOverlaySummary?: string | null;
+  retrievalTrace?: RetrievalTrace;
+}
+
+export type CloseoutStepStatus = "ok" | "skipped" | "failed";
+
+export interface SessionCloseoutResult {
+  success: boolean;
+  steps: {
+    summarize: CloseoutStepStatus;
+    endSession: CloseoutStepStatus;
+    crystallize: CloseoutStepStatus;
+    consolidate: CloseoutStepStatus;
+  };
+  errors: Array<{ step: string; message: string }>;
+  summary?: SessionSummary;
 }
 
 export interface EvalResult {

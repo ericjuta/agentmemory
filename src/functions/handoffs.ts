@@ -72,6 +72,60 @@ async function latestProjectCapsule(
   );
 }
 
+export async function findLatestHandoffPacket(
+  kv: StateKV,
+  filter: {
+    project?: string;
+    scopeType?: HandoffPacket["scopeType"];
+    scopeId?: string;
+    preferScopeType?: HandoffPacket["scopeType"];
+  },
+): Promise<HandoffPacket | null> {
+  const project = filter.project?.trim();
+  if (project && (!filter.scopeType || filter.scopeType === "session")) {
+    const sessions = sortByTimestamp(
+      (await kv.list<Session>(KV.sessions).catch(() => []))
+        .filter((session) => session.project === project)
+        .filter((session) => (filter.scopeId ? session.id === filter.scopeId : true)),
+    );
+    for (const session of sessions) {
+      if (!session.latestHandoffPacketId) continue;
+      const packet = await kv
+        .get<HandoffPacket>(KV.handoffPackets, session.latestHandoffPacketId)
+        .catch(() => null);
+      if (!packet) continue;
+      if (filter.scopeType && packet.scopeType !== filter.scopeType) continue;
+      if (filter.scopeId && packet.scopeId !== filter.scopeId) continue;
+      return packet;
+    }
+  }
+
+  let packets = await kv.list<HandoffPacket>(KV.handoffPackets).catch(() => []);
+  if (project) {
+    packets = packets.filter((packet) => packet.project === project);
+  }
+  if (filter.scopeType) {
+    packets = packets.filter((packet) => packet.scopeType === filter.scopeType);
+  }
+  if (filter.scopeId) {
+    packets = packets.filter((packet) => packet.scopeId === filter.scopeId);
+  }
+  return (
+    packets
+      .slice()
+      .sort((a, b) => {
+        const scopeDelta =
+          Number(b.scopeType === filter.preferScopeType) -
+          Number(a.scopeType === filter.preferScopeType);
+        if (scopeDelta !== 0) return scopeDelta;
+        return (
+          new Date(b.updatedAt || b.createdAt).getTime() -
+          new Date(a.updatedAt || a.createdAt).getTime()
+        );
+      })[0] || null
+  );
+}
+
 function recentChangesFromObservations(
   observations: CompressedObservation[],
   capsule: TurnCapsule | null,
@@ -400,6 +454,15 @@ export function registerHandoffsFunction(sdk: ISdk, kv: StateKV): void {
         });
       }
 
+      if (packet.scopeType === "session") {
+        await withKeyedLock(`mem:session:${packet.scopeId}`, async () => {
+          const session = await kv.get<Session>(KV.sessions, packet.scopeId);
+          if (!session) return;
+          session.latestHandoffPacketId = packet.id;
+          await kv.set(KV.sessions, session.id, session);
+        });
+      }
+
       let signal = null;
       if (data.deliverTo && data.from) {
         const result = await sdk.trigger({
@@ -461,6 +524,19 @@ export function registerHandoffsFunction(sdk: ISdk, kv: StateKV): void {
         success: true,
         handoffPackets: sortByTimestamp(packets).slice(0, data.limit || 20),
       };
+    },
+  );
+
+  sdk.registerFunction(
+    "mem::handoff-latest",
+    async (data: {
+      project?: string;
+      scopeType?: HandoffPacket["scopeType"];
+      scopeId?: string;
+      preferScopeType?: HandoffPacket["scopeType"];
+    }) => {
+      const handoffPacket = await findLatestHandoffPacket(kv, data);
+      return { success: true, handoffPacket };
     },
   );
 }

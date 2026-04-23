@@ -1,10 +1,16 @@
 // Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 import type { ISdk, ApiRequest } from "iii-sdk";
 import type {
+  BranchOverlay,
   Session,
+  SessionBootstrap,
+  SessionCloseoutResult,
   CompressedObservation,
+  DecisionMemory,
+  GuardrailMemory,
   HookPayload,
   ObservationPersistenceClass,
+  RetrievalIntent,
 } from "../types.js";
 import { KV } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
@@ -15,6 +21,9 @@ import { VERSION } from "../version.js";
 import { timingSafeCompare } from "../auth.js";
 import { renderViewerDocument } from "../viewer/document.js";
 import { detectWorktreeInfo } from "../functions/branch-utils.js";
+import { listScopedDecisions } from "../functions/decisions.js";
+import { listScopedGuardrails } from "../functions/guardrails.js";
+import { findLatestHandoffPacket } from "../functions/handoffs.js";
 
 type Response = {
   status_code: number;
@@ -103,6 +112,22 @@ function parseOptionalStringArray(
   return parsed;
 }
 
+function parseOptionalRetrievalIntent(
+  value: unknown,
+): RetrievalIntent | undefined | null {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (
+    value === "resume" ||
+    value === "user_turn" ||
+    value === "manual_recall" ||
+    value === "file_enrich" ||
+    value === "next_action"
+  ) {
+    return value;
+  }
+  return null;
+}
+
 function parseOptionalPersistenceClass(
   value: unknown,
 ): ObservationPersistenceClass | undefined | null {
@@ -115,6 +140,101 @@ function parseOptionalPersistenceClass(
     return value;
   }
   return null;
+}
+
+function sortByUpdatedAt<T extends { updatedAt?: string; createdAt?: string }>(
+  items: T[],
+): T[] {
+  return items.slice().sort((a, b) => {
+    const aTime = new Date(a.updatedAt || a.createdAt || 0).getTime();
+    const bTime = new Date(b.updatedAt || b.createdAt || 0).getTime();
+    return bTime - aTime;
+  });
+}
+
+function latestBranchOverlaySummary(
+  overlays: BranchOverlay[],
+): string | null {
+  const latest = sortByUpdatedAt(overlays)[0];
+  if (!latest) return null;
+  const parts = [latest.summary];
+  if (latest.blockers.length > 0) {
+    parts.push(`Blockers: ${latest.blockers.slice(0, 3).join(" | ")}`);
+  }
+  return parts.join("\n");
+}
+
+async function buildSessionBootstrap(
+  sdk: ISdk,
+  kv: StateKV,
+  session: Session,
+  budget?: number,
+): Promise<SessionBootstrap> {
+  const contextResult = (await sdk.trigger({
+    function_id: "mem::context",
+    payload: {
+      sessionId: session.id,
+      project: session.project,
+      budget,
+      intent: "resume",
+    },
+  }).catch(() => ({
+    context: "",
+    items: [],
+    trace: undefined,
+  }))) as {
+    context?: string;
+    items?: SessionBootstrap["items"];
+    trace?: SessionBootstrap["retrievalTrace"];
+  };
+
+  const latestHandoff = await findLatestHandoffPacket(kv, {
+    project: session.project,
+    scopeType: "session",
+    preferScopeType: "session",
+  }).catch(() => null);
+
+  const nextActionResult = (await sdk.trigger({
+    function_id: "mem::next",
+    payload: { project: session.project },
+  }).catch(() => ({ success: false, suggestion: null }))) as {
+    suggestion?: SessionBootstrap["nextAction"];
+  };
+
+  const guardrails = await listScopedGuardrails(kv, {
+    project: session.project,
+    branch: session.branch,
+    includeExpired: false,
+    limit: 3,
+  }).catch(() => [] as GuardrailMemory[]);
+
+  const activeDecisions = await listScopedDecisions(kv, {
+    project: session.project,
+    branch: session.branch,
+    activeOnly: true,
+    limit: 3,
+  }).catch(() => [] as DecisionMemory[]);
+
+  const overlays = await kv.list<BranchOverlay>(KV.branchOverlays).catch(() => []);
+  const branchOverlaySummary = latestBranchOverlaySummary(
+    overlays.filter(
+      (overlay) =>
+        overlay.project === session.project &&
+        overlay.status === "active" &&
+        (!session.branch || overlay.branch === session.branch),
+    ),
+  );
+
+  return {
+    context: contextResult.context || "",
+    items: contextResult.items || [],
+    latestHandoff,
+    nextAction: nextActionResult.suggestion || null,
+    guardrails,
+    activeDecisions,
+    branchOverlaySummary,
+    retrievalTrace: contextResult.trace,
+  };
 }
 
 export function registerApiTriggers(
@@ -283,18 +403,23 @@ export function registerApiTriggers(
     async (
       req: ApiRequest<{
         sessionId: string;
-        project: string;
+        project?: string;
         budget?: number;
         query?: string;
+        intent?: RetrievalIntent;
+        files?: string[];
+        terms?: string[];
       }>,
     ): Promise<Response> => {
       const body = (req.body ?? {}) as Record<string, unknown>;
       const sessionId = asNonEmptyString(body.sessionId);
-      const project = asNonEmptyString(body.project);
-      if (!sessionId || !project) {
+      const project = body.project === undefined
+        ? undefined
+        : asNonEmptyString(body.project);
+      if (!sessionId) {
         return {
           status_code: 400,
-          body: { error: "sessionId and project are required strings" },
+          body: { error: "sessionId is required" },
         };
       }
       const budget = parseOptionalPositiveInt(body.budget);
@@ -307,17 +432,44 @@ export function registerApiTriggers(
       const query = body.query === undefined
         ? undefined
         : (asNonEmptyString(body.query) ?? undefined);
+      const intent = parseOptionalRetrievalIntent(body.intent);
+      if (intent === null) {
+        return {
+          status_code: 400,
+          body: { error: "intent must be one of: resume, user_turn, manual_recall, file_enrich, next_action" },
+        };
+      }
+      const files = parseOptionalStringArray(body.files);
+      if (files === null) {
+        return {
+          status_code: 400,
+          body: { error: "files must be an array of non-empty strings" },
+        };
+      }
+      const terms = parseOptionalStringArray(body.terms);
+      if (terms === null) {
+        return {
+          status_code: 400,
+          body: { error: "terms must be an array of non-empty strings" },
+        };
+      }
       const payload: {
         sessionId: string;
-        project: string;
+        project?: string;
         budget?: number;
         query?: string;
+        intent?: RetrievalIntent;
+        files?: string[];
+        terms?: string[];
       } = {
         sessionId,
-        project,
       };
+      if (project !== undefined) payload.project = project;
       if (budget !== undefined) payload.budget = budget;
       if (query !== undefined) payload.query = query;
+      if (intent !== undefined) payload.intent = intent;
+      if (files !== undefined) payload.files = files;
+      if (terms !== undefined) payload.terms = terms;
       const result = await sdk.trigger({ function_id: "mem::context", payload });
       return { status_code: 200, body: result };
     },
@@ -354,18 +506,13 @@ export function registerApiTriggers(
           body: { error: "sessionId, project, and query are required" },
         };
       }
-      if (req.body.query.trim().length <= 10) {
-        return {
-          status_code: 200,
-          body: { context: "", blocks: 0, tokens: 0, skipped: true },
-        };
-      }
       const result = await sdk.trigger({
         function_id: "mem::context",
         payload: {
           sessionId: req.body.sessionId,
           project: req.body.project,
-          query: req.body.query,
+          query: req.body.query.trim().length > 10 ? req.body.query : undefined,
+          intent: "user_turn",
         },
       });
       return { status_code: 200, body: result };
@@ -545,7 +692,12 @@ export function registerApiTriggers(
 
   sdk.registerFunction("api::session::start",
     async (
-      req: ApiRequest<{ sessionId: string; project: string; cwd: string }>,
+      req: ApiRequest<{
+        sessionId: string;
+        project: string;
+        cwd: string;
+        budget?: number;
+      }>,
     ): Promise<Response> => {
       const body = (req.body ?? {}) as Record<string, unknown>;
       const sessionId = asNonEmptyString(body.sessionId);
@@ -559,6 +711,13 @@ export function registerApiTriggers(
           },
         };
       }
+      const budget = parseOptionalPositiveInt(body.budget);
+      if (budget === null) {
+        return {
+          status_code: 400,
+          body: { error: "budget must be a positive integer" },
+        };
+      }
       const session: Session = {
         id: sessionId,
         project,
@@ -569,13 +728,14 @@ export function registerApiTriggers(
         observationCount: 0,
       };
       await kv.set(KV.sessions, sessionId, session);
-      const contextResult = await sdk.trigger<
-        { sessionId: string; project: string },
-        { context: string }
-      >({ function_id: "mem::context", payload: { sessionId, project } });
+      const bootstrap = await buildSessionBootstrap(sdk, kv, session, budget || undefined);
       return {
         status_code: 200,
-        body: { session, context: contextResult.context },
+        body: {
+          session,
+          context: bootstrap.context,
+          bootstrap,
+        },
       };
     },
   );
@@ -610,6 +770,149 @@ export function registerApiTriggers(
     function_id: "api::session::end",
     config: {
       api_path: "/agentmemory/session/end",
+      http_method: "POST",
+      middleware_function_ids: ["middleware::api-auth"],
+    },
+  });
+
+  sdk.registerFunction("api::session::closeout",
+    async (req: ApiRequest<{ sessionId: string }>): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const sessionId = asNonEmptyString((req.body as Record<string, unknown>)?.sessionId);
+      if (!sessionId) {
+        return {
+          status_code: 400,
+          body: { error: "sessionId is required and must be a non-empty string" },
+        };
+      }
+
+      const session = await kv.get<Session>(KV.sessions, sessionId).catch(() => null);
+      if (!session) {
+        return { status_code: 404, body: { error: "session not found" } };
+      }
+
+      const result: SessionCloseoutResult = {
+        success: true,
+        steps: {
+          summarize: "skipped",
+          endSession: "skipped",
+          crystallize: "skipped",
+          consolidate: "skipped",
+        },
+        errors: [],
+      };
+
+      const existingSummary = await kv.get(KV.summaries, sessionId).catch(() => null);
+      if (session.status === "active" || !existingSummary) {
+        try {
+          const summarizeResult = (await sdk.trigger({
+            function_id: "mem::summarize",
+            payload: { sessionId },
+          })) as { success?: boolean; summary?: SessionCloseoutResult["summary"]; error?: string };
+          if (summarizeResult.success) {
+            result.steps.summarize = "ok";
+            result.summary = summarizeResult.summary;
+          } else if (summarizeResult.error === "no_observations" && existingSummary) {
+            result.steps.summarize = "skipped";
+          } else if (summarizeResult.error === "no_observations") {
+            result.steps.summarize = "skipped";
+          } else {
+            result.steps.summarize = "failed";
+            result.success = false;
+            result.errors.push({
+              step: "summarize",
+              message: summarizeResult.error || "summarize failed",
+            });
+          }
+        } catch (err) {
+          result.steps.summarize = "failed";
+          result.success = false;
+          result.errors.push({
+            step: "summarize",
+            message: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      if (session.status === "active") {
+        try {
+          await kv.update(KV.sessions, sessionId, [
+            { type: "set", path: "endedAt", value: new Date().toISOString() },
+            { type: "set", path: "status", value: "completed" },
+          ]);
+          result.steps.endSession = "ok";
+        } catch (err) {
+          result.steps.endSession = "failed";
+          result.success = false;
+          result.errors.push({
+            step: "endSession",
+            message: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      try {
+        const crystallizeResult = (await sdk.trigger({
+          function_id: "mem::auto-crystallize",
+          payload: { project: session.project },
+        })) as { success?: boolean; error?: string };
+        if (crystallizeResult.success === false) {
+          result.steps.crystallize = "failed";
+          result.success = false;
+          result.errors.push({
+            step: "crystallize",
+            message: crystallizeResult.error || "auto-crystallize failed",
+          });
+        } else {
+          result.steps.crystallize = "ok";
+        }
+      } catch (err) {
+        result.steps.crystallize = "failed";
+        result.success = false;
+        result.errors.push({
+          step: "crystallize",
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+
+      try {
+        const consolidateResult = (await sdk.trigger({
+          function_id: "mem::consolidate-pipeline",
+          payload: { project: session.project },
+        })) as { success?: boolean; skipped?: boolean; reason?: string; error?: string };
+        if (consolidateResult.success === false && consolidateResult.skipped) {
+          result.steps.consolidate = "skipped";
+        } else if (consolidateResult.success === false) {
+          result.steps.consolidate = "failed";
+          result.success = false;
+          result.errors.push({
+            step: "consolidate",
+            message:
+              consolidateResult.error ||
+              consolidateResult.reason ||
+              "consolidation pipeline failed",
+          });
+        } else {
+          result.steps.consolidate = "ok";
+        }
+      } catch (err) {
+        result.steps.consolidate = "failed";
+        result.success = false;
+        result.errors.push({
+          step: "consolidate",
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::session::closeout",
+    config: {
+      api_path: "/agentmemory/session/closeout",
       http_method: "POST",
       middleware_function_ids: ["middleware::api-auth"],
     },

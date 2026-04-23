@@ -1,9 +1,18 @@
 // Fork note: added in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 import { describe, expect, it } from "vitest";
+import { registerApiTriggers } from "../src/triggers/api.js";
 import { registerContextFunction } from "../src/functions/context.js";
 import { registerObserveFunction } from "../src/functions/observe.js";
 import { KV } from "../src/state/schema.js";
 import { mockKV, mockSdk } from "./helpers/mocks.js";
+import type {
+  BranchOverlay,
+  DecisionMemory,
+  GuardrailMemory,
+  HandoffPacket,
+  Session,
+  SessionSummary,
+} from "../src/types.js";
 
 describe("Codex payload compatibility", () => {
   it("accepts Codex-style lifecycle payloads and returns the completed turn immediately", async () => {
@@ -136,5 +145,227 @@ describe("Codex payload compatibility", () => {
     expect(result.context).toContain(
       "Codex integration is active and session-backed.",
     );
+    expect(result.items[0]?.why).toBeTruthy();
+    expect(result.items[0]?.freshness).toBeTruthy();
+  });
+
+  it("returns a bootstrap payload for session start with latest handoff and coordination signals", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerContextFunction(sdk as never, kv as never, 900);
+    registerApiTriggers(sdk as never, kv as never);
+
+    const previousSession: Session = {
+      id: "session-codex-prev",
+      project: "/project",
+      cwd: "/project",
+      startedAt: "2026-03-29T11:00:00.000Z",
+      status: "completed",
+      observationCount: 3,
+      latestHandoffPacketId: "hdf-prev",
+    };
+    const previousSummary: SessionSummary = {
+      sessionId: previousSession.id,
+      project: "/project",
+      createdAt: "2026-03-29T11:05:00.000Z",
+      title: "Previous session summary",
+      narrative: "Deployment coordination still needs approval.",
+      keyDecisions: ["Keep approval as a checkpoint"],
+      filesModified: ["/project/src/triggers/api.ts"],
+      concepts: ["deployment"],
+      observationCount: 3,
+    };
+    const handoff: HandoffPacket = {
+      id: "hdf-prev",
+      createdAt: "2026-03-29T11:05:00.000Z",
+      updatedAt: "2026-03-29T11:06:00.000Z",
+      project: "/project",
+      scopeType: "session",
+      scopeId: previousSession.id,
+      summary: "Resume the deploy handoff from the previous session.",
+      recentChanges: ["API wiring is done."],
+      knownFacts: ["Approval is pending."],
+      relevantFiles: ["/project/src/triggers/api.ts"],
+      relevantConcepts: ["deployment", "approval"],
+      blockers: ["Checkpoint pending: Production approval"],
+      openQuestions: ["Who approves production?"],
+      recommendedNextStep: "Resolve production approval.",
+      confidence: 0.81,
+      sourceObservationIds: [],
+      sourceActionIds: [],
+      sourceBeliefIds: [],
+    };
+    const guardrail: GuardrailMemory = {
+      id: "grd-bootstrap",
+      createdAt: "2026-03-29T11:01:00.000Z",
+      updatedAt: "2026-03-29T11:02:00.000Z",
+      project: "/project",
+      scopeType: "project",
+      scopeId: "/project",
+      triggerConditions: ["deploy to production"],
+      riskLevel: "high",
+      explanation: "Production deploy requires explicit approval.",
+      evidence: [],
+      relatedFiles: ["/project/src/triggers/api.ts"],
+      relatedConcepts: ["deployment"],
+      status: "active",
+      supersedes: [],
+      sourceObservationIds: [],
+      sourceActionIds: [],
+    };
+    const decision: DecisionMemory = {
+      id: "dec-bootstrap",
+      createdAt: "2026-03-29T11:01:00.000Z",
+      updatedAt: "2026-03-29T11:03:00.000Z",
+      title: "Use approval checkpoints",
+      decision: "Keep production approval external.",
+      rationale: "Avoid accidental deploys.",
+      alternatives: ["Auto-approve deploys"],
+      reconsiderWhen: ["Approval latency becomes a blocker"],
+      status: "active",
+      project: "/project",
+      relatedFiles: ["/project/src/triggers/api.ts"],
+      relatedConcepts: ["deployment"],
+      sourceObservationIds: [],
+      sourceActionIds: [],
+      supersedes: [],
+    };
+    const overlay: BranchOverlay = {
+      id: "brx-bootstrap",
+      createdAt: "2026-03-29T11:01:00.000Z",
+      updatedAt: "2026-03-29T11:04:00.000Z",
+      project: "/project",
+      branch: "main",
+      targetType: "handoff",
+      targetId: handoff.id,
+      summary: "Main branch deploy overlay is still active.",
+      blockers: ["Approval missing"],
+      notes: [],
+      status: "active",
+    };
+
+    await kv.set(KV.sessions, previousSession.id, previousSession);
+    await kv.set(KV.summaries, previousSummary.sessionId, previousSummary);
+    await kv.set(KV.handoffPackets, handoff.id, handoff);
+    await kv.set(KV.guardrails, guardrail.id, guardrail);
+    await kv.set(KV.decisions, decision.id, decision);
+    await kv.set(KV.branchOverlays, overlay.id, overlay);
+
+    sdk.registerFunction("mem::next", async () => ({
+      success: true,
+      suggestion: {
+        actionId: "act-1",
+        title: "Resolve production approval",
+        priority: 9,
+        score: 92,
+      },
+    }));
+
+    const response = (await sdk.trigger("api::session::start", {
+      body: {
+        sessionId: "session-codex-bootstrap",
+        project: "/project",
+        cwd: "/project",
+      },
+      headers: {},
+    })) as {
+      status_code: number;
+      body: {
+        context: string;
+        bootstrap: {
+          latestHandoff: HandoffPacket | null;
+          nextAction: { title?: string } | null;
+          guardrails: GuardrailMemory[];
+          activeDecisions: DecisionMemory[];
+          branchOverlaySummary?: string | null;
+        };
+      };
+    };
+
+    expect(response.status_code).toBe(200);
+    expect(typeof response.body.context).toBe("string");
+    expect(response.body.bootstrap.latestHandoff?.id).toBe(handoff.id);
+    expect(response.body.bootstrap.nextAction?.title).toBe("Resolve production approval");
+    expect(response.body.bootstrap.guardrails[0]?.id).toBe(guardrail.id);
+    expect(response.body.bootstrap.activeDecisions[0]?.id).toBe(decision.id);
+    expect(response.body.bootstrap.branchOverlaySummary).toContain("deploy overlay");
+  });
+
+  it("supports bounded idempotent closeout for Codex sessions", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerApiTriggers(sdk as never, kv as never);
+
+    const session: Session = {
+      id: "session-codex-closeout",
+      project: "/project",
+      cwd: "/project",
+      startedAt: "2026-03-29T12:00:00.000Z",
+      status: "active",
+      observationCount: 2,
+    };
+    await kv.set(KV.sessions, session.id, session);
+
+    sdk.registerFunction("mem::summarize", async ({ sessionId }: { sessionId: string }) => {
+      const summary: SessionSummary = {
+        sessionId,
+        project: "/project",
+        createdAt: "2026-03-29T12:10:00.000Z",
+        title: "Closeout summary",
+        narrative: "Session closeout completed.",
+        keyDecisions: [],
+        filesModified: [],
+        concepts: [],
+        observationCount: 2,
+      };
+      await kv.set(KV.summaries, sessionId, summary);
+      return { success: true, summary };
+    });
+    sdk.registerFunction("mem::auto-crystallize", async () => ({
+      success: true,
+      groupCount: 0,
+      crystalIds: [],
+    }));
+    sdk.registerFunction("mem::consolidate-pipeline", async () => ({
+      success: true,
+    }));
+
+    const first = (await sdk.trigger("api::session::closeout", {
+      body: { sessionId: session.id },
+      headers: {},
+    })) as {
+      status_code: number;
+      body: {
+        success: boolean;
+        steps: Record<string, string>;
+      };
+    };
+    expect(first.status_code).toBe(200);
+    expect(first.body.success).toBe(true);
+    expect(first.body.steps).toMatchObject({
+      summarize: "ok",
+      endSession: "ok",
+      crystallize: "ok",
+      consolidate: "ok",
+    });
+
+    const storedSession = await kv.get<Session>(KV.sessions, session.id);
+    expect(storedSession?.status).toBe("completed");
+    expect(storedSession?.endedAt).toBeDefined();
+
+    const second = (await sdk.trigger("api::session::closeout", {
+      body: { sessionId: session.id },
+      headers: {},
+    })) as {
+      status_code: number;
+      body: {
+        success: boolean;
+        steps: Record<string, string>;
+      };
+    };
+    expect(second.status_code).toBe(200);
+    expect(second.body.success).toBe(true);
+    expect(second.body.steps.summarize).toBe("skipped");
+    expect(second.body.steps.endSession).toBe("skipped");
   });
 });

@@ -1,6 +1,12 @@
 import type {
   CompressedObservation,
+  ComponentDossier,
+  DecisionMemory,
+  GuardrailMemory,
+  HandoffPacket,
   RetrievalBlock,
+  RetrievalContextItem,
+  RetrievalIntent,
   RetrievalSearchResult,
   RetrievalTrace,
   RetrievalTraceCandidate,
@@ -290,6 +296,7 @@ export interface UnifiedRetrievalQuery {
   sessionId?: string;
   branch?: string;
   query?: string;
+  intent?: RetrievalIntent;
   focusFiles?: string[];
   focusConcepts?: string[];
   budget: number;
@@ -300,9 +307,115 @@ export interface UnifiedRetrievalQuery {
 export interface UnifiedRetrievalResult {
   context: string;
   blocks: RetrievalBlock[];
+  items: RetrievalContextItem[];
   tokens: number;
   trace: RetrievalTrace;
   searchResults: RetrievalSearchResult[];
+}
+
+function describeWhyRetrieved(ranked: RankedRetrievalBlock): string {
+  const reasons: string[] = [];
+  if (ranked.resumeScore > 0) reasons.push("resume artifact");
+  if (ranked.fileScore > 0) reasons.push("file overlap");
+  if (ranked.conceptScore > 0) reasons.push("concept overlap");
+  if (ranked.sessionScore > 0 && ranked.block.freshnessLane === "hot") {
+    reasons.push("recent same-session state");
+  }
+  if (ranked.lexicalScore > 0) reasons.push("text match");
+  if (ranked.vectorScore > 0.2) reasons.push("semantic match");
+  if (ranked.graphScore > 0.2) reasons.push("graph relation");
+  if (reasons.length === 0) {
+    reasons.push(
+      ranked.block.freshnessLane === "hot" ? "fresh context" : "relevance ranking",
+    );
+  }
+  return reasons.slice(0, 2).join(" + ");
+}
+
+function defaultBlockConfidence(block: RetrievalBlock): number {
+  return Math.max(0.35, Math.min(0.95, block.importance / 10));
+}
+
+function guardrailConfidence(guardrail: GuardrailMemory): number {
+  switch (guardrail.riskLevel) {
+    case "critical":
+      return 0.95;
+    case "high":
+      return 0.88;
+    case "medium":
+      return 0.76;
+    case "low":
+      return 0.64;
+  }
+}
+
+async function buildRetrievalContextItem(
+  kv: StateKV,
+  ranked: RankedRetrievalBlock,
+): Promise<RetrievalContextItem> {
+  let blocker: string | null = null;
+  let recommendedNextStep: string | null = null;
+  let confidence = defaultBlockConfidence(ranked.block);
+
+  switch (ranked.block.sourceType) {
+    case "handoff": {
+      const packet = await kv
+        .get<HandoffPacket>(KV.handoffPackets, ranked.block.sourceId)
+        .catch(() => null);
+      if (packet) {
+        blocker = packet.blockers[0] || null;
+        recommendedNextStep = packet.recommendedNextStep || null;
+        confidence = packet.confidence;
+      }
+      break;
+    }
+    case "guardrail": {
+      const guardrail = await kv
+        .get<GuardrailMemory>(KV.guardrails, ranked.block.sourceId)
+        .catch(() => null);
+      if (guardrail) {
+        blocker = guardrail.triggerConditions[0] || null;
+        recommendedNextStep = `Review guardrail: ${guardrail.explanation}`;
+        confidence = guardrailConfidence(guardrail);
+      }
+      break;
+    }
+    case "decision": {
+      const decision = await kv
+        .get<DecisionMemory>(KV.decisions, ranked.block.sourceId)
+        .catch(() => null);
+      if (decision) {
+        recommendedNextStep =
+          decision.reconsiderWhen[0] || `Respect decision: ${decision.title}`;
+        confidence = decision.status === "active" ? 0.82 : 0.65;
+      }
+      break;
+    }
+    case "dossier": {
+      const dossier = await kv
+        .get<ComponentDossier>(KV.componentDossiers, ranked.block.sourceId)
+        .catch(() => null);
+      if (dossier) {
+        blocker = dossier.activeRisks[0] || null;
+        recommendedNextStep = dossier.openQuestions[0] || null;
+        confidence = 0.72;
+      }
+      break;
+    }
+  }
+
+  return {
+    sourceType: ranked.block.sourceType,
+    sourceId: ranked.block.sourceId,
+    title: ranked.block.title,
+    why: describeWhyRetrieved(ranked),
+    freshness: ranked.block.freshnessLane,
+    confidence,
+    relevantFiles: ranked.block.files.slice(0, 8),
+    concepts: ranked.block.concepts.slice(0, 8),
+    blocker,
+    recommendedNextStep,
+  };
 }
 
 export async function retrieveRelevantBlocks(
@@ -562,7 +675,10 @@ export async function retrieveRelevantBlocks(
     }
   }
 
-  const resumeQuery = isResumeQuery(query.query);
+  const resumeQuery =
+    query.intent === "resume" ||
+    (query.intent !== "next_action" && isResumeQuery(query.query));
+  const nextActionIntent = query.intent === "next_action";
   const now = Date.now();
   let candidateBlocks = blocks.filter((block) => {
     if (
@@ -623,6 +739,13 @@ export async function retrieveRelevantBlocks(
           : block.freshnessLane === "warm"
             ? 0.65
             : 0.35;
+      const intentScore =
+        nextActionIntent &&
+        (block.sourceType === "handoff" ||
+          block.sourceType === "decision" ||
+          block.sourceType === "guardrail")
+          ? 1
+          : 0;
       const recencyScore =
         newest === oldest ? 1 : Math.max(0, (eventMs - oldest) / (newest - oldest));
       const importanceScore = normalizeImportance(block.importance);
@@ -635,12 +758,14 @@ export async function retrieveRelevantBlocks(
             graphScore * 0.8 +
             sessionScore * 0.7 +
             resumeScore * 0.6 +
+            intentScore * 0.6 +
             freshnessScore * 0.5 +
             recencyScore * 0.5 +
             importanceScore * 0.05
           : sessionScore * 2.4 +
             freshnessScore * 1.6 +
             resumeScore * 1.2 +
+            intentScore * 1.1 +
             recencyScore * 0.8 +
             importanceScore * 0.08;
       return {
@@ -664,9 +789,6 @@ export async function retrieveRelevantBlocks(
     })
     .filter((item) => {
       if (query.purpose === "context") {
-        return true;
-      }
-      if (item.sessionScore > 0 && item.block.freshnessLane === "hot") {
         return true;
       }
       const explicitRelevance =
@@ -795,6 +917,9 @@ export async function retrieveRelevantBlocks(
   }
 
   const selectedBlocks = selected.map((item) => item.block);
+  const items = await Promise.all(
+    selected.map((item) => buildRetrievalContextItem(kv, item)),
+  );
   const injectedMemoryIds = uniqueStrings(
     selectedBlocks.map((block) => linkedMemoryId(block)),
   );
@@ -868,6 +993,7 @@ export async function retrieveRelevantBlocks(
   const result = {
     context,
     blocks: selectedBlocks,
+    items,
     tokens: usedTokens,
     trace,
     searchResults,

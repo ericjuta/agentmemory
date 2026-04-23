@@ -16,13 +16,14 @@ export function contextResultCacheKey(
   query: UnifiedRetrievalQuery,
 ): string | null {
   if (query.purpose !== "context") return null;
-  if (query.query?.trim()) return null;
-  if ((query.focusFiles?.length || 0) > 0) return null;
-  if ((query.focusConcepts?.length || 0) > 0) return null;
   return JSON.stringify({
     project: query.project || "",
     sessionId: query.sessionId || "",
     branch: query.branch || "",
+    intent: query.intent || "",
+    query: query.query?.trim() || "",
+    focusFiles: [...(query.focusFiles || [])].sort(),
+    focusConcepts: [...(query.focusConcepts || [])].sort(),
     budget: query.budget,
     maxBlocks: query.maxBlocks || null,
   });

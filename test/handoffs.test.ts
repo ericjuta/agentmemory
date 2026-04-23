@@ -112,6 +112,9 @@ describe("handoffs", () => {
     expect(result.handoffPacket.summary).toContain("retrieval trace core");
     expect(result.handoffPacket.recommendedNextStep).toBe("Implement mission state");
     expect(result.handoffPacket.relevantFiles).toContain("/project/src/functions/context.ts");
+
+    const storedSession = await kv.get<Session>(KV.sessions, session.id);
+    expect(storedSession?.latestHandoffPacketId).toBe(result.handoffPacket.id);
   });
 
   it("generates an action-scoped handoff packet with blockers and optional delivery signal", async () => {
@@ -211,6 +214,69 @@ describe("handoffs", () => {
     };
     expect(fetched.success).toBe(true);
     expect(fetched.handoffPacket).toEqual(created.handoffPacket);
+  });
+
+  it("returns the latest project handoff packet with session preference", async () => {
+    const older: HandoffPacket = {
+      id: "hdf_older",
+      createdAt: "2026-04-20T00:00:00Z",
+      updatedAt: "2026-04-20T00:01:00Z",
+      project: "/project",
+      scopeType: "mission",
+      scopeId: "msn_older",
+      summary: "Older mission packet",
+      recentChanges: [],
+      knownFacts: [],
+      relevantFiles: [],
+      relevantConcepts: [],
+      blockers: [],
+      openQuestions: [],
+      recommendedNextStep: "Review mission",
+      confidence: 0.6,
+      sourceObservationIds: [],
+      sourceActionIds: [],
+      sourceBeliefIds: [],
+    };
+    const session: Session = {
+      id: "ses_latest",
+      project: "/project",
+      cwd: "/project",
+      startedAt: "2026-04-20T00:02:00Z",
+      status: "completed",
+      observationCount: 0,
+      latestHandoffPacketId: "hdf_latest",
+    };
+    const latest: HandoffPacket = {
+      id: "hdf_latest",
+      createdAt: "2026-04-20T00:02:00Z",
+      updatedAt: "2026-04-20T00:03:00Z",
+      project: "/project",
+      scopeType: "session",
+      scopeId: session.id,
+      summary: "Latest session packet",
+      recentChanges: [],
+      knownFacts: [],
+      relevantFiles: [],
+      relevantConcepts: [],
+      blockers: [],
+      openQuestions: [],
+      recommendedNextStep: "Resume session",
+      confidence: 0.9,
+      sourceObservationIds: [],
+      sourceActionIds: [],
+      sourceBeliefIds: [],
+    };
+    await kv.set(KV.handoffPackets, older.id, older);
+    await kv.set(KV.sessions, session.id, session);
+    await kv.set(KV.handoffPackets, latest.id, latest);
+
+    const result = (await sdk.trigger("mem::handoff-latest", {
+      project: "/project",
+      preferScopeType: "session",
+    })) as { success: boolean; handoffPacket: HandoffPacket | null };
+
+    expect(result.success).toBe(true);
+    expect(result.handoffPacket?.id).toBe(latest.id);
   });
 
   it("generates a mission-scoped handoff packet and updates the mission pointer", async () => {
