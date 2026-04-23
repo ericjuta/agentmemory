@@ -401,7 +401,6 @@ async function main() {
       console.log(
         `[agentmemory] Search index rebuilt: ${indexCount} observations`,
       );
-      indexPersistence.scheduleSave();
     }
   }
 
