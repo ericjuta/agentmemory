@@ -91,6 +91,7 @@ import { registerRetentionFunctions } from "./functions/retention.js";
 import { registerCompressFileFunction } from "./functions/compress-file.js";
 import {
   retrievalBlockId,
+  refreshRetrievalBlocksFromState,
 } from "./functions/retrieval-blocks.js";
 import { registerApiTriggers } from "./triggers/api.js";
 import { registerEventTriggers } from "./triggers/events.js";
@@ -404,7 +405,18 @@ async function main() {
     }
   }
 
-  const retrievalBlockCount = (await kv.list(KV.retrievalBlocks).catch(() => [])).length;
+  let retrievalBlockCount = (await kv.list(KV.retrievalBlocks).catch(() => [])).length;
+  if (retrievalBlockCount === 0) {
+    retrievalBlockCount = await refreshRetrievalBlocksFromState(kv).catch((err) => {
+      console.warn(`[agentmemory] Failed to refresh retrieval blocks from state:`, err);
+      return 0;
+    });
+    if (retrievalBlockCount > 0) {
+      console.log(
+        `[agentmemory] Retrieval blocks refreshed from state: ${retrievalBlockCount}`,
+      );
+    }
+  }
   console.log(
     `[agentmemory] Retrieval blocks: ${retrievalBlockCount} stored, ${getRetrievalSearchIndex().size} indexed`,
   );
