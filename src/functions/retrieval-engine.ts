@@ -19,12 +19,14 @@ import { SearchIndex } from "../state/search-index.js";
 import { GraphRetrieval } from "./graph-retrieval.js";
 import { extractEntitiesFromQuery } from "./query-expansion.js";
 import {
+  collectLightweightRetrievalBlocksFromState,
   collectRetrievalBlocksFromState,
 } from "./retrieval-blocks.js";
 
 const QUERY_EMBEDDING_CACHE_MAX_ENTRIES = 128;
 const QUERY_EMBEDDING_CACHE_TTL_MS = 5 * 60_000;
 const QUERY_EMBEDDING_TIMEOUT_MS = 2500;
+const RETRIEVAL_BLOCK_SCOPE_COOLDOWN_MS = 60_000;
 
 type CachedQueryEmbedding = {
   embedding: Float32Array;
@@ -32,6 +34,7 @@ type CachedQueryEmbedding = {
 };
 
 const queryEmbeddingCache = new Map<string, CachedQueryEmbedding>();
+let retrievalBlockScopeUnavailableUntil = 0;
 
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 3);
@@ -301,12 +304,32 @@ export async function retrieveRelevantBlocks(
     blocks.some(
       (block) => block.project === query.project || block.project === "global",
     );
-  let allBlocks = await kv.list<RetrievalBlock>(KV.retrievalBlocks).catch(() => []);
+  let allBlocks: RetrievalBlock[] = [];
+  let usingStateFallbackBlocks = false;
+  const canReadStoredBlocks = Date.now() >= retrievalBlockScopeUnavailableUntil;
+  if (canReadStoredBlocks) {
+    try {
+      allBlocks = await kv.list<RetrievalBlock>(KV.retrievalBlocks);
+      retrievalBlockScopeUnavailableUntil = 0;
+    } catch {
+      retrievalBlockScopeUnavailableUntil = Date.now() + RETRIEVAL_BLOCK_SCOPE_COOLDOWN_MS;
+    }
+  }
   const shouldRefreshBlocks =
     allBlocks.length === 0 ||
     (Boolean(query.project) && !hasProjectCoverage(allBlocks));
   if (shouldRefreshBlocks) {
-    allBlocks = await collectRetrievalBlocksFromState(kv).catch(() => []);
+    const lightweightBlocks = await collectLightweightRetrievalBlocksFromState(kv, {
+      project: query.project,
+      sessionId: query.sessionId,
+    }).catch(() => []);
+    if (lightweightBlocks.length > 0) {
+      allBlocks = lightweightBlocks;
+      usingStateFallbackBlocks = true;
+    } else {
+      allBlocks = await collectRetrievalBlocksFromState(kv).catch(() => []);
+      usingStateFallbackBlocks = allBlocks.length > 0;
+    }
   }
   const blocks = allBlocks
     .filter((block) =>
@@ -344,8 +367,10 @@ export async function retrieveRelevantBlocks(
   ]).join(" ");
   const lexicalScores = new Map<string, number>();
   if (lexicalQuery.trim()) {
-    let lexicalResults = getRetrievalSearchIndex().searchDocuments(lexicalQuery, 120);
-    if (blocks.length > 0 && lexicalResults.length === 0) {
+    let lexicalResults = usingStateFallbackBlocks
+      ? []
+      : getRetrievalSearchIndex().searchDocuments(lexicalQuery, 120);
+    if (blocks.length > 0 && (usingStateFallbackBlocks || lexicalResults.length === 0)) {
       const fallbackIndex = new SearchIndex();
       for (const block of blocks) {
         fallbackIndex.addDocument(

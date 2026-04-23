@@ -875,6 +875,71 @@ export async function collectRetrievalBlocksFromState(
   return [...blocks.values()];
 }
 
+export async function collectLightweightRetrievalBlocksFromState(
+  kv: StateKV,
+  options?: {
+    project?: string;
+    sessionId?: string;
+  },
+): Promise<RetrievalBlock[]> {
+  const memories = await kv.list<Memory>(KV.memories).catch(() => []);
+  const semantic = await kv.list<SemanticMemory>(KV.semantic).catch(() => []);
+  const procedural = await kv.list<ProceduralMemory>(KV.procedural).catch(() => []);
+  const summaries = await kv.list<SessionSummary>(KV.summaries).catch(() => []);
+  const handoffs = await kv.list<HandoffPacket>(KV.handoffPackets).catch(() => []);
+  const branchOverlays = await kv.list<BranchOverlay>(KV.branchOverlays).catch(() => []);
+  const guardrails = await kv.list<GuardrailMemory>(KV.guardrails).catch(() => []);
+  const decisions = await kv.list<DecisionMemory>(KV.decisions).catch(() => []);
+  const dossiers = await kv.list<ComponentDossier>(KV.componentDossiers).catch(() => []);
+  const profiles = await kv.list<ProjectProfile>(KV.profiles).catch(() => []);
+  const observations = options?.sessionId
+    ? await kv.list<CompressedObservation>(KV.observations(options.sessionId)).catch(() => [])
+    : [];
+
+  const blocks = new Map<string, RetrievalBlock>();
+  const put = (block: RetrievalBlock | null) => {
+    if (!block) return;
+    if (
+      options?.project &&
+      block.project !== options.project &&
+      block.project !== "global"
+    ) {
+      return;
+    }
+    blocks.set(block.id, block);
+  };
+
+  for (const memory of memories.filter((item) => item.isLatest)) {
+    put(buildMemoryRetrievalBlock(memory));
+  }
+  for (const item of semantic) put(buildSemanticRetrievalBlock(item));
+  for (const item of procedural) put(buildProceduralRetrievalBlock(item));
+  for (const summary of summaries) put(buildSessionSummaryRetrievalBlock(summary));
+  for (const packet of handoffs) put(buildHandoffRetrievalBlock(packet));
+  for (const overlay of branchOverlays.filter((item) => item.status === "active")) {
+    put(buildBranchOverlayRetrievalBlock(overlay));
+  }
+  for (const guardrail of guardrails.filter((item) => item.status === "active")) {
+    put(buildGuardrailRetrievalBlock(guardrail));
+  }
+  for (const decision of decisions.filter((item) => item.status === "active")) {
+    put(buildDecisionRetrievalBlock(decision));
+  }
+  for (const dossier of dossiers) put(buildDossierRetrievalBlock(dossier));
+  for (const profile of profiles) put(buildProfileRetrievalBlock(profile));
+  for (const observation of observations) {
+    if (
+      observation.importance >= 6 ||
+      observation.type === "error" ||
+      observation.type === "decision"
+    ) {
+      put(buildObservationRetrievalBlock(observation, options?.project || "global"));
+    }
+  }
+
+  return [...blocks.values()];
+}
+
 export async function refreshRetrievalBlocksFromState(
   kv: StateKV,
 ): Promise<number> {

@@ -161,6 +161,12 @@ async function main() {
   });
 
   const kv = new StateKV(sdk);
+  const persistenceKv = new StateKV(sdk, {
+    timeoutMs: Math.max(
+      Number.parseInt(getEnvVar("STATE_KV_TIMEOUT_MS") || "5000", 10) || 5000,
+      20000,
+    ),
+  });
   const secret = getEnvVar("AGENTMEMORY_SECRET");
   const metricsStore = new MetricsStore(kv);
   const dedupMap = new DedupMap();
@@ -341,9 +347,9 @@ async function main() {
     };
   });
 
-  indexPersistence = new IndexPersistence(kv, bm25Index, vectorIndex);
+  indexPersistence = new IndexPersistence(persistenceKv, bm25Index, vectorIndex);
   retrievalIndexPersistence = new IndexPersistence(
-    kv,
+    persistenceKv,
     getRetrievalSearchIndex(),
     retrievalVectorIndex,
     KV.retrievalBlockIndex,
