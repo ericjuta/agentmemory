@@ -90,4 +90,22 @@ describe("Consistency checks", () => {
       ).toBe(true);
     }
   });
+
+  it("docker defaults stay pinned to the stable iii runtime lane", () => {
+    const compose = readText("docker-compose.yml");
+    const cli = readText("src/cli.ts");
+    const readme = readText("README.md");
+    const dockerConfig = readText("iii-config.docker.yaml");
+
+    expect(compose).toContain(
+      "${AGENTMEMORY_III_DOCKER_IMAGE:-docker.io/iiidev/iii:0.11.0}",
+    );
+    expect(compose).not.toContain("iiidev/iii:latest");
+    expect(cli).toContain('const DEFAULT_III_DOCKER_IMAGE = "docker.io/iiidev/iii:0.11.0"');
+    expect(cli).toContain('process.env["AGENTMEMORY_III_DOCKER_IMAGE"]');
+    expect(readme).toContain("iiidev/iii:0.11.0");
+    expect(dockerConfig).toContain("workers:");
+    expect(dockerConfig).toContain("- name: iii-http");
+    expect(dockerConfig).not.toContain("modules:");
+  });
 });

@@ -17,6 +17,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 const IS_WINDOWS = platform() === "win32";
 const IS_VERBOSE = args.includes("--verbose") || args.includes("-v");
+const DEFAULT_III_DOCKER_IMAGE = "docker.io/iiidev/iii:0.11.0";
 
 function vlog(msg: string): void {
   if (IS_VERBOSE) p.log.info(`[verbose] ${msg}`);
@@ -67,6 +68,13 @@ const skipEngine = args.includes("--no-engine");
 
 function getRestPort(): number {
   return parseInt(process.env["III_REST_PORT"] || "3111", 10) || 3111;
+}
+
+function getIiiDockerImage(): string {
+  const configured = process.env["AGENTMEMORY_III_DOCKER_IMAGE"]?.trim();
+  return configured && configured.length > 0
+    ? configured
+    : DEFAULT_III_DOCKER_IMAGE;
 }
 
 async function isEngineRunning(): Promise<boolean> {
@@ -795,8 +803,9 @@ async function runUpgrade() {
   }
 
   if (dockerBin) {
-    runCommand(dockerBin, ["pull", "iiidev/iii:latest"], {
-      label: "Pulling latest iii Docker image",
+    const iiiDockerImage = getIiiDockerImage();
+    runCommand(dockerBin, ["pull", iiiDockerImage], {
+      label: `Pulling iii Docker image (${iiiDockerImage})`,
       optional: true,
     });
   } else {

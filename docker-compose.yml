@@ -11,7 +11,7 @@ services:
     restart: "no"
 
   iii-engine:
-    image: docker.io/iiidev/iii:latest
+    image: ${AGENTMEMORY_III_DOCKER_IMAGE:-docker.io/iiidev/iii:0.11.0}
     depends_on:
       iii-data-perms:
         condition: service_completed_successfully

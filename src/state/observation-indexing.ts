@@ -75,6 +75,7 @@ export function buildObservationEmbeddingText(
 async function syncObservationEmbedding(
   kv: StateKV,
   observation: CompressedObservation,
+  options?: { allowWrite?: boolean },
 ): Promise<void> {
   const { embeddingProvider, vectorIndex } = runtime;
   if (!embeddingProvider || !vectorIndex) return;
@@ -101,6 +102,10 @@ async function syncObservationEmbedding(
     return;
   }
 
+  if (options?.allowWrite === false) {
+    return;
+  }
+
   const embedding = await embeddingProvider.embed(text);
   vectorIndex.add(observation.id, observation.sessionId, embedding);
   await kv.set(KV.embeddings(observation.id), "data", {
@@ -117,11 +122,13 @@ export async function indexCompressedObservation(
   kv: StateKV,
   bm25: SearchIndex,
   observation: CompressedObservation,
-  options?: { scheduleSave?: boolean },
+  options?: { scheduleSave?: boolean; syncEmbedding?: boolean },
 ): Promise<void> {
   bm25.add(observation);
   try {
-    await syncObservationEmbedding(kv, observation);
+    await syncObservationEmbedding(kv, observation, {
+      allowWrite: options?.syncEmbedding !== false,
+    });
   } catch (err) {
     logger.warn("Failed to index observation embedding", {
       obsId: observation.id,

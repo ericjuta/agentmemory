@@ -132,6 +132,36 @@ describe("observation indexing", () => {
     expect(vector.size).toBe(1);
   });
 
+  it("can skip embedding sync while still updating BM25", async () => {
+    const kv = mockKV();
+    const bm25 = new SearchIndex();
+    const vector = new VectorIndex();
+    const scheduleSave = vi.fn();
+    const embed = vi.fn(async () => new Float32Array([0.1, 0.2, 0.3]));
+    const provider: EmbeddingProvider = {
+      name: "test-embeddings",
+      dimensions: 3,
+      embed,
+      embedBatch: vi.fn(),
+    };
+
+    configureObservationIndexingRuntime({
+      embeddingProvider: provider,
+      vectorIndex: vector,
+      scheduleSave,
+    });
+
+    await indexCompressedObservation(kv as never, bm25, makeObs(), {
+      syncEmbedding: false,
+    });
+
+    expect(bm25.search("auth")).toHaveLength(1);
+    expect(vector.size).toBe(0);
+    expect(embed).not.toHaveBeenCalled();
+    expect(scheduleSave).toHaveBeenCalledTimes(1);
+    expect(await kv.get<any>(KV.embeddings("obs_1"), "data")).toBeNull();
+  });
+
   it("rebuildIndex repopulates the vector index from stored compressed observations", async () => {
     const kv = mockKV();
     const vector = new VectorIndex();
@@ -150,6 +180,11 @@ describe("observation indexing", () => {
       scheduleSave,
     });
 
+    await indexCompressedObservation(kv as never, getSearchIndex(), makeObs());
+    vector.clear();
+    getSearchIndex().clear();
+    embed.mockClear();
+
     await kv.set(KV.sessions, "ses_1", {
       id: "ses_1",
       startedAt: new Date().toISOString(),
@@ -162,6 +197,6 @@ describe("observation indexing", () => {
     expect(rebuilt).toBe(1);
     expect(getSearchIndex().search("auth")).toHaveLength(1);
     expect(vector.size).toBe(1);
-    expect(embed).toHaveBeenCalledTimes(1);
+    expect(embed).not.toHaveBeenCalled();
   });
 });

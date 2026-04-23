@@ -54,7 +54,10 @@ export async function rebuildIndex(kv: StateKV): Promise<number> {
   for (const observations of obsPerSession) {
     for (const obs of observations) {
       if (obs.title && obs.narrative) {
-        await indexCompressedObservation(kv, idx, obs, { scheduleSave: false });
+        await indexCompressedObservation(kv, idx, obs, {
+          scheduleSave: false,
+          syncEmbedding: false,
+        });
         count++;
       }
     }

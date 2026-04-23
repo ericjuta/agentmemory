@@ -1,5 +1,4 @@
 // Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
-import { registerWorker } from "iii-sdk";
 import {
   loadConfig,
   getEnvVar,
@@ -20,6 +19,7 @@ import {
 } from "./providers/index.js";
 import { StateKV } from "./state/kv.js";
 import { KV } from "./state/schema.js";
+import { registerWorker } from "./iii-sdk-worker.js";
 import { VectorIndex } from "./state/vector-index.js";
 import { HybridSearch } from "./state/hybrid-search.js";
 import { IndexPersistence } from "./state/index-persistence.js";

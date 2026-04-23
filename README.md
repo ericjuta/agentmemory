@@ -313,7 +313,7 @@ Use the maintenance command when you intentionally want to update your local run
 npx @agentmemory/agentmemory upgrade
 ```
 
-Warning: this command mutates the current workspace/runtime. It can update JavaScript dependencies, may run `cargo install iii-engine --force`, and may pull Docker images.
+Warning: this command mutates the current workspace/runtime. It can update JavaScript dependencies, may run `cargo install iii-engine --force`, and may pull the configured iii Docker image.
 
 Implementation details live in `src/cli.ts` (see `runUpgrade` around the `src/cli.ts:544-595` region).
 
@@ -396,7 +396,7 @@ Install `iii-engine` manually:
 - **macOS / Linux:** `curl -fsSL https://install.iii.dev/iii/main/install.sh | sh`
 - **Windows:** download `iii-x86_64-pc-windows-msvc.zip` from [iii-hq/iii releases](https://github.com/iii-hq/iii/releases/latest), extract `iii.exe`, add to PATH
 
-Or use Docker (the bundled `docker-compose.yml` pulls `iiidev/iii:latest`). Full docs: [iii.dev/docs](https://iii.dev/docs).
+Or use Docker (the bundled `docker-compose.yml` defaults to `iiidev/iii:0.11.0`; override with `AGENTMEMORY_III_DOCKER_IMAGE` if needed). Full docs: [iii.dev/docs](https://iii.dev/docs).
 
 ### Windows
 

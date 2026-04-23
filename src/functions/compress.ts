@@ -158,7 +158,9 @@ export function registerCompressFunction(
               compressed,
             );
 
-            await indexCompressedObservation(kv, getSearchIndex(), compressed);
+            await indexCompressedObservation(kv, getSearchIndex(), compressed, {
+              syncEmbedding: false,
+            });
             const sessionProject =
               (await kv.get<{ project?: string }>(KV.sessions, data.sessionId).catch(() => null))
                 ?.project || "";
