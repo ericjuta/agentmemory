@@ -90,6 +90,7 @@ import { registerTemporalGraphFunctions } from "./functions/temporal-graph.js";
 import { registerRetentionFunctions } from "./functions/retention.js";
 import { registerCompressFileFunction } from "./functions/compress-file.js";
 import {
+  deleteStoredRetrievalBlock,
   retrievalBlockId,
 } from "./functions/retrieval-blocks.js";
 import { registerApiTriggers } from "./triggers/api.js";
@@ -185,14 +186,11 @@ async function main() {
     vectorIndex?.remove(obsId);
     void kv.delete(KV.embeddings(obsId), "data").catch(() => {});
     indexPersistence?.scheduleSave();
-    void kv
-      .delete(KV.retrievalBlocks, retrievalBlockId("observation", obsId))
-      .catch(() => {});
-    getRetrievalSearchIndex().remove(retrievalBlockId("observation", obsId));
-    retrievalVectorIndex?.remove(retrievalBlockId("observation", obsId));
-    void kv
-      .delete(KV.retrievalBlockEmbeddings(retrievalBlockId("observation", obsId)), "data")
-      .catch(() => {});
+    void deleteStoredRetrievalBlock(
+      kv,
+      retrievalBlockId("observation", obsId),
+      { scheduleSave: false },
+    ).catch(() => {});
     // Background graph cleanup - mark nodes stale when all source observations gone
     if (isGraphExtractionEnabled()) {
       pruneGraphForObservation(kv, obsId).catch(() => {});

@@ -3,8 +3,8 @@ import type { Session } from "../types.js";
 import { KV } from "../state/schema.js";
 import type { StateKV } from "../state/kv.js";
 import { logger } from "../logger.js";
-import { detectWorktreeInfo } from "./branch-utils.js";
 import { retrieveRelevantBlocks } from "./retrieval-engine.js";
+import { resolveSessionBranch } from "./session-branch.js";
 
 export function registerContextFunction(
   sdk: ISdk,
@@ -21,9 +21,7 @@ export function registerContextFunction(
     }) => {
       const budget = data.budget || tokenBudget;
       const session = await kv.get<Session>(KV.sessions, data.sessionId).catch(() => null);
-      const branch =
-        session?.branch ||
-        (session?.cwd ? (await detectWorktreeInfo(session.cwd)).branch || undefined : undefined);
+      const branch = await resolveSessionBranch(kv, session);
 
       const result = await retrieveRelevantBlocks(kv, {
         project: data.project,

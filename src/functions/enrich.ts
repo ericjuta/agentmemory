@@ -3,8 +3,8 @@ import type { Session } from "../types.js";
 import { KV } from "../state/schema.js";
 import type { StateKV } from "../state/kv.js";
 import { logger } from "../logger.js";
-import { detectWorktreeInfo } from "./branch-utils.js";
 import { retrieveRelevantBlocks } from "./retrieval-engine.js";
+import { resolveSessionBranch } from "./session-branch.js";
 
 const MAX_CONTEXT_LENGTH = 4000;
 
@@ -16,12 +16,10 @@ export function registerEnrichFunction(sdk: ISdk, kv: StateKV): void {
       files: string[];
       terms?: string[];
       toolName?: string;
-    }) => {
+      }) => {
       const session = await kv.get<Session>(KV.sessions, data.sessionId).catch(() => null);
       const project = session?.project || "";
-      const branch =
-        session?.branch ||
-        (session?.cwd ? (await detectWorktreeInfo(session.cwd)).branch || undefined : undefined);
+      const branch = await resolveSessionBranch(kv, session);
       const query = [...(data.files || []), ...(data.terms || [])].filter(Boolean).join(" ");
 
       const result = await retrieveRelevantBlocks(kv, {

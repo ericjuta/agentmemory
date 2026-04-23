@@ -115,7 +115,9 @@ describe("Consolidate Function", () => {
     });
     const kv = {
       list,
+      get: vi.fn(async () => null),
       set: vi.fn(async <T>(_scope: string, _key: string, data: T): Promise<T> => data),
+      delete: vi.fn(async () => {}),
     };
 
     registerConsolidateFunction(sdk as never, kv as never, provider);
@@ -161,7 +163,9 @@ describe("Consolidate Function", () => {
     });
     const kv = {
       list,
+      get: vi.fn(async () => null),
       set: vi.fn(async <T>(_scope: string, _key: string, data: T): Promise<T> => data),
+      delete: vi.fn(async () => {}),
     };
 
     registerConsolidateFunction(sdk as never, kv as never, provider);

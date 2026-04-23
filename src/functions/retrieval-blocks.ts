@@ -23,7 +23,12 @@ import {
   indexRetrievalBlock,
   removeRetrievalBlock,
 } from "../state/retrieval-block-indexing.js";
+import { invalidateContextResultCache } from "./context-result-cache.js";
 import { listProjectedBeliefs } from "./beliefs.js";
+import {
+  removeRetrievalBlockScopeMembership,
+  upsertRetrievalBlockScopeMembership,
+} from "./retrieval-block-scope-index.js";
 
 function uniqueStrings(values: Array<string | undefined>): string[] {
   return [...new Set(values.filter((value): value is string => Boolean(value && value.trim())).map((value) => value.trim()))];
@@ -692,9 +697,31 @@ export async function upsertRetrievalBlock(
   kv: StateKV,
   block: RetrievalBlock,
 ): Promise<RetrievalBlock> {
+  const previous = await kv.get<RetrievalBlock>(KV.retrievalBlocks, block.id).catch(() => null);
   await kv.set(KV.retrievalBlocks, block.id, block);
+  await upsertRetrievalBlockScopeMembership(kv, block, previous);
   await indexRetrievalBlock(kv, block);
+  invalidateContextResultCache();
   return block;
+}
+
+export async function deleteStoredRetrievalBlock(
+  kv: StateKV,
+  blockId: string,
+  options?: { block?: RetrievalBlock | null; scheduleSave?: boolean },
+): Promise<void> {
+  const block =
+    options?.block === undefined
+      ? await kv.get<RetrievalBlock>(KV.retrievalBlocks, blockId).catch(() => null)
+      : options.block;
+  await kv.delete(KV.retrievalBlocks, blockId).catch(() => {});
+  if (block) {
+    await removeRetrievalBlockScopeMembership(kv, block).catch(() => {});
+  }
+  await removeRetrievalBlock(kv, blockId, { scheduleSave: options?.scheduleSave }).catch(
+    () => {},
+  );
+  invalidateContextResultCache();
 }
 
 export async function upsertTurnCapsuleRetrievalBlock(
@@ -882,23 +909,39 @@ export async function collectLightweightRetrievalBlocksFromState(
     sessionId?: string;
   },
 ): Promise<RetrievalBlock[]> {
-  const sessions = await kv.list<Session>(KV.sessions).catch(() => []);
+  const [
+    sessions,
+    turnCapsules,
+    workingSets,
+    summaries,
+    memories,
+    semantic,
+    procedural,
+    handoffs,
+    branchOverlays,
+    guardrails,
+    decisions,
+    dossiers,
+    profiles,
+  ] = await Promise.all([
+    kv.list<Session>(KV.sessions).catch(() => []),
+    kv.list<TurnCapsule>(KV.turnCapsules).catch(() => []),
+    kv.list<SessionWorkingSet>(KV.workingSets).catch(() => []),
+    kv.list<SessionSummary>(KV.summaries).catch(() => []),
+    kv.list<Memory>(KV.memories).catch(() => []),
+    kv.list<SemanticMemory>(KV.semantic).catch(() => []),
+    kv.list<ProceduralMemory>(KV.procedural).catch(() => []),
+    kv.list<HandoffPacket>(KV.handoffPackets).catch(() => []),
+    kv.list<BranchOverlay>(KV.branchOverlays).catch(() => []),
+    kv.list<GuardrailMemory>(KV.guardrails).catch(() => []),
+    kv.list<DecisionMemory>(KV.decisions).catch(() => []),
+    kv.list<ComponentDossier>(KV.componentDossiers).catch(() => []),
+    kv.list<ProjectProfile>(KV.profiles).catch(() => []),
+  ]);
   const sessionById = new Map(sessions.map((session) => [session.id, session] as const));
   const resolvedProject =
     options?.project ||
     (options?.sessionId ? sessionById.get(options.sessionId)?.project : undefined);
-  const turnCapsules = await kv.list<TurnCapsule>(KV.turnCapsules).catch(() => []);
-  const workingSets = await kv.list<SessionWorkingSet>(KV.workingSets).catch(() => []);
-  const summaries = await kv.list<SessionSummary>(KV.summaries).catch(() => []);
-  const memories = await kv.list<Memory>(KV.memories).catch(() => []);
-  const semantic = await kv.list<SemanticMemory>(KV.semantic).catch(() => []);
-  const procedural = await kv.list<ProceduralMemory>(KV.procedural).catch(() => []);
-  const handoffs = await kv.list<HandoffPacket>(KV.handoffPackets).catch(() => []);
-  const branchOverlays = await kv.list<BranchOverlay>(KV.branchOverlays).catch(() => []);
-  const guardrails = await kv.list<GuardrailMemory>(KV.guardrails).catch(() => []);
-  const decisions = await kv.list<DecisionMemory>(KV.decisions).catch(() => []);
-  const dossiers = await kv.list<ComponentDossier>(KV.componentDossiers).catch(() => []);
-  const profiles = await kv.list<ProjectProfile>(KV.profiles).catch(() => []);
   const sessionsForObservations = sessions
     .filter((session) => {
       if (options?.sessionId && session.id === options.sessionId) return true;
@@ -1026,8 +1069,13 @@ export async function collectLightweightRetrievalBlocksFromState(
       put(buildProfileRetrievalBlock(profile));
     }
   }
-  for (const project of beliefProjects) {
-    const beliefs = await listProjectedBeliefs(kv, project).catch(() => []);
+  const projectedBeliefs = await Promise.all(
+    beliefProjects.map(async (project) => ({
+      project,
+      beliefs: await listProjectedBeliefs(kv, project).catch(() => []),
+    })),
+  );
+  for (const { project, beliefs } of projectedBeliefs) {
     for (const belief of beliefs.filter((item) => item.status === "active")) {
       const block = buildBeliefRetrievalBlock(belief);
       block.project = project;
@@ -1035,13 +1083,18 @@ export async function collectLightweightRetrievalBlocksFromState(
     }
   }
 
-  for (const session of sessionsForObservations) {
-    const observations = await kv
-      .list<CompressedObservation>(KV.observations(session.id))
-      .catch(() => []);
+  const observationsBySession = await Promise.all(
+    sessionsForObservations.map(async (session) => ({
+      project: session.project,
+      observations: await kv
+        .list<CompressedObservation>(KV.observations(session.id))
+        .catch(() => []),
+    })),
+  );
+  for (const { project, observations } of observationsBySession) {
     for (const observation of observations) {
       if (shouldIndexObservation(observation)) {
-        put(buildObservationRetrievalBlock(observation, session.project));
+        put(buildObservationRetrievalBlock(observation, project));
       }
     }
   }
@@ -1060,8 +1113,10 @@ export async function refreshRetrievalBlocksFromState(
   const nextIds = new Set(blocks.keys());
   const staleBlocks = existing.filter((block) => !nextIds.has(block.id));
   await runSequentially(staleBlocks, async (block) => {
-    await kv.delete(KV.retrievalBlocks, block.id).catch(() => {});
-    await removeRetrievalBlock(kv, block.id, { scheduleSave: false }).catch(() => {});
+    await deleteStoredRetrievalBlock(kv, block.id, {
+      block,
+      scheduleSave: false,
+    }).catch(() => {});
   });
 
   const changedBlocks = [...blocks.values()].filter((block) => {
@@ -1070,8 +1125,12 @@ export async function refreshRetrievalBlocksFromState(
   });
 
   await runSequentially(changedBlocks, async (block) => {
+    const previous = existingById.get(block.id);
     await kv.set(KV.retrievalBlocks, block.id, block);
+    await upsertRetrievalBlockScopeMembership(kv, block, previous).catch(() => {});
   });
-
+  if (staleBlocks.length > 0 || changedBlocks.length > 0) {
+    invalidateContextResultCache();
+  }
   return blocks.size;
 }

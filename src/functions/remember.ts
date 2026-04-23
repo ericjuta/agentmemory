@@ -6,10 +6,10 @@ import { withKeyedLock } from "../state/keyed-mutex.js";
 import { deleteAccessLog } from "./access-tracker.js";
 import { logger } from "../logger.js";
 import {
+  deleteStoredRetrievalBlock,
   retrievalBlockId,
   upsertMemoryRetrievalBlock,
 } from "./retrieval-blocks.js";
-import { removeRetrievalBlock } from "../state/retrieval-block-indexing.js";
 
 export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
   sdk.registerFunction("mem::remember", 
@@ -132,12 +132,10 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
       if (data.memoryId) {
         await kv.delete(KV.memories, data.memoryId);
         await deleteAccessLog(kv, data.memoryId);
-        await kv
-          .delete(KV.retrievalBlocks, retrievalBlockId("memory", data.memoryId))
-          .catch(() => {});
-        await removeRetrievalBlock(kv, retrievalBlockId("memory", data.memoryId)).catch(
-          () => {},
-        );
+        await deleteStoredRetrievalBlock(
+          kv,
+          retrievalBlockId("memory", data.memoryId),
+        ).catch(() => {});
         deleted++;
       }
 
@@ -148,12 +146,10 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
       ) {
         for (const obsId of data.observationIds) {
           await kv.delete(KV.observations(data.sessionId), obsId);
-          await kv
-            .delete(KV.retrievalBlocks, retrievalBlockId("observation", obsId))
-            .catch(() => {});
-          await removeRetrievalBlock(kv, retrievalBlockId("observation", obsId)).catch(
-            () => {},
-          );
+          await deleteStoredRetrievalBlock(
+            kv,
+            retrievalBlockId("observation", obsId),
+          ).catch(() => {});
           deleted++;
         }
       }
@@ -168,40 +164,29 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
         );
         for (const obs of observations) {
           await kv.delete(KV.observations(data.sessionId), obs.id);
-          await kv
-            .delete(KV.retrievalBlocks, retrievalBlockId("observation", obs.id))
-            .catch(() => {});
-          await removeRetrievalBlock(kv, retrievalBlockId("observation", obs.id)).catch(
-            () => {},
-          );
+          await deleteStoredRetrievalBlock(
+            kv,
+            retrievalBlockId("observation", obs.id),
+          ).catch(() => {});
           deleted++;
         }
         const capsules = await kv.list<{ id: string; sessionId: string }>(KV.turnCapsules);
         for (const capsule of capsules.filter((item) => item.sessionId === data.sessionId)) {
           await kv.delete(KV.turnCapsules, capsule.id).catch(() => {});
-          await kv
-            .delete(KV.retrievalBlocks, retrievalBlockId("turn_capsule", capsule.id))
-            .catch(() => {});
-          await removeRetrievalBlock(
+          await deleteStoredRetrievalBlock(
             kv,
             retrievalBlockId("turn_capsule", capsule.id),
           ).catch(() => {});
           deleted++;
         }
         await kv.delete(KV.workingSets, data.sessionId).catch(() => {});
-        await kv
-          .delete(KV.retrievalBlocks, retrievalBlockId("working_set", data.sessionId))
-          .catch(() => {});
-        await removeRetrievalBlock(
+        await deleteStoredRetrievalBlock(
           kv,
           retrievalBlockId("working_set", data.sessionId),
         ).catch(() => {});
         await kv.delete(KV.sessions, data.sessionId);
         await kv.delete(KV.summaries, data.sessionId);
-        await kv
-          .delete(KV.retrievalBlocks, retrievalBlockId("session_summary", data.sessionId))
-          .catch(() => {});
-        await removeRetrievalBlock(
+        await deleteStoredRetrievalBlock(
           kv,
           retrievalBlockId("session_summary", data.sessionId),
         ).catch(() => {});

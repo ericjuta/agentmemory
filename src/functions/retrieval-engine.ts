@@ -19,9 +19,18 @@ import { SearchIndex } from "../state/search-index.js";
 import { GraphRetrieval } from "./graph-retrieval.js";
 import { extractEntitiesFromQuery } from "./query-expansion.js";
 import {
+  contextResultCacheKey,
+  getCachedContextResult,
+  setCachedContextResult,
+} from "./context-result-cache.js";
+import {
   collectLightweightRetrievalBlocksFromState,
   collectRetrievalBlocksFromState,
 } from "./retrieval-blocks.js";
+import {
+  loadScopedRetrievalBlocks,
+  warmRetrievalBlockScopeMemberships,
+} from "./retrieval-block-scope-index.js";
 
 const QUERY_EMBEDDING_CACHE_MAX_ENTRIES = 128;
 const QUERY_EMBEDDING_CACHE_TTL_MS = 5 * 60_000;
@@ -300,6 +309,25 @@ export async function retrieveRelevantBlocks(
   kv: StateKV,
   query: UnifiedRetrievalQuery,
 ): Promise<UnifiedRetrievalResult> {
+  const cacheKey = contextResultCacheKey(query);
+  if (cacheKey) {
+    const cached = getCachedContextResult(cacheKey);
+    if (cached) {
+      const timestamp = new Date().toISOString();
+      cached.trace.generatedAt = timestamp;
+      if (cached.trace.usefulnessLink && query.sessionId) {
+        const usefulnessLink = {
+          sessionId: query.sessionId,
+          memoryIds: cached.trace.usefulnessLink.memoryIds,
+          timestamp,
+        };
+        cached.trace.usefulnessLink = usefulnessLink;
+        await kv.set(KV.contextInjections, query.sessionId, usefulnessLink).catch(() => {});
+      }
+      return cached;
+    }
+  }
+
   const hasProjectCoverage = (blocks: RetrievalBlock[]): boolean =>
     blocks.some(
       (block) => block.project === query.project || block.project === "global",
@@ -310,7 +338,19 @@ export async function retrieveRelevantBlocks(
   const canReadStoredBlocks = Date.now() >= retrievalBlockScopeUnavailableUntil;
   if (canReadStoredBlocks) {
     try {
-      allBlocks = await kv.list<RetrievalBlock>(KV.retrievalBlocks);
+      const scopedBlocks = await loadScopedRetrievalBlocks(kv, {
+        project: query.project,
+        sessionId: query.sessionId,
+        branch: query.branch,
+      }).catch(() => ({ blocks: [], complete: false }));
+      if (scopedBlocks.complete) {
+        allBlocks = scopedBlocks.blocks;
+      } else {
+        allBlocks = await kv.list<RetrievalBlock>(KV.retrievalBlocks);
+        if (allBlocks.length > 0) {
+          void warmRetrievalBlockScopeMemberships(kv, allBlocks).catch(() => {});
+        }
+      }
       retrievalBlockScopeUnavailableUntil = 0;
     } catch {
       storedBlockReadFailed = true;
@@ -825,13 +865,17 @@ export async function retrieveRelevantBlocks(
     usefulnessLink,
   };
 
-  return {
+  const result = {
     context,
     blocks: selectedBlocks,
     tokens: usedTokens,
     trace,
     searchResults,
   };
+  if (cacheKey && !usingStateFallbackBlocks) {
+    setCachedContextResult(cacheKey, result);
+  }
+  return result;
 }
 
 function normalizeImportance(value: number): number {

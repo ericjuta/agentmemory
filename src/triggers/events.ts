@@ -4,6 +4,7 @@ import type { HookPayload, Session } from "../types.js";
 import { KV, STREAM } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
 import type { CompressionTracker } from "../state/compression-tracker.js";
+import { detectWorktreeInfo } from "../functions/branch-utils.js";
 
 export function registerEventTriggers(
   sdk: ISdk,
@@ -13,10 +14,14 @@ export function registerEventTriggers(
   sdk.registerFunction(
     "event::session::started",
     async (data: { sessionId: string; project: string; cwd: string }) => {
+      const branch = data.cwd
+        ? (await detectWorktreeInfo(data.cwd)).branch || undefined
+        : undefined;
       const session: Session = {
         id: data.sessionId,
         project: data.project,
         cwd: data.cwd,
+        branch,
         startedAt: new Date().toISOString(),
         status: "active",
         observationCount: 0,

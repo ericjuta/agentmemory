@@ -28,6 +28,8 @@ import {
   configureRetrievalBlockIndexingRuntime,
   getRetrievalSearchIndex,
 } from "../src/state/retrieval-block-indexing.js";
+import { resetContextResultCacheForTests } from "../src/functions/context-result-cache.js";
+import { warmRetrievalBlockScopeMemberships } from "../src/functions/retrieval-block-scope-index.js";
 import type { RetrievalBlock } from "../src/types.js";
 
 describe("retrieveRelevantBlocks", () => {
@@ -35,6 +37,7 @@ describe("retrieveRelevantBlocks", () => {
     collectRetrievalBlocksFromStateMock.mockClear();
     collectLightweightRetrievalBlocksFromStateMock.mockClear();
     getRetrievalSearchIndex().clear();
+    resetContextResultCacheForTests();
     configureRetrievalBlockIndexingRuntime({
       embeddingProvider: null,
       vectorIndex: null,
@@ -83,6 +86,121 @@ describe("retrieveRelevantBlocks", () => {
     expect(collectRetrievalBlocksFromStateMock).not.toHaveBeenCalled();
     expect(result.searchResults).toHaveLength(1);
     expect(result.searchResults[0]?.block.id).toBe(block.id);
+  });
+
+  it("uses scoped retrieval block membership before falling back to the full block scope", async () => {
+    const kv = mockKV();
+    const block: RetrievalBlock = {
+      id: "rblk_scoped",
+      sourceType: "memory",
+      sourceId: "mem_scoped",
+      project: "/project",
+      scope: "project",
+      freshnessLane: "warm",
+      canonicalText: "Scoped retrieval membership keeps context reads narrow",
+      title: "Scoped memory",
+      files: ["src/context.ts"],
+      concepts: ["context"],
+      entities: ["context"],
+      sourceObservationIds: [],
+      hadFailure: false,
+      hadDecision: true,
+      hadAssistantConclusion: false,
+      isResumeArtifact: false,
+      importance: 7,
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+      eventAt: "2026-01-01T00:00:00Z",
+    };
+
+    await kv.set(KV.retrievalBlocks, block.id, block);
+    await warmRetrievalBlockScopeMemberships(kv as never, [block]);
+    getRetrievalSearchIndex().addDocument(
+      block.id,
+      block.project,
+      buildRetrievalBlockLexicalText(block),
+    );
+
+    const rawList = kv.list.bind(kv);
+    const listSpy = vi.fn(rawList);
+    kv.list = (async <T>(scope: string): Promise<T[]> => {
+      if (scope === KV.retrievalBlocks) {
+        throw new Error("full retrieval block scan should not run");
+      }
+      return listSpy(scope);
+    }) as typeof kv.list;
+
+    const result = await retrieveRelevantBlocks(kv as never, {
+      project: "/project",
+      query: "context",
+      budget: 300,
+      purpose: "smart-search",
+    });
+
+    expect(result.searchResults).toHaveLength(1);
+    expect(result.searchResults[0]?.block.id).toBe(block.id);
+  });
+
+  it("reuses cached no-query context results", async () => {
+    const kv = mockKV();
+    const block: RetrievalBlock = {
+      id: "rblk_cached",
+      sourceType: "turn_capsule",
+      sourceId: "turn_1",
+      project: "/project",
+      sessionId: "session-1",
+      turnId: "turn-1",
+      scope: "session",
+      freshnessLane: "hot",
+      canonicalText: "## Current Turn\nUser: optimize context\nConclusion: cached context result",
+      title: "Current turn",
+      files: ["src/context.ts"],
+      concepts: ["context"],
+      entities: ["context"],
+      sourceObservationIds: ["obs-1"],
+      hadFailure: false,
+      hadDecision: true,
+      hadAssistantConclusion: true,
+      isResumeArtifact: false,
+      importance: 8,
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+      eventAt: "2026-01-01T00:00:00Z",
+    };
+
+    await kv.set(KV.retrievalBlocks, block.id, block);
+    await warmRetrievalBlockScopeMemberships(kv as never, [block]);
+
+    const first = await retrieveRelevantBlocks(kv as never, {
+      project: "/project",
+      sessionId: "session-1",
+      budget: 300,
+      purpose: "context",
+    });
+
+    const rawGet = kv.get.bind(kv);
+    const rawList = kv.list.bind(kv);
+    let getCount = 0;
+    let listCount = 0;
+    kv.get = (async <T>(scope: string, key: string): Promise<T | null> => {
+      getCount += 1;
+      return rawGet(scope, key);
+    }) as typeof kv.get;
+    kv.list = (async <T>(scope: string): Promise<T[]> => {
+      listCount += 1;
+      return rawList(scope);
+    }) as typeof kv.list;
+
+    const second = await retrieveRelevantBlocks(kv as never, {
+      project: "/project",
+      sessionId: "session-1",
+      budget: 300,
+      purpose: "context",
+    });
+
+    expect(second.context).toBe(first.context);
+    expect(getCount).toBe(0);
+    expect(listCount).toBe(0);
   });
 
   it("falls back to lightweight state collection when the retrieval block scope is unavailable", async () => {
