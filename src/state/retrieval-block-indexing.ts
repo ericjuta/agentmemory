@@ -71,11 +71,14 @@ export function buildRetrievalBlockLexicalText(block: RetrievalBlock): string {
 }
 
 export function buildRetrievalBlockEmbeddingText(block: RetrievalBlock): string {
+  const focus = block.canonicalText.replace(/\s+/g, " ").trim().slice(0, 1200);
   return [
     `Title: ${block.title}`,
     `Source: ${block.sourceType}`,
     `Scope: ${block.scope}`,
     `Lane: ${block.freshnessLane}`,
+    block.branch ? `Branch: ${block.branch}` : "",
+    block.sessionId ? `Session: ${block.sessionId}` : "",
     block.files.length > 0 ? `Files: ${block.files.join(" | ")}` : "",
     block.concepts.length > 0 ? `Concepts: ${block.concepts.join(" | ")}` : "",
     block.entities.length > 0 ? `Entities: ${block.entities.join(" | ")}` : "",
@@ -84,7 +87,7 @@ export function buildRetrievalBlockEmbeddingText(block: RetrievalBlock): string 
     block.hadDecision ? "Had decision: true" : "",
     block.hadAssistantConclusion ? "Had assistant conclusion: true" : "",
     `Importance: ${block.importance}`,
-    block.canonicalText,
+    focus ? `Focus: ${focus}` : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -169,7 +172,81 @@ export async function rebuildRetrievalBlockIndex(kv: StateKV): Promise<number> {
   runtime.vectorIndex?.clear();
   const blocks = await kv.list<RetrievalBlock>(KV.retrievalBlocks).catch(() => []);
   for (const block of blocks) {
-    await indexRetrievalBlock(kv, block, { scheduleSave: false });
+    bm25.addDocument(
+      block.id,
+      block.sessionId || block.project,
+      buildRetrievalBlockLexicalText(block),
+    );
+  }
+  const { embeddingProvider, vectorIndex } = runtime;
+  if (embeddingProvider && vectorIndex && blocks.length > 0) {
+    const prepared = await Promise.all(
+      blocks.map(async (block) => {
+        const text = buildRetrievalBlockEmbeddingText(block);
+        const textFingerprint = fingerprintId(
+          "rblkemb",
+          `${embeddingProvider.name}:${text}`,
+        );
+        const cached = await kv
+          .get<StoredRetrievalBlockEmbedding>(
+            KV.retrievalBlockEmbeddings(block.id),
+            "data",
+          )
+          .catch(() => null);
+        return { block, text, textFingerprint, cached };
+      }),
+    );
+
+    const stale: Array<{
+      block: RetrievalBlock;
+      text: string;
+      textFingerprint: string;
+    }> = [];
+
+    for (const item of prepared) {
+      if (
+        item.cached &&
+        item.cached.provider === embeddingProvider.name &&
+        item.cached.dimensions === embeddingProvider.dimensions &&
+        item.cached.textFingerprint === item.textFingerprint &&
+        typeof item.cached.embedding === "string"
+      ) {
+        vectorIndex.add(
+          item.block.id,
+          item.block.sessionId || item.block.project,
+          base64ToFloat32(item.cached.embedding),
+        );
+        continue;
+      }
+      stale.push({
+        block: item.block,
+        text: item.text,
+        textFingerprint: item.textFingerprint,
+      });
+    }
+
+    if (stale.length > 0) {
+      const embeddings = await embeddingProvider.embedBatch(
+        stale.map((item) => item.text),
+      );
+      await Promise.all(
+        stale.map(async (item, index) => {
+          const embedding = embeddings[index];
+          vectorIndex.add(
+            item.block.id,
+            item.block.sessionId || item.block.project,
+            embedding,
+          );
+          await kv.set(KV.retrievalBlockEmbeddings(item.block.id), "data", {
+            provider: embeddingProvider.name,
+            dimensions: embeddingProvider.dimensions,
+            textFingerprint: item.textFingerprint,
+            embedding: float32ToBase64(embedding),
+            updatedAt: new Date().toISOString(),
+          } satisfies StoredRetrievalBlockEmbedding);
+        }),
+      );
+    }
   }
   return blocks.length;
 }
