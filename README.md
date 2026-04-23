@@ -382,6 +382,18 @@ Then add the MCP config for your agent:
 | **Aider** | REST API: `curl -X POST http://localhost:3111/agentmemory/smart-search -d '{"query": "auth"}'` |
 | **Any agent (32+)** | `npx skillkit install agentmemory` |
 
+#### Codex integration levels
+
+- `Generic Codex CLI`: MCP only via `.codex/config.yaml`
+- `Codex-native adapter or fork`: optional deeper path that uses the always-on
+  REST lifecycle lane for `session/start`, `observe`, `context/refresh` or
+  `context`, `handoffs`, `summarize`, `session/end`, `crystals/auto`, and
+  `consolidate-pipeline`
+- `Explicit memory commands`: broader human-invoked surface for `remember`,
+  `lessons`, `actions`, `frontier`, `next`, `missions`, `guardrails`,
+  `decisions`, `dossiers`, `handoffs`, and related review/planning flows
+- Surface contract: [`docs/codex_surface_contract_spec.md`](docs/codex_surface_contract_spec.md)
+
 ### From source
 
 ```bash
@@ -808,6 +820,7 @@ Create `.env.local` in the repo root:
 | `POST` | `/agentmemory/missions` | Create a mission |
 | `GET` | `/agentmemory/missions/:id` | Get mission state + projection |
 | `POST` | `/agentmemory/handoffs/generate` | Generate a durable handoff packet |
+| `GET` | `/agentmemory/handoffs` | List handoff packets |
 | `GET` | `/agentmemory/handoffs/:id` | Get a handoff packet |
 | `GET` | `/agentmemory/branch-overlays` | Review branch-scoped overlay notes |
 | `GET` | `/agentmemory/guardrails` | Review negative-memory guardrails |
@@ -817,6 +830,7 @@ Create `.env.local` in the repo root:
 | `POST` | `/agentmemory/remember` | Save to long-term memory |
 | `POST` | `/agentmemory/forget` | Delete observations |
 | `POST` | `/agentmemory/enrich` | File context + memories + bugs |
+| `POST` | `/agentmemory/context/refresh` | Query-aware freshness-first context |
 | `GET` | `/agentmemory/profile` | Project profile |
 | `GET` | `/agentmemory/export` | Export all data |
 | `POST` | `/agentmemory/import` | Import from JSON |
@@ -825,6 +839,11 @@ Create `.env.local` in the repo root:
 | `GET` | `/agentmemory/audit` | Audit trail |
 
 Full endpoint list: [`src/triggers/api.ts`](src/triggers/api.ts)
+
+Codex note: MCP-only setup is not the same as native lifecycle capture. For the
+receiver-side split between the always-on runtime lane and the broader explicit
+memory lane, see
+[`docs/codex_surface_contract_spec.md`](docs/codex_surface_contract_spec.md).
 
 </details>
 

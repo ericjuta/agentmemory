@@ -2,6 +2,10 @@
 
 # Codex Follow-Ups Spec
 
+This document records the follow-up lane that closed the initial Codex gap.
+For the current receiver-side surface and UX contract, see
+[`docs/codex_surface_contract_spec.md`](./codex_surface_contract_spec.md).
+
 ## Goal
 
 Lock in the currently working Codex-to-agentmemory integration with explicit
