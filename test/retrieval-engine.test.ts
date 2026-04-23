@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const collectRetrievalBlocksFromStateMock = vi.fn(async () => []);
+const { collectRetrievalBlocksFromStateMock } = vi.hoisted(() => ({
+  collectRetrievalBlocksFromStateMock: vi.fn(async () => []),
+}));
 
 vi.mock("../src/functions/retrieval-blocks.js", async () => {
   const actual = await vi.importActual<typeof import("../src/functions/retrieval-blocks.js")>(
