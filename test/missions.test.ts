@@ -175,4 +175,85 @@ describe("missions", () => {
     expect(fetched.statusSummary.status).toBe("completed");
     expect(fetched.statusSummary.actionCounts.done).toBe(1);
   });
+
+  it("keeps mission-get and mission-list read-only", async () => {
+    const setSpy = vi.spyOn(kv, "set");
+    const mission = (await sdk.trigger("mem::mission-create", {
+      goal: "Read-only projection",
+      project: "/project",
+      owner: "agent-3",
+    })) as { mission: { id: string } };
+
+    const missionSetCallsBefore = setSpy.mock.calls.filter(
+      ([scope]) => scope === KV.missions,
+    ).length;
+
+    await sdk.trigger("mem::mission-get", {
+      missionId: mission.mission.id,
+    });
+    await sdk.trigger("mem::mission-list", {
+      project: "/project",
+    });
+
+    const missionSetCallsAfter = setSpy.mock.calls.filter(
+      ([scope]) => scope === KV.missions,
+    ).length;
+
+    expect(missionSetCallsAfter).toBe(missionSetCallsBefore);
+  });
+
+  it("lists missions even when stored arrays are malformed", async () => {
+    await kv.set(
+      KV.missions,
+      "legacy-mission",
+      {
+        id: "legacy-mission",
+        createdAt: "2026-04-20T00:00:00.000Z",
+        updatedAt: "2026-04-20T00:00:00.000Z",
+        project: "/project",
+        goal: "Legacy mission",
+        successCriteria: undefined,
+        status: "active",
+        phase: "planned",
+        owner: "legacy-agent",
+        summary: "",
+        risk: "",
+        confidence: 0.5,
+        actionIds: undefined,
+        checkpointIds: undefined,
+        sentinelIds: undefined,
+        leaseIds: undefined,
+        routineIds: undefined,
+      } as never,
+    );
+
+    await kv.set(
+      KV.checkpoints,
+      "legacy-checkpoint",
+      {
+        id: "legacy-checkpoint",
+        name: "Legacy checkpoint",
+        description: "",
+        status: "pending",
+        type: "approval",
+        createdAt: "2026-04-20T00:00:00.000Z",
+        linkedActionIds: undefined,
+        missionId: "legacy-mission",
+      } as never,
+    );
+
+    const listed = (await sdk.trigger("mem::mission-list", {
+      project: "/project",
+    })) as {
+      success: boolean;
+      partialFailures?: number;
+      missions: Array<{ mission: { id: string } }>;
+    };
+
+    expect(listed.success).toBe(true);
+    expect(listed.partialFailures).toBe(0);
+    expect(listed.missions.map((entry) => entry.mission.id)).toContain(
+      "legacy-mission",
+    );
+  });
 });

@@ -31,6 +31,65 @@ function uniqueIds(ids: string[]): string[] {
   return [...new Set(ids.filter(Boolean))];
 }
 
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return uniqueIds(
+    value.filter((item): item is string => typeof item === "string" && item.trim().length > 0),
+  );
+}
+
+function normalizeMissionStatus(value: unknown): Mission["status"] {
+  if (
+    value === "draft" ||
+    value === "active" ||
+    value === "blocked" ||
+    value === "completed" ||
+    value === "cancelled"
+  ) {
+    return value;
+  }
+  return "active";
+}
+
+function normalizeMission(raw: Mission): Mission {
+  return {
+    ...raw,
+    goal: typeof raw.goal === "string" ? raw.goal : "",
+    project: typeof raw.project === "string" ? raw.project : "",
+    phase: typeof raw.phase === "string" ? raw.phase : "planned",
+    owner: typeof raw.owner === "string" && raw.owner.trim() ? raw.owner : "unknown",
+    summary: typeof raw.summary === "string" ? raw.summary : "",
+    risk: typeof raw.risk === "string" ? raw.risk : "",
+    confidence:
+      typeof raw.confidence === "number" ? Math.max(0, Math.min(1, raw.confidence)) : 0.5,
+    successCriteria: normalizeStringArray((raw as { successCriteria?: unknown }).successCriteria),
+    actionIds: normalizeStringArray((raw as { actionIds?: unknown }).actionIds),
+    checkpointIds: normalizeStringArray((raw as { checkpointIds?: unknown }).checkpointIds),
+    sentinelIds: normalizeStringArray((raw as { sentinelIds?: unknown }).sentinelIds),
+    leaseIds: normalizeStringArray((raw as { leaseIds?: unknown }).leaseIds),
+    routineIds: normalizeStringArray((raw as { routineIds?: unknown }).routineIds),
+    status: normalizeMissionStatus(raw.status),
+  };
+}
+
+function normalizeCheckpoint(raw: Checkpoint): Checkpoint {
+  return {
+    ...raw,
+    linkedActionIds: normalizeStringArray(
+      (raw as { linkedActionIds?: unknown }).linkedActionIds,
+    ),
+  };
+}
+
+function normalizeSentinel(raw: Sentinel): Sentinel {
+  return {
+    ...raw,
+    linkedActionIds: normalizeStringArray(
+      (raw as { linkedActionIds?: unknown }).linkedActionIds,
+    ),
+  };
+}
+
 function actionCountRecord(): Record<Action["status"], number> {
   return {
     pending: 0,
@@ -256,7 +315,9 @@ async function projectMission(
   kv: StateKV,
   mission: Mission,
   actor: string,
+  options?: { persist?: boolean },
 ): Promise<MissionProjection> {
+  const normalizedMission = normalizeMission(mission);
   const [
     allActions,
     allCheckpoints,
@@ -276,25 +337,26 @@ async function projectMission(
   const actions = sortByMostRecent(
     allActions.filter(
       (action) =>
-        action.missionId === mission.id || mission.actionIds.includes(action.id),
+        action.missionId === normalizedMission.id ||
+        normalizedMission.actionIds.includes(action.id),
     ),
   );
   const actionIds = uniqueIds(actions.map((action) => action.id));
 
   const checkpoints = sortByMostRecent(
-    allCheckpoints.filter(
+    allCheckpoints.map(normalizeCheckpoint).filter(
       (checkpoint) =>
-        checkpoint.missionId === mission.id ||
-        mission.checkpointIds.includes(checkpoint.id) ||
+        checkpoint.missionId === normalizedMission.id ||
+        normalizedMission.checkpointIds.includes(checkpoint.id) ||
         checkpoint.linkedActionIds.some((actionId) => actionIds.includes(actionId)),
     ),
   );
 
   const sentinels = sortByMostRecent(
-    allSentinels.filter(
+    allSentinels.map(normalizeSentinel).filter(
       (sentinel) =>
-        sentinel.missionId === mission.id ||
-        mission.sentinelIds.includes(sentinel.id) ||
+        sentinel.missionId === normalizedMission.id ||
+        normalizedMission.sentinelIds.includes(sentinel.id) ||
         sentinel.linkedActionIds.some((actionId) => actionIds.includes(actionId)),
     ),
   );
@@ -302,8 +364,8 @@ async function projectMission(
   const leases = sortByMostRecent(
     allLeases.filter(
       (lease) =>
-        lease.missionId === mission.id ||
-        mission.leaseIds.includes(lease.id) ||
+        lease.missionId === normalizedMission.id ||
+        normalizedMission.leaseIds.includes(lease.id) ||
         actionIds.includes(lease.actionId),
     ),
   );
@@ -311,7 +373,8 @@ async function projectMission(
   const routines = sortByMostRecent(
     allRoutines.filter(
       (routine) =>
-        routine.missionId === mission.id || mission.routineIds.includes(routine.id),
+        routine.missionId === normalizedMission.id ||
+        normalizedMission.routineIds.includes(routine.id),
     ),
   );
   const routineIds = uniqueIds(routines.map((routine) => routine.id));
@@ -320,7 +383,7 @@ async function projectMission(
   );
 
   const statusSummary = deriveMissionStatus(
-    mission,
+    normalizedMission,
     actions,
     checkpoints,
     sentinels,
@@ -328,19 +391,24 @@ async function projectMission(
     routineRuns,
   );
   const updatedMission: Mission = {
-    ...mission,
-    updatedAt: new Date().toISOString(),
+    ...normalizedMission,
+    updatedAt:
+      options?.persist === false
+        ? normalizedMission.updatedAt
+        : new Date().toISOString(),
     actionIds,
     checkpointIds: uniqueIds(checkpoints.map((checkpoint) => checkpoint.id)),
     sentinelIds: uniqueIds(sentinels.map((sentinel) => sentinel.id)),
     leaseIds: uniqueIds(leases.map((lease) => lease.id)),
     routineIds,
     status: statusSummary.status,
-    summary: mission.summary || statusSummary.derivedSummary,
+    summary: normalizedMission.summary || statusSummary.derivedSummary,
   };
 
-  await kv.set(KV.missions, updatedMission.id, updatedMission);
-  await syncMissionRun(kv, updatedMission, actor, statusSummary.status);
+  if (options?.persist !== false) {
+    await kv.set(KV.missions, updatedMission.id, updatedMission);
+    await syncMissionRun(kv, updatedMission, actor, statusSummary.status);
+  }
 
   return {
     mission: updatedMission,
@@ -511,7 +579,9 @@ export function registerMissionsFunction(sdk: ISdk, kv: StateKV): void {
           return { success: false, error: "mission not found" };
         }
 
-        const projection = await projectMission(kv, mission, mission.owner);
+        const projection = await projectMission(kv, mission, mission.owner, {
+          persist: false,
+        });
         return {
           success: true,
           mission: projection.mission,
@@ -535,31 +605,36 @@ export function registerMissionsFunction(sdk: ISdk, kv: StateKV): void {
       owner?: string;
       limit?: number;
     }) => {
-      const missions = sortByMostRecent(await kv.list<Mission>(KV.missions).catch(() => []));
-      const projected = await Promise.all(
+      const missions = sortByMostRecent(await kv.list<Mission>(KV.missions).catch(() => []))
+        .map(normalizeMission)
+        .filter((mission) => (data.project ? mission.project === data.project : true))
+        .filter((mission) => (data.owner ? mission.owner === data.owner : true));
+      const projected = await Promise.allSettled(
         missions.map((mission) =>
           withKeyedLock(`mem:mission:${mission.id}`, async () =>
-            projectMission(kv, mission, mission.owner),
+            projectMission(kv, mission, mission.owner, { persist: false }),
           ),
         ),
       );
 
-      let filtered = projected;
-      if (data.project) {
-        filtered = filtered.filter(({ mission }) => mission.project === data.project);
-      }
+      const successful = projected
+        .filter(
+          (result): result is PromiseFulfilledResult<MissionProjection> =>
+            result.status === "fulfilled",
+        )
+        .map((result) => result.value);
+
+      let filtered = successful;
       if (data.status) {
         filtered = filtered.filter(
           ({ mission, statusSummary }) =>
             mission.status === data.status || statusSummary.status === data.status,
         );
       }
-      if (data.owner) {
-        filtered = filtered.filter(({ mission }) => mission.owner === data.owner);
-      }
 
       return {
         success: true,
+        partialFailures: projected.length - successful.length,
         missions: filtered
           .sort(
             (a, b) =>

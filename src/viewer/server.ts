@@ -13,6 +13,10 @@ const ALLOWED_ORIGINS = (
 )
   .split(",")
   .map((o) => o.trim());
+const VIEWER_PROXY_TIMEOUT_MS = Number.parseInt(
+  process.env.VIEWER_PROXY_TIMEOUT_MS || "30000",
+  10,
+);
 
 function corsHeaders(req: IncomingMessage): Record<string, string> {
   const origin = req.headers.origin || "";
@@ -180,7 +184,12 @@ async function proxyToRestApi(
   }
 
   const controller = new AbortController();
-  const fetchTimeout = setTimeout(() => controller.abort(), 10000);
+  const fetchTimeout = setTimeout(
+    () => controller.abort(),
+    Number.isFinite(VIEWER_PROXY_TIMEOUT_MS) && VIEWER_PROXY_TIMEOUT_MS > 0
+      ? VIEWER_PROXY_TIMEOUT_MS
+      : 30000,
+  );
   let upstream: Response;
   try {
     upstream = await fetch(upstreamUrl, {

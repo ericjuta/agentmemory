@@ -22,6 +22,16 @@ import {
   collectRetrievalBlocksFromState,
 } from "./retrieval-blocks.js";
 
+const QUERY_EMBEDDING_CACHE_MAX_ENTRIES = 128;
+const QUERY_EMBEDDING_CACHE_TTL_MS = 5 * 60_000;
+
+type CachedQueryEmbedding = {
+  embedding: Float32Array;
+  cachedAt: number;
+};
+
+const queryEmbeddingCache = new Map<string, CachedQueryEmbedding>();
+
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 3);
 }
@@ -161,6 +171,33 @@ function isResumeQuery(query?: string): boolean {
     "next step",
     "current objective",
   ].some((term) => normalized.includes(term));
+}
+
+function getCachedQueryEmbedding(cacheKey: string): Float32Array | null {
+  const cached = queryEmbeddingCache.get(cacheKey);
+  if (!cached) return null;
+  if (Date.now() - cached.cachedAt > QUERY_EMBEDDING_CACHE_TTL_MS) {
+    queryEmbeddingCache.delete(cacheKey);
+    return null;
+  }
+  queryEmbeddingCache.delete(cacheKey);
+  queryEmbeddingCache.set(cacheKey, cached);
+  return cached.embedding;
+}
+
+function setCachedQueryEmbedding(
+  cacheKey: string,
+  embedding: Float32Array,
+): void {
+  queryEmbeddingCache.set(cacheKey, {
+    embedding,
+    cachedAt: Date.now(),
+  });
+  if (queryEmbeddingCache.size <= QUERY_EMBEDDING_CACHE_MAX_ENTRIES) return;
+  const oldestKey = queryEmbeddingCache.keys().next().value;
+  if (typeof oldestKey === "string") {
+    queryEmbeddingCache.delete(oldestKey);
+  }
 }
 
 function branchMatches(block: RetrievalBlock, branch?: string): boolean {
@@ -310,7 +347,12 @@ export async function retrieveRelevantBlocks(
   const vectorIndex = getRetrievalVectorIndex();
   if (lexicalQuery.trim() && runtime.embeddingProvider && vectorIndex && vectorIndex.size > 0) {
     try {
-      const queryEmbedding = await runtime.embeddingProvider.embed(lexicalQuery);
+      const cacheKey = `${runtime.embeddingProvider.name}:${lexicalQuery}`;
+      let queryEmbedding = getCachedQueryEmbedding(cacheKey);
+      if (!queryEmbedding) {
+        queryEmbedding = await runtime.embeddingProvider.embed(lexicalQuery);
+        setCachedQueryEmbedding(cacheKey, queryEmbedding);
+      }
       const vectorResults = vectorIndex.search(queryEmbedding, 120);
       const maxVector = vectorResults[0]?.score || 0;
       for (const result of vectorResults) {

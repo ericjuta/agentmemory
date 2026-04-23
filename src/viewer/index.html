@@ -1393,14 +1393,37 @@
     }
 
     var dashboardTimer = null;
-    function refreshDashboard() {
+    var dashboardRefreshInFlight = false;
+    var dashboardRefreshQueued = false;
+    var dashboardRefreshDebounce = null;
+    async function refreshDashboard() {
+      if (dashboardRefreshInFlight) {
+        dashboardRefreshQueued = true;
+        return;
+      }
+      dashboardRefreshInFlight = true;
       state.dashboard.loaded = false;
-      loadDashboard();
+      try {
+        await loadDashboard();
+      } finally {
+        dashboardRefreshInFlight = false;
+        if (dashboardRefreshQueued) {
+          dashboardRefreshQueued = false;
+          void refreshDashboard();
+        }
+      }
+    }
+    function scheduleDashboardRefresh(delayMs) {
+      if (dashboardRefreshDebounce) clearTimeout(dashboardRefreshDebounce);
+      dashboardRefreshDebounce = setTimeout(function() {
+        dashboardRefreshDebounce = null;
+        void refreshDashboard();
+      }, delayMs || 0);
     }
     function startDashboardAutoRefresh() {
       if (dashboardTimer) clearInterval(dashboardTimer);
       dashboardTimer = setInterval(function() {
-        if (state.activeTab === 'dashboard') refreshDashboard();
+        if (state.activeTab === 'dashboard') void refreshDashboard();
       }, 30000);
     }
 
@@ -3680,7 +3703,7 @@
       }
       if (state.activeTab === 'dashboard') {
         state.dashboard.loaded = false;
-        loadDashboard();
+        scheduleDashboardRefresh(500);
       }
       if (state.activeTab === 'activity' && msg.observation) {
         state.activity.observations.unshift(msg.observation);
