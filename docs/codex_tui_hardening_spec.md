@@ -318,6 +318,66 @@ This hardening lane is done when:
 - structured retrieval metadata is available for the TUI
 - direct-TUI compatibility tests cover the full lifecycle, not just ingest
 
+## Codex Client Follow-Up Checklist
+
+This spec is backend-first, but not every improvement is backend-only.
+
+Some wins land immediately behind the current Codex client contract:
+
+- faster retrieval/indexing/caching on the hot path
+- better latest-handoff selection behind existing resume reads
+- improved degrade-soft behavior for retrieval and closeout internals
+
+The full UX win requires Codex-side adoption work after the backend changes
+land.
+
+### Required Codex-side follow-up
+
+1. update startup flow to consume the richer `session/start` bootstrap payload
+   instead of assuming `session + context` only
+2. remove the extra generic resume handoff fetch on the common path once the
+   backend exposes latest-handoff selection in bootstrap
+3. replace caller-side branching between `context/refresh` and `context` with
+   the unified retrieval contract
+4. route file-local tool-time help through the unified retrieval intent instead
+   of preserving separate enrich-specific decision logic in Codex
+5. replace the current multi-call shutdown choreography with the bounded
+   backend `session/closeout` operation
+6. render or otherwise consume structured retrieval metadata such as:
+   - source type
+   - why retrieved
+   - freshness
+   - confidence
+   - blockers
+   - recommended next step
+   - relevant files
+7. add direct Codex-side lifecycle validation for:
+   - startup bootstrap parsing
+   - prompt-time retrieval intent routing
+   - closeout path migration
+   - partial-success handling
+
+### Stop Rules
+
+Codex does not need a broad client rewrite.
+
+The intended client-side end state is:
+
+- fewer branches
+- fewer round trips
+- less backend choreography in Codex
+- richer rendering from backend-owned state
+
+### Done Means
+
+The Codex-side follow-up is done when:
+
+- Codex no longer assembles startup/resume from multiple generic reads
+- Codex no longer owns the `context/refresh` versus `context` branch
+- Codex no longer owns the 4-step shutdown sequence
+- Codex can display or consume the structured retrieval fields returned by the
+  backend
+
 ## Implementation Order
 
 1. add bootstrap payload to `session/start`
@@ -325,6 +385,17 @@ This hardening lane is done when:
 3. unify prompt-time retrieval intent handling
 4. add bounded `session/closeout`
 5. expand direct Codex lifecycle tests
+
+## Suggested Sequence Across Repos
+
+1. land backend contract changes in `agentmemory`
+2. add backend validation for the new bootstrap, retrieval, and closeout
+   surfaces
+3. switch Codex to the new bootstrap path
+4. switch Codex to the unified retrieval path
+5. switch Codex to the bounded closeout path
+6. remove now-dead Codex-side orchestration branches
+7. add final end-to-end Codex lifecycle validation
 
 ## References
 
