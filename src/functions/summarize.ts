@@ -176,7 +176,7 @@ export function registerSummarizeFunction(
           // Cleanup injection record
           await kv.delete(KV.contextInjections, data.sessionId).catch(() => {});
 
-          ctx.logger.info("Memory feedback applied", {
+          logger.info("Memory feedback applied", {
             sessionId: data.sessionId,
             memoriesAdjusted: injections.memoryIds.length,
             sessionQuality,

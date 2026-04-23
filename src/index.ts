@@ -91,7 +91,6 @@ import { registerRetentionFunctions } from "./functions/retention.js";
 import { registerCompressFileFunction } from "./functions/compress-file.js";
 import {
   retrievalBlockId,
-  refreshRetrievalBlocksFromState,
 } from "./functions/retrieval-blocks.js";
 import { registerApiTriggers } from "./triggers/api.js";
 import { registerEventTriggers } from "./triggers/events.js";
@@ -160,7 +159,10 @@ async function main() {
     },
   });
 
-  const kv = new StateKV(sdk);
+  const kv = new StateKV(sdk, {
+    failureThreshold: 4,
+    cooldownMs: 2_000,
+  });
   const persistenceKv = new StateKV(sdk, {
     timeoutMs: Math.max(
       Number.parseInt(getEnvVar("STATE_KV_TIMEOUT_MS") || "5000", 10) || 5000,
@@ -400,31 +402,13 @@ async function main() {
   const needsRebuild = bm25Index.size === 0;
 
   if (needsRebuild) {
-    const indexCount = await rebuildIndex(kv).catch((err) => {
-      console.warn(`[agentmemory] Failed to rebuild search index:`, err);
-      return 0;
-    });
-    if (indexCount > 0) {
-      console.log(
-        `[agentmemory] Search index rebuilt: ${indexCount} observations`,
-      );
-    }
+    console.log(
+      `[agentmemory] Search index rebuild skipped on startup (no persisted BM25 index loaded)`,
+    );
   }
 
-  let retrievalBlockCount = (await kv.list(KV.retrievalBlocks).catch(() => [])).length;
-  if (retrievalBlockCount === 0) {
-    retrievalBlockCount = await refreshRetrievalBlocksFromState(kv).catch((err) => {
-      console.warn(`[agentmemory] Failed to refresh retrieval blocks from state:`, err);
-      return 0;
-    });
-    if (retrievalBlockCount > 0) {
-      console.log(
-        `[agentmemory] Retrieval blocks refreshed from state: ${retrievalBlockCount}`,
-      );
-    }
-  }
   console.log(
-    `[agentmemory] Retrieval blocks: ${retrievalBlockCount} stored, ${getRetrievalSearchIndex().size} indexed`,
+    `[agentmemory] Retrieval blocks: startup inspection skipped, ${getRetrievalSearchIndex().size} indexed`,
   );
 
   console.log(

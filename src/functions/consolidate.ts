@@ -35,6 +35,21 @@ const consolidateLock = new Semaphore(1);
 const DEFAULT_MAX_SESSION_SCANS = 25;
 const DEFAULT_MAX_CANDIDATE_OBSERVATIONS = 50;
 const MAX_LLM_CALLS = 10;
+const DEFAULT_LLM_TIMEOUT_MS = 30_000;
+const DEFAULT_RUNTIME_BUDGET_MS = 30_000;
+
+function parsePositiveInt(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return Math.floor(value);
+  }
+  if (typeof value === "string") {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return fallback;
+}
 
 function prioritizeSessionsForConsolidation(sessions: Session[]): Session[] {
   return [...sessions].sort((a, b) => {
@@ -92,181 +107,229 @@ export function registerConsolidateFunction(
       minObservations?: number;
       maxSessionsScanned?: number;
       maxCandidateObservations?: number;
-    }) =>
-      consolidateLock.run(async () => {
-        const minObs = data.minObservations ?? 10;
-      const maxSessionsScanned = Math.max(
-        1,
-        data.maxSessionsScanned ?? DEFAULT_MAX_SESSION_SCANS,
-      );
-      const maxCandidateObservations = Math.max(
-        minObs,
-        data.maxCandidateObservations ?? DEFAULT_MAX_CANDIDATE_OBSERVATIONS,
-      );
+      maxLlmCalls?: number;
+      llmTimeoutMs?: number;
+      timeBudgetMs?: number;
+      skipIfBusy?: boolean;
+    } | undefined) => {
+      const args =
+        data && typeof data === "object"
+          ? data
+          : {};
 
-      const sessions = await kv.list<Session>(KV.sessions);
-      const filteredSessions = data.project
-        ? sessions.filter((s) => s.project === data.project)
-        : sessions;
-      const sessionsToScan = prioritizeSessionsForConsolidation(
-        filteredSessions.filter((s) => s.observationCount > 0),
-      ).slice(0, maxSessionsScanned);
-
-      const allObs: Array<CompressedObservation & { sid: string }> = [];
-      let scannedSessions = 0;
-      for (const session of sessionsToScan) {
-        if (allObs.length >= maxCandidateObservations) break;
-
-        scannedSessions++;
-        const observations = await kv
-          .list<CompressedObservation>(KV.observations(session.id))
-          .catch(() => [] as CompressedObservation[]);
-        const remainingBudget = maxCandidateObservations - allObs.length;
-        const importantObservations = observations
-          .filter((obs) => obs.title && obs.importance >= 5)
-          .sort((a, b) => b.importance - a.importance)
-          .slice(0, remainingBudget);
-
-        for (const obs of importantObservations) {
-          allObs.push({ ...obs, sid: session.id });
-        }
-      }
-
-      if (allObs.length < minObs) {
+      if (args.skipIfBusy && (consolidateLock.active > 0 || consolidateLock.pending > 0)) {
         return {
           consolidated: 0,
-          reason: "insufficient_observations",
-          scannedSessions,
-          totalObservations: allObs.length,
+          reason: "busy",
+          scannedSessions: 0,
+          totalObservations: 0,
         };
       }
 
-      const conceptGroups = new Map<string, typeof allObs>();
-      for (const obs of allObs) {
-        for (const concept of obs.concepts) {
-          const key = concept.toLowerCase();
-          if (!conceptGroups.has(key)) conceptGroups.set(key, []);
-          conceptGroups.get(key)!.push(obs);
-        }
-      }
+      return (
+      consolidateLock.run(async () => {
+        const startedAt = Date.now();
+        const minObs = parsePositiveInt(args.minObservations, 10);
+        const maxSessionsScanned = Math.max(
+          1,
+          parsePositiveInt(args.maxSessionsScanned, DEFAULT_MAX_SESSION_SCANS),
+        );
+        const maxCandidateObservations = Math.max(
+          minObs,
+          parsePositiveInt(
+            args.maxCandidateObservations,
+            DEFAULT_MAX_CANDIDATE_OBSERVATIONS,
+          ),
+        );
+        const maxLlmCalls = Math.max(
+          1,
+          parsePositiveInt(args.maxLlmCalls, MAX_LLM_CALLS),
+        );
+        const llmTimeoutMs = Math.max(
+          250,
+          parsePositiveInt(args.llmTimeoutMs, DEFAULT_LLM_TIMEOUT_MS),
+        );
+        const timeBudgetMs = Math.max(
+          1_000,
+          parsePositiveInt(args.timeBudgetMs, DEFAULT_RUNTIME_BUDGET_MS),
+        );
 
-      let consolidated = 0;
-      const existingMemories = await kv.list<Memory>(KV.memories);
-      const existingTitles = new Set(
-        existingMemories.map((m) => m.title.toLowerCase()),
-      );
+        const sessions = await kv.list<Session>(KV.sessions);
+        const filteredSessions = args.project
+          ? sessions.filter((s) => s.project === args.project)
+          : sessions;
+        const sessionsToScan = prioritizeSessionsForConsolidation(
+          filteredSessions.filter((s) => s.observationCount > 0),
+        ).slice(0, maxSessionsScanned);
 
-      let llmCallCount = 0;
+        const allObs: Array<CompressedObservation & { sid: string }> = [];
+        let scannedSessions = 0;
+        for (const session of sessionsToScan) {
+          if (allObs.length >= maxCandidateObservations) break;
+          if (Date.now() - startedAt >= timeBudgetMs) break;
 
-      const sortedGroups = [...conceptGroups.entries()]
-        .filter(([, g]) => g.length >= 3)
-        .sort((a, b) => b[1].length - a[1].length);
+          scannedSessions++;
+          const observations = await kv
+            .list<CompressedObservation>(KV.observations(session.id))
+            .catch(() => [] as CompressedObservation[]);
+          const remainingBudget = maxCandidateObservations - allObs.length;
+          const importantObservations = observations
+            .filter((obs) => obs.title && obs.importance >= 5)
+            .sort((a, b) => b.importance - a.importance)
+            .slice(0, remainingBudget);
 
-      for (const [concept, obsGroup] of sortedGroups) {
-        if (llmCallCount >= MAX_LLM_CALLS) break;
-
-        const top = obsGroup
-          .sort((a, b) => b.importance - a.importance)
-          .slice(0, 8);
-        const sessionIds = [...new Set(top.map((o) => o.sid))];
-
-        const prompt = top
-          .map(
-            (o) =>
-              `[${o.type}] ${o.title}\n${o.narrative}\nFiles: ${o.files.join(", ")}\nImportance: ${o.importance}`,
-          )
-          .join("\n\n");
-
-        try {
-          const response = await Promise.race([
-            provider.compress(
-              CONSOLIDATION_SYSTEM,
-              `Concept: "${concept}"\n\nObservations:\n${prompt}`,
-            ),
-            new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error("compress timeout")), 30_000),
-            ),
-          ]);
-          llmCallCount++;
-          const parsed = parseMemoryXml(response, sessionIds);
-          if (!parsed) continue;
-
-          const existingMatch = existingMemories.find(
-            (m) => m.title.toLowerCase() === parsed.title.toLowerCase(),
-          );
-
-          const now = new Date().toISOString();
-          const obsIds = [...new Set(top.map((o) => o.id))];
-          if (existingMatch) {
-            existingMatch.isLatest = false;
-            await kv.set(KV.memories, existingMatch.id, existingMatch);
-            await recordAudit(kv, "evolve", "mem::consolidate", [existingMatch.id], {
-              action: "mark_non_latest",
-              concept,
-            });
-
-            const evolved: Memory = {
-              id: generateId("mem"),
-              createdAt: now,
-              updatedAt: now,
-              ...parsed,
-              version: (existingMatch.version || 1) + 1,
-              parentId: existingMatch.id,
-              supersedes: [
-                existingMatch.id,
-                ...(existingMatch.supersedes || []),
-              ],
-              sourceObservationIds: obsIds,
-              isLatest: true,
-            };
-            await kv.set(KV.memories, evolved.id, evolved);
-            await upsertMemoryRetrievalBlock(kv, evolved);
-            await recordAudit(kv, "evolve", "mem::consolidate", [evolved.id], {
-              action: "evolve_memory",
-              oldId: existingMatch.id,
-              newId: evolved.id,
-              concept,
-            });
-            existingTitles.add(evolved.title.toLowerCase());
-            consolidated++;
-          } else {
-            const memory: Memory = {
-              id: generateId("mem"),
-              createdAt: now,
-              updatedAt: now,
-              ...parsed,
-              sourceObservationIds: obsIds,
-              version: 1,
-              isLatest: true,
-            };
-            await kv.set(KV.memories, memory.id, memory);
-            await upsertMemoryRetrievalBlock(kv, memory);
-            await recordAudit(kv, "remember", "mem::consolidate", [memory.id], {
-              action: "create_memory",
-              concept,
-            });
-            existingTitles.add(memory.title.toLowerCase());
-            consolidated++;
+          for (const obs of importantObservations) {
+            allObs.push({ ...obs, sid: session.id });
           }
-        } catch (err) {
-          logger.warn("Consolidation failed for concept", {
-            concept,
-            error: err instanceof Error ? err.message : String(err),
-          });
         }
-      }
 
-      logger.info("Consolidation complete", {
-        consolidated,
-        totalObs: allObs.length,
-        scannedSessions,
-        availableSessions: filteredSessions.length,
-      });
-      return {
-        consolidated,
-        totalObservations: allObs.length,
-        scannedSessions,
-      };
-    }),
+        if (allObs.length < minObs) {
+          return {
+            consolidated: 0,
+            reason: "insufficient_observations",
+            scannedSessions,
+            totalObservations: allObs.length,
+          };
+        }
+
+        const conceptGroups = new Map<string, typeof allObs>();
+        for (const obs of allObs) {
+          for (const concept of obs.concepts) {
+            const key = concept.toLowerCase();
+            if (!conceptGroups.has(key)) conceptGroups.set(key, []);
+            conceptGroups.get(key)!.push(obs);
+          }
+        }
+
+        let consolidated = 0;
+        const existingMemories = await kv.list<Memory>(KV.memories);
+        const existingTitles = new Set(
+          existingMemories.map((m) => m.title.toLowerCase()),
+        );
+
+        let llmAttemptCount = 0;
+
+        const sortedGroups = [...conceptGroups.entries()]
+          .filter(([, g]) => g.length >= 3)
+          .sort((a, b) => b[1].length - a[1].length);
+
+        for (const [concept, obsGroup] of sortedGroups) {
+          if (llmAttemptCount >= maxLlmCalls) break;
+          const remainingRuntimeMs = timeBudgetMs - (Date.now() - startedAt);
+          if (remainingRuntimeMs <= 0) break;
+
+          const top = obsGroup
+            .sort((a, b) => b.importance - a.importance)
+            .slice(0, 8);
+          const sessionIds = [...new Set(top.map((o) => o.sid))];
+
+          const prompt = top
+            .map(
+              (o) =>
+                `[${o.type}] ${o.title}\n${o.narrative}\nFiles: ${o.files.join(", ")}\nImportance: ${o.importance}`,
+            )
+            .join("\n\n");
+
+          llmAttemptCount++;
+          try {
+            const response = await Promise.race([
+              provider.compress(
+                CONSOLIDATION_SYSTEM,
+                `Concept: "${concept}"\n\nObservations:\n${prompt}`,
+              ),
+              new Promise<never>((_, reject) =>
+                setTimeout(
+                  () => reject(new Error("compress timeout")),
+                  Math.max(250, Math.min(llmTimeoutMs, remainingRuntimeMs)),
+                ),
+              ),
+            ]);
+            const parsed = parseMemoryXml(response, sessionIds);
+            if (!parsed) continue;
+
+            const existingMatch = existingMemories.find(
+              (m) => m.title.toLowerCase() === parsed.title.toLowerCase(),
+            );
+
+            const now = new Date().toISOString();
+            const obsIds = [...new Set(top.map((o) => o.id))];
+            if (existingMatch) {
+              existingMatch.isLatest = false;
+              await kv.set(KV.memories, existingMatch.id, existingMatch);
+              await recordAudit(kv, "evolve", "mem::consolidate", [existingMatch.id], {
+                action: "mark_non_latest",
+                concept,
+              });
+
+              const evolved: Memory = {
+                id: generateId("mem"),
+                createdAt: now,
+                updatedAt: now,
+                ...parsed,
+                version: (existingMatch.version || 1) + 1,
+                parentId: existingMatch.id,
+                supersedes: [
+                  existingMatch.id,
+                  ...(existingMatch.supersedes || []),
+                ],
+                sourceObservationIds: obsIds,
+                isLatest: true,
+              };
+              await kv.set(KV.memories, evolved.id, evolved);
+              await upsertMemoryRetrievalBlock(kv, evolved);
+              await recordAudit(kv, "evolve", "mem::consolidate", [evolved.id], {
+                action: "evolve_memory",
+                oldId: existingMatch.id,
+                newId: evolved.id,
+                concept,
+              });
+              existingTitles.add(evolved.title.toLowerCase());
+              consolidated++;
+            } else if (!existingTitles.has(parsed.title.toLowerCase())) {
+              const memory: Memory = {
+                id: generateId("mem"),
+                createdAt: now,
+                updatedAt: now,
+                ...parsed,
+                sourceObservationIds: obsIds,
+                version: 1,
+                isLatest: true,
+              };
+              await kv.set(KV.memories, memory.id, memory);
+              await upsertMemoryRetrievalBlock(kv, memory);
+              await recordAudit(kv, "remember", "mem::consolidate", [memory.id], {
+                action: "create_memory",
+                concept,
+              });
+              existingTitles.add(memory.title.toLowerCase());
+              consolidated++;
+            }
+          } catch (err) {
+            logger.warn("Consolidation failed for concept", {
+              concept,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+
+        const timeBudgetExceeded = Date.now() - startedAt >= timeBudgetMs;
+        logger.info("Consolidation complete", {
+          consolidated,
+          totalObs: allObs.length,
+          scannedSessions,
+          availableSessions: filteredSessions.length,
+          llmAttempts: llmAttemptCount,
+          timeBudgetExceeded,
+        });
+        return {
+          consolidated,
+          totalObservations: allObs.length,
+          scannedSessions,
+          llmAttempts: llmAttemptCount,
+          timeBudgetExceeded,
+        };
+      })
+      );
+    },
   );
 }

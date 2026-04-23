@@ -793,13 +793,55 @@ export function registerApiTriggers(
 
   sdk.registerFunction("api::consolidate", 
     async (
-      req: ApiRequest<{ project?: string; minObservations?: number }>,
+      req: ApiRequest<{
+        project?: string;
+        minObservations?: number;
+        maxSessionsScanned?: number;
+        maxCandidateObservations?: number;
+        maxLlmCalls?: number;
+        llmTimeoutMs?: number;
+        timeBudgetMs?: number;
+        skipIfBusy?: boolean;
+      }>,
     ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
+      const body =
+        req.body && typeof req.body === "object"
+          ? req.body
+          : {};
+      const payload = {
+        project: typeof body.project === "string" ? body.project : undefined,
+        minObservations:
+          typeof body.minObservations === "number" ? body.minObservations : undefined,
+        maxSessionsScanned:
+          typeof body.maxSessionsScanned === "number" ? body.maxSessionsScanned : undefined,
+        maxCandidateObservations:
+          typeof body.maxCandidateObservations === "number"
+            ? body.maxCandidateObservations
+            : undefined,
+        maxLlmCalls:
+          typeof body.maxLlmCalls === "number" ? body.maxLlmCalls : undefined,
+        llmTimeoutMs:
+          typeof body.llmTimeoutMs === "number" ? body.llmTimeoutMs : undefined,
+        timeBudgetMs:
+          typeof body.timeBudgetMs === "number" ? body.timeBudgetMs : undefined,
+        skipIfBusy:
+          typeof body.skipIfBusy === "boolean" ? body.skipIfBusy : true,
+      };
+      const hasExplicitOptions = Object.entries(payload).some(
+        ([key, value]) => key !== "skipIfBusy" && value !== undefined,
+      );
+      if (!hasExplicitOptions) {
+        payload.maxSessionsScanned = 3;
+        payload.maxCandidateObservations = 15;
+        payload.maxLlmCalls = 1;
+        payload.llmTimeoutMs = 2_500;
+        payload.timeBudgetMs = 3_500;
+      }
       const result = await sdk.trigger({
         function_id: "mem::consolidate",
-        payload: req.body ?? {},
+        payload,
       });
       return { status_code: 200, body: result };
     },

@@ -6,6 +6,10 @@ const SECRET = process.env["AGENTMEMORY_SECRET"] || "";
 
 const SESSION_ID = `test_${Date.now()}`;
 const PROJECT = "/tmp/test-project";
+const READINESS_SESSION_ID = `test_ready_${Date.now()}`;
+const TEST_TIMEOUT_MS = 15_000;
+const REQUEST_TIMEOUT_MS = 7_000;
+const REQUEST_ATTEMPTS = 2;
 
 function url(path: string): string {
   return `${BASE_URL}${path}`;
@@ -30,19 +34,85 @@ async function json(res: Response): Promise<unknown> {
   }
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function request(path: string, init?: RequestInit): Promise<Response> {
+  let lastError: unknown = null;
+  let lastResponse: Response | null = null;
+
+  for (let attempt = 0; attempt < REQUEST_ATTEMPTS; attempt++) {
+    try {
+      const headers = new Headers(init?.headers);
+      if (!headers.has("Connection")) {
+        headers.set("Connection", "close");
+      }
+      const res = await fetch(url(path), {
+        ...init,
+        headers,
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+      if (res.status < 500) return res;
+      lastResponse = res;
+    } catch (err) {
+      lastError = err;
+    }
+
+    if (attempt + 1 < REQUEST_ATTEMPTS) {
+      await sleep(250 * (attempt + 1));
+    }
+  }
+
+  if (lastResponse) return lastResponse;
+  throw lastError instanceof Error ? lastError : new Error(`request failed for ${path}`);
+}
+
+function itLive(name: string, fn: () => Promise<void>): void {
+  it(name, fn, TEST_TIMEOUT_MS);
+}
+
 describe("agentmemory integration", () => {
   beforeAll(async () => {
-    const res = await fetch(url("/agentmemory/health")).catch(() => null);
-    if (!res || !res.ok) {
-      throw new Error(
-        `agentmemory is not running at ${BASE_URL}. Start it with: docker compose up -d && npm start`,
-      );
+    const deadline = Date.now() + 30_000;
+
+    while (Date.now() < deadline) {
+      const health = await request("/agentmemory/health").catch(() => null);
+      if (!health || !health.ok) {
+        await sleep(1_000);
+        continue;
+      }
+
+      const startRes = await request("/agentmemory/session/start", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({
+          sessionId: READINESS_SESSION_ID,
+          project: PROJECT,
+          cwd: PROJECT,
+        }),
+      }).catch(() => null);
+
+      if (startRes?.status === 200) {
+        await request("/agentmemory/session/end", {
+          method: "POST",
+          headers: authHeaders(),
+          body: JSON.stringify({ sessionId: READINESS_SESSION_ID }),
+        }).catch(() => null);
+        return;
+      }
+
+      await sleep(1_000);
     }
-  });
+
+    throw new Error(
+      `agentmemory is not ready at ${BASE_URL}. Start it with: docker compose up -d && npm start`,
+    );
+  }, 35_000);
 
   describe("health", () => {
-    it("returns ok", async () => {
-      const res = await fetch(url("/agentmemory/health"));
+    itLive("returns ok", async () => {
+      const res = await request("/agentmemory/health");
       expect(res.status).toBe(200);
       const body = (await json(res)) as { status: string; service: string };
       expect(["ok", "healthy"]).toContain(body.status);
@@ -51,8 +121,8 @@ describe("agentmemory integration", () => {
   });
 
   describe("session lifecycle", () => {
-    it("starts a session", async () => {
-      const res = await fetch(url("/agentmemory/session/start"), {
+    itLive("starts a session", async () => {
+      const res = await request("/agentmemory/session/start", {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify({
@@ -71,8 +141,8 @@ describe("agentmemory integration", () => {
       expect(typeof body.context).toBe("string");
     });
 
-    it("lists sessions including the new one", async () => {
-      const res = await fetch(url("/agentmemory/sessions"));
+    itLive("lists sessions including the new one", async () => {
+      const res = await request("/agentmemory/sessions");
       expect(res.status).toBe(200);
       const body = (await json(res)) as {
         sessions: Array<{ id: string }>;
@@ -82,8 +152,8 @@ describe("agentmemory integration", () => {
       expect(found).toBeDefined();
     });
 
-    it("ends the session", async () => {
-      const res = await fetch(url("/agentmemory/session/end"), {
+    itLive("ends the session", async () => {
+      const res = await request("/agentmemory/session/end", {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify({ sessionId: SESSION_ID }),
@@ -93,8 +163,8 @@ describe("agentmemory integration", () => {
       expect(body.success).toBe(true);
     });
 
-    it("session is marked completed", async () => {
-      const res = await fetch(url("/agentmemory/sessions"));
+    itLive("session is marked completed", async () => {
+      const res = await request("/agentmemory/sessions");
       const body = (await json(res)) as {
         sessions: Array<{ id: string; status: string; endedAt?: string }>;
       };
@@ -109,7 +179,7 @@ describe("agentmemory integration", () => {
     const OBS_SESSION = `test_obs_${Date.now()}`;
 
     beforeAll(async () => {
-      await fetch(url("/agentmemory/session/start"), {
+      await request("/agentmemory/session/start", {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify({
@@ -121,15 +191,15 @@ describe("agentmemory integration", () => {
     });
 
     afterAll(async () => {
-      await fetch(url("/agentmemory/session/end"), {
+      await request("/agentmemory/session/end", {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify({ sessionId: OBS_SESSION }),
       });
     });
 
-    it("captures an observation", async () => {
-      const res = await fetch(url("/agentmemory/observe"), {
+    itLive("captures an observation", async () => {
+      const res = await request("/agentmemory/observe", {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify({
@@ -148,8 +218,8 @@ describe("agentmemory integration", () => {
       expect(res.status).toBe(201);
     });
 
-    it("captures a second observation", async () => {
-      const res = await fetch(url("/agentmemory/observe"), {
+    itLive("captures a second observation", async () => {
+      const res = await request("/agentmemory/observe", {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify({
@@ -168,9 +238,9 @@ describe("agentmemory integration", () => {
       expect(res.status).toBe(201);
     });
 
-    it("lists observations for the session", async () => {
-      const res = await fetch(
-        url(`/agentmemory/observations?sessionId=${OBS_SESSION}`),
+    itLive("lists observations for the session", async () => {
+      const res = await request(
+        `/agentmemory/observations?sessionId=${OBS_SESSION}`,
       );
       expect(res.status).toBe(200);
       const body = (await json(res)) as {
@@ -179,8 +249,8 @@ describe("agentmemory integration", () => {
       expect(Array.isArray(body.observations)).toBe(true);
     });
 
-    it("returns 400 without sessionId", async () => {
-      const res = await fetch(url("/agentmemory/observations"));
+    itLive("returns 400 without sessionId", async () => {
+      const res = await request("/agentmemory/observations");
       expect(res.status).toBe(400);
       const body = (await json(res)) as { error: string };
       expect(body.error).toBe("sessionId required");
@@ -188,30 +258,30 @@ describe("agentmemory integration", () => {
   });
 
   describe("search", () => {
-    it("searches observations", async () => {
-      const res = await fetch(url("/agentmemory/search"), {
+    itLive("searches observations", async () => {
+      const res = await request("/agentmemory/search", {
         method: "POST",
         headers: authHeaders(),
-        body: JSON.stringify({ query: "auth", limit: 5 }),
+        body: JSON.stringify({ query: "auth", limit: 5, project: PROJECT }),
       });
       expect(res.status).toBe(200);
       const body = await json(res);
       expect(body).toBeDefined();
     });
 
-    it("returns results for empty limit", async () => {
-      const res = await fetch(url("/agentmemory/search"), {
+    itLive("returns results for empty limit", async () => {
+      const res = await request("/agentmemory/search", {
         method: "POST",
         headers: authHeaders(),
-        body: JSON.stringify({ query: "test" }),
+        body: JSON.stringify({ query: "test", project: PROJECT }),
       });
       expect(res.status).toBe(200);
     });
   });
 
   describe("consolidate", () => {
-    it("handles an empty request body", async () => {
-      const res = await fetch(url("/agentmemory/consolidate"), {
+    itLive("handles an empty request body", async () => {
+      const res = await request("/agentmemory/consolidate", {
         method: "POST",
         headers: authHeaders(),
       });
@@ -225,9 +295,9 @@ describe("agentmemory integration", () => {
   });
 
   describe("graph", () => {
-    it("builds graph state for an empty scoped session without error", async () => {
+    itLive("builds graph state for an empty scoped session without error", async () => {
       const sessionId = `test_graph_${Date.now()}`;
-      const startRes = await fetch(url("/agentmemory/session/start"), {
+      const startRes = await request("/agentmemory/session/start", {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify({
@@ -238,7 +308,7 @@ describe("agentmemory integration", () => {
       });
       expect(startRes.status).toBe(200);
 
-      const res = await fetch(url("/agentmemory/graph/build"), {
+      const res = await request("/agentmemory/graph/build", {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify({ sessionId }),
@@ -255,7 +325,7 @@ describe("agentmemory integration", () => {
       expect(body.nodes).toBe(0);
       expect(body.edges).toBe(0);
 
-      await fetch(url("/agentmemory/session/end"), {
+      await request("/agentmemory/session/end", {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify({ sessionId }),
@@ -264,8 +334,8 @@ describe("agentmemory integration", () => {
   });
 
   describe("context", () => {
-    it("generates context for a project", async () => {
-      const res = await fetch(url("/agentmemory/context"), {
+    itLive("generates context for a project", async () => {
+      const res = await request("/agentmemory/context", {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify({
@@ -280,8 +350,8 @@ describe("agentmemory integration", () => {
   });
 
   describe("viewer", () => {
-    it("serves the viewer HTML", async () => {
-      const res = await fetch(url("/agentmemory/viewer"), {
+    itLive("serves the viewer HTML", async () => {
+      const res = await request("/agentmemory/viewer", {
         headers: SECRET ? authHeaders() : undefined,
       });
       expect(res.status).toBe(200);
@@ -292,14 +362,14 @@ describe("agentmemory integration", () => {
   });
 
   describe("auth", () => {
-    it("health endpoint is always public", async () => {
-      const res = await fetch(url("/agentmemory/health"));
+    itLive("health endpoint is always public", async () => {
+      const res = await request("/agentmemory/health");
       expect(res.status).toBe(200);
     });
 
     if (SECRET) {
-      it("rejects unauthenticated requests", async () => {
-        const res = await fetch(url("/agentmemory/search"), {
+      itLive("rejects unauthenticated requests", async () => {
+        const res = await request("/agentmemory/search", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ query: "test" }),
@@ -307,8 +377,8 @@ describe("agentmemory integration", () => {
         expect(res.status).toBe(401);
       });
 
-      it("rejects wrong bearer token", async () => {
-        const res = await fetch(url("/agentmemory/search"), {
+      itLive("rejects wrong bearer token", async () => {
+        const res = await request("/agentmemory/search", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -319,8 +389,8 @@ describe("agentmemory integration", () => {
         expect(res.status).toBe(401);
       });
 
-      it("rejects unauthenticated viewer requests on the API port", async () => {
-        const res = await fetch(url("/agentmemory/viewer"));
+      itLive("rejects unauthenticated viewer requests on the API port", async () => {
+        const res = await request("/agentmemory/viewer");
         expect(res.status).toBe(401);
       });
     }

@@ -4,6 +4,7 @@ import { withKeyedLock } from "../state/keyed-mutex.js";
 import { logger } from "../logger.js";
 
 const RECENT_CAP = 20;
+const ACCESS_BATCH_CAP = 5;
 
 export interface AccessLog {
   memoryId: string;
@@ -86,8 +87,10 @@ export async function recordAccessBatch(
 ): Promise<void> {
   if (!memoryIds || memoryIds.length === 0) return;
   const ts = timestampMs ?? Date.now();
-  const unique = Array.from(new Set(memoryIds.filter(Boolean)));
-  await Promise.allSettled(unique.map((id) => recordAccess(kv, id, ts)));
+  const unique = Array.from(new Set(memoryIds.filter(Boolean))).slice(0, ACCESS_BATCH_CAP);
+  for (const id of unique) {
+    await recordAccess(kv, id, ts);
+  }
 }
 
 export function deferRecordAccessBatch(

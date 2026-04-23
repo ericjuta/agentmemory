@@ -306,29 +306,40 @@ export async function retrieveRelevantBlocks(
     );
   let allBlocks: RetrievalBlock[] = [];
   let usingStateFallbackBlocks = false;
+  let storedBlockReadFailed = false;
   const canReadStoredBlocks = Date.now() >= retrievalBlockScopeUnavailableUntil;
   if (canReadStoredBlocks) {
     try {
       allBlocks = await kv.list<RetrievalBlock>(KV.retrievalBlocks);
       retrievalBlockScopeUnavailableUntil = 0;
     } catch {
+      storedBlockReadFailed = true;
       retrievalBlockScopeUnavailableUntil = Date.now() + RETRIEVAL_BLOCK_SCOPE_COOLDOWN_MS;
     }
   }
   const shouldRefreshBlocks =
     allBlocks.length === 0 ||
     (Boolean(query.project) && !hasProjectCoverage(allBlocks));
+  const canFallbackFromState =
+    query.purpose === "context" ||
+    query.purpose === "enrich" ||
+    Boolean(query.project) ||
+    Boolean(query.sessionId);
   if (shouldRefreshBlocks) {
-    const lightweightBlocks = await collectLightweightRetrievalBlocksFromState(kv, {
-      project: query.project,
-      sessionId: query.sessionId,
-    }).catch(() => []);
-    if (lightweightBlocks.length > 0) {
-      allBlocks = lightweightBlocks;
+    if (!canFallbackFromState && (storedBlockReadFailed || !canReadStoredBlocks)) {
       usingStateFallbackBlocks = true;
     } else {
-      allBlocks = await collectRetrievalBlocksFromState(kv).catch(() => []);
-      usingStateFallbackBlocks = allBlocks.length > 0;
+      const lightweightBlocks = await collectLightweightRetrievalBlocksFromState(kv, {
+        project: query.project,
+        sessionId: query.sessionId,
+      }).catch(() => []);
+      if (lightweightBlocks.length > 0) {
+        allBlocks = lightweightBlocks;
+        usingStateFallbackBlocks = true;
+      } else if (canFallbackFromState) {
+        allBlocks = await collectRetrievalBlocksFromState(kv).catch(() => []);
+        usingStateFallbackBlocks = allBlocks.length > 0;
+      }
     }
   }
   const blocks = allBlocks

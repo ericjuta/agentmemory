@@ -882,26 +882,43 @@ export async function collectLightweightRetrievalBlocksFromState(
     sessionId?: string;
   },
 ): Promise<RetrievalBlock[]> {
+  const sessions = await kv.list<Session>(KV.sessions).catch(() => []);
+  const sessionById = new Map(sessions.map((session) => [session.id, session] as const));
+  const resolvedProject =
+    options?.project ||
+    (options?.sessionId ? sessionById.get(options.sessionId)?.project : undefined);
+  const turnCapsules = await kv.list<TurnCapsule>(KV.turnCapsules).catch(() => []);
+  const workingSets = await kv.list<SessionWorkingSet>(KV.workingSets).catch(() => []);
+  const summaries = await kv.list<SessionSummary>(KV.summaries).catch(() => []);
   const memories = await kv.list<Memory>(KV.memories).catch(() => []);
   const semantic = await kv.list<SemanticMemory>(KV.semantic).catch(() => []);
   const procedural = await kv.list<ProceduralMemory>(KV.procedural).catch(() => []);
-  const summaries = await kv.list<SessionSummary>(KV.summaries).catch(() => []);
   const handoffs = await kv.list<HandoffPacket>(KV.handoffPackets).catch(() => []);
   const branchOverlays = await kv.list<BranchOverlay>(KV.branchOverlays).catch(() => []);
   const guardrails = await kv.list<GuardrailMemory>(KV.guardrails).catch(() => []);
   const decisions = await kv.list<DecisionMemory>(KV.decisions).catch(() => []);
   const dossiers = await kv.list<ComponentDossier>(KV.componentDossiers).catch(() => []);
   const profiles = await kv.list<ProjectProfile>(KV.profiles).catch(() => []);
-  const observations = options?.sessionId
-    ? await kv.list<CompressedObservation>(KV.observations(options.sessionId)).catch(() => [])
-    : [];
+  const sessionsForObservations = sessions
+    .filter((session) => {
+      if (options?.sessionId && session.id === options.sessionId) return true;
+      if (resolvedProject) return session.project === resolvedProject;
+      return false;
+    })
+    .sort((a, b) => {
+      const aCurrent = Number(a.id === options?.sessionId);
+      const bCurrent = Number(b.id === options?.sessionId);
+      if (bCurrent !== aCurrent) return bCurrent - aCurrent;
+      return new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime();
+    })
+    .slice(0, options?.sessionId ? 8 : 4);
 
   const blocks = new Map<string, RetrievalBlock>();
   const put = (block: RetrievalBlock | null) => {
     if (!block) return;
     if (
-      options?.project &&
-      block.project !== options.project &&
+      resolvedProject &&
+      block.project !== resolvedProject &&
       block.project !== "global"
     ) {
       return;
@@ -909,31 +926,123 @@ export async function collectLightweightRetrievalBlocksFromState(
     blocks.set(block.id, block);
   };
 
+  const matchesProject = (project?: string) => {
+    if (!resolvedProject) return true;
+    return project === resolvedProject;
+  };
+
+  const beliefProjects = resolvedProject
+    ? [resolvedProject]
+    : uniqueStrings([
+        ...sessions.map((session) => session.project),
+        ...profiles.map((profile) => profile.project),
+        ...guardrails
+          .map((guardrail) => guardrail.project)
+          .filter((project): project is string => Boolean(project)),
+        ...decisions
+          .map((decision) => decision.project)
+          .filter((project): project is string => Boolean(project)),
+        ...dossiers.map((dossier) => dossier.project),
+        ...handoffs.map((handoff) => handoff.project),
+      ]);
+
+  for (const capsule of turnCapsules) {
+    if (
+      options?.sessionId &&
+      capsule.sessionId === options.sessionId
+    ) {
+      put(buildTurnCapsuleRetrievalBlock(capsule));
+      continue;
+    }
+    if (matchesProject(capsule.project)) {
+      put(buildTurnCapsuleRetrievalBlock(capsule));
+    }
+  }
+  for (const workingSet of workingSets) {
+    if (
+      options?.sessionId &&
+      workingSet.sessionId === options.sessionId
+    ) {
+      put(buildWorkingSetRetrievalBlock(workingSet));
+      continue;
+    }
+    if (matchesProject(workingSet.project)) {
+      put(buildWorkingSetRetrievalBlock(workingSet));
+    }
+  }
+  for (const summary of summaries) {
+    if (
+      options?.sessionId &&
+      summary.sessionId === options.sessionId
+    ) {
+      put(buildSessionSummaryRetrievalBlock(summary));
+      continue;
+    }
+    if (matchesProject(summary.project)) {
+      put(buildSessionSummaryRetrievalBlock(summary));
+    }
+  }
+
   for (const memory of memories.filter((item) => item.isLatest)) {
     put(buildMemoryRetrievalBlock(memory));
   }
   for (const item of semantic) put(buildSemanticRetrievalBlock(item));
   for (const item of procedural) put(buildProceduralRetrievalBlock(item));
-  for (const summary of summaries) put(buildSessionSummaryRetrievalBlock(summary));
-  for (const packet of handoffs) put(buildHandoffRetrievalBlock(packet));
+  for (const packet of handoffs) {
+    if (
+      options?.sessionId &&
+      packet.scopeType === "session" &&
+      packet.scopeId === options.sessionId
+    ) {
+      put(buildHandoffRetrievalBlock(packet));
+      continue;
+    }
+    if (matchesProject(packet.project)) {
+      put(buildHandoffRetrievalBlock(packet));
+    }
+  }
   for (const overlay of branchOverlays.filter((item) => item.status === "active")) {
-    put(buildBranchOverlayRetrievalBlock(overlay));
+    if (matchesProject(overlay.project)) {
+      put(buildBranchOverlayRetrievalBlock(overlay));
+    }
   }
   for (const guardrail of guardrails.filter((item) => item.status === "active")) {
-    put(buildGuardrailRetrievalBlock(guardrail));
+    if (matchesProject(guardrail.project)) {
+      put(buildGuardrailRetrievalBlock(guardrail));
+    }
   }
   for (const decision of decisions.filter((item) => item.status === "active")) {
-    put(buildDecisionRetrievalBlock(decision));
+    if (matchesProject(decision.project)) {
+      put(buildDecisionRetrievalBlock(decision));
+    }
   }
-  for (const dossier of dossiers) put(buildDossierRetrievalBlock(dossier));
-  for (const profile of profiles) put(buildProfileRetrievalBlock(profile));
-  for (const observation of observations) {
-    if (
-      observation.importance >= 6 ||
-      observation.type === "error" ||
-      observation.type === "decision"
-    ) {
-      put(buildObservationRetrievalBlock(observation, options?.project || "global"));
+  for (const dossier of dossiers) {
+    if (matchesProject(dossier.project)) {
+      put(buildDossierRetrievalBlock(dossier));
+    }
+  }
+  for (const profile of profiles) {
+    if (matchesProject(profile.project)) {
+      put(buildProfileRetrievalBlock(profile));
+    }
+  }
+  for (const project of beliefProjects) {
+    const beliefs = await listProjectedBeliefs(kv, project).catch(() => []);
+    for (const belief of beliefs.filter((item) => item.status === "active")) {
+      const block = buildBeliefRetrievalBlock(belief);
+      block.project = project;
+      put(block);
+    }
+  }
+
+  for (const session of sessionsForObservations) {
+    const observations = await kv
+      .list<CompressedObservation>(KV.observations(session.id))
+      .catch(() => []);
+    for (const observation of observations) {
+      if (shouldIndexObservation(observation)) {
+        put(buildObservationRetrievalBlock(observation, session.project));
+      }
     }
   }
 
