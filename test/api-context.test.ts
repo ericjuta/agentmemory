@@ -86,4 +86,37 @@ describe("api::context", () => {
     expect(response.status_code).toBe(200);
     expect(response.body.trace.queryTerms).toContain("retrieval");
   });
+
+  it("keeps short context refresh queries instead of dropping them", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerContextFunction(sdk as never, kv as never, 900);
+    registerApiTriggers(sdk as never, kv as never);
+
+    const session: Session = {
+      id: "session-api-context-refresh",
+      project: "/project",
+      cwd: "/project",
+      startedAt: "2026-03-29T13:15:00.000Z",
+      status: "active",
+      observationCount: 0,
+    };
+    await kv.set(KV.sessions, session.id, session);
+
+    const response = (await sdk.trigger("api::context-refresh", {
+      body: {
+        sessionId: session.id,
+        project: session.project,
+        query: "3113",
+      },
+      headers: {},
+    })) as {
+      status_code: number;
+      body: { trace: { query?: string; queryTerms: string[] } };
+    };
+
+    expect(response.status_code).toBe(200);
+    expect(response.body.trace.query).toBe("3113");
+    expect(response.body.trace.queryTerms).toContain("3113");
+  });
 });

@@ -112,6 +112,123 @@ function parseOptionalStringArray(
   return parsed;
 }
 
+function parseContextPayload(
+  body: Record<string, unknown>,
+  options?: {
+    requireProject?: boolean;
+    requireQuery?: boolean;
+    defaultIntent?: RetrievalIntent;
+  },
+):
+  | {
+      ok: true;
+      payload: {
+        sessionId: string;
+        project?: string;
+        budget?: number;
+        query?: string;
+        intent?: RetrievalIntent;
+        files?: string[];
+        terms?: string[];
+      };
+    }
+  | {
+      ok: false;
+      error: string;
+    } {
+  const sessionId = asNonEmptyString(body.sessionId);
+  if (!sessionId) {
+    return {
+      ok: false,
+      error: "sessionId is required",
+    };
+  }
+  const project =
+    body.project === undefined ? undefined : asNonEmptyString(body.project);
+  if (body.project !== undefined && !project) {
+    return {
+      ok: false,
+      error: "project must be a non-empty string when provided",
+    };
+  }
+  if (options?.requireProject && !project) {
+    return {
+      ok: false,
+      error: "project is required",
+    };
+  }
+
+  const budget = parseOptionalPositiveInt(body.budget);
+  if (budget === null) {
+    return {
+      ok: false,
+      error: "budget must be a positive integer",
+    };
+  }
+
+  const query =
+    body.query === undefined ? undefined : (asNonEmptyString(body.query) ?? undefined);
+  if (body.query !== undefined && !query) {
+    return {
+      ok: false,
+      error: "query must be a non-empty string when provided",
+    };
+  }
+  if (options?.requireQuery && !query) {
+    return {
+      ok: false,
+      error: "query is required",
+    };
+  }
+
+  const intent = parseOptionalRetrievalIntent(
+    body.intent ?? options?.defaultIntent,
+  );
+  if (intent === null) {
+    return {
+      ok: false,
+      error:
+        "intent must be one of: resume, user_turn, manual_recall, file_enrich, next_action",
+    };
+  }
+
+  const files = parseOptionalStringArray(body.files);
+  if (files === null) {
+    return {
+      ok: false,
+      error: "files must be an array of non-empty strings",
+    };
+  }
+
+  const terms = parseOptionalStringArray(body.terms);
+  if (terms === null) {
+    return {
+      ok: false,
+      error: "terms must be an array of non-empty strings",
+    };
+  }
+
+  const payload: {
+    sessionId: string;
+    project?: string;
+    budget?: number;
+    query?: string;
+    intent?: RetrievalIntent;
+    files?: string[];
+    terms?: string[];
+  } = {
+    sessionId,
+  };
+  if (project !== undefined) payload.project = project;
+  if (budget !== undefined) payload.budget = budget;
+  if (query !== undefined) payload.query = query;
+  if (intent !== undefined) payload.intent = intent;
+  if (files !== undefined) payload.files = files;
+  if (terms !== undefined) payload.terms = terms;
+
+  return { ok: true, payload };
+}
+
 function parseOptionalRetrievalIntent(
   value: unknown,
 ): RetrievalIntent | undefined | null {
@@ -170,52 +287,60 @@ async function buildSessionBootstrap(
   session: Session,
   budget?: number,
 ): Promise<SessionBootstrap> {
-  const contextResult = (await sdk.trigger({
-    function_id: "mem::context",
-    payload: {
-      sessionId: session.id,
+  const [
+    contextResult,
+    latestHandoff,
+    nextActionResult,
+    guardrails,
+    activeDecisions,
+    overlays,
+  ] = await Promise.all([
+    sdk
+      .trigger({
+        function_id: "mem::context",
+        payload: {
+          sessionId: session.id,
+          project: session.project,
+          budget,
+          intent: "resume",
+        },
+      })
+      .catch(() => ({
+        context: "",
+        items: [],
+        trace: undefined,
+      })) as Promise<{
+        context?: string;
+        items?: SessionBootstrap["items"];
+        trace?: SessionBootstrap["retrievalTrace"];
+      }>,
+    findLatestHandoffPacket(kv, {
       project: session.project,
-      budget,
-      intent: "resume",
-    },
-  }).catch(() => ({
-    context: "",
-    items: [],
-    trace: undefined,
-  }))) as {
-    context?: string;
-    items?: SessionBootstrap["items"];
-    trace?: SessionBootstrap["retrievalTrace"];
-  };
-
-  const latestHandoff = await findLatestHandoffPacket(kv, {
-    project: session.project,
-    scopeType: "session",
-    preferScopeType: "session",
-  }).catch(() => null);
-
-  const nextActionResult = (await sdk.trigger({
-    function_id: "mem::next",
-    payload: { project: session.project },
-  }).catch(() => ({ success: false, suggestion: null }))) as {
-    suggestion?: SessionBootstrap["nextAction"];
-  };
-
-  const guardrails = await listScopedGuardrails(kv, {
-    project: session.project,
-    branch: session.branch,
-    includeExpired: false,
-    limit: 3,
-  }).catch(() => [] as GuardrailMemory[]);
-
-  const activeDecisions = await listScopedDecisions(kv, {
-    project: session.project,
-    branch: session.branch,
-    activeOnly: true,
-    limit: 3,
-  }).catch(() => [] as DecisionMemory[]);
-
-  const overlays = await kv.list<BranchOverlay>(KV.branchOverlays).catch(() => []);
+      scopeType: "session",
+      preferScopeType: "session",
+    }).catch(() => null),
+    sdk
+      .trigger({
+        function_id: "mem::next",
+        payload: { project: session.project },
+      })
+      .catch(() => ({ success: false, suggestion: null })) as Promise<{
+        suggestion?: SessionBootstrap["nextAction"];
+      }>,
+    listScopedGuardrails(kv, {
+      project: session.project,
+      branch: session.branch,
+      includeExpired: false,
+      limit: 3,
+    }).catch(() => [] as GuardrailMemory[]),
+    listScopedDecisions(kv, {
+      project: session.project,
+      branch: session.branch,
+      activeOnly: true,
+      limit: 3,
+    }).catch(() => [] as DecisionMemory[]),
+    kv.list<BranchOverlay>(KV.branchOverlays).catch(() => [] as BranchOverlay[]),
+  ]);
   const branchOverlaySummary = latestBranchOverlaySummary(
     overlays.filter(
       (overlay) =>
@@ -412,65 +537,17 @@ export function registerApiTriggers(
       }>,
     ): Promise<Response> => {
       const body = (req.body ?? {}) as Record<string, unknown>;
-      const sessionId = asNonEmptyString(body.sessionId);
-      const project = body.project === undefined
-        ? undefined
-        : asNonEmptyString(body.project);
-      if (!sessionId) {
+      const parsed = parseContextPayload(body);
+      if (!parsed.ok) {
         return {
           status_code: 400,
-          body: { error: "sessionId is required" },
+          body: { error: parsed.error },
         };
       }
-      const budget = parseOptionalPositiveInt(body.budget);
-      if (budget === null) {
-        return {
-          status_code: 400,
-          body: { error: "budget must be a positive integer" },
-        };
-      }
-      const query = body.query === undefined
-        ? undefined
-        : (asNonEmptyString(body.query) ?? undefined);
-      const intent = parseOptionalRetrievalIntent(body.intent);
-      if (intent === null) {
-        return {
-          status_code: 400,
-          body: { error: "intent must be one of: resume, user_turn, manual_recall, file_enrich, next_action" },
-        };
-      }
-      const files = parseOptionalStringArray(body.files);
-      if (files === null) {
-        return {
-          status_code: 400,
-          body: { error: "files must be an array of non-empty strings" },
-        };
-      }
-      const terms = parseOptionalStringArray(body.terms);
-      if (terms === null) {
-        return {
-          status_code: 400,
-          body: { error: "terms must be an array of non-empty strings" },
-        };
-      }
-      const payload: {
-        sessionId: string;
-        project?: string;
-        budget?: number;
-        query?: string;
-        intent?: RetrievalIntent;
-        files?: string[];
-        terms?: string[];
-      } = {
-        sessionId,
-      };
-      if (project !== undefined) payload.project = project;
-      if (budget !== undefined) payload.budget = budget;
-      if (query !== undefined) payload.query = query;
-      if (intent !== undefined) payload.intent = intent;
-      if (files !== undefined) payload.files = files;
-      if (terms !== undefined) payload.terms = terms;
-      const result = await sdk.trigger({ function_id: "mem::context", payload });
+      const result = await sdk.trigger({
+        function_id: "mem::context",
+        payload: parsed.payload,
+      });
       return { status_code: 200, body: result };
     },
   );
@@ -493,27 +570,21 @@ export function registerApiTriggers(
         query: string;
       }>,
     ): Promise<Response> => {
-      const authErr = checkAuth(req, secret);
-      if (authErr) return authErr;
-      if (
-        !req.body?.sessionId ||
-        !req.body?.project ||
-        !req.body?.query ||
-        typeof req.body.query !== "string"
-      ) {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const parsed = parseContextPayload(body, {
+        requireProject: true,
+        requireQuery: true,
+        defaultIntent: "user_turn",
+      });
+      if (!parsed.ok) {
         return {
           status_code: 400,
-          body: { error: "sessionId, project, and query are required" },
+          body: { error: parsed.error },
         };
       }
       const result = await sdk.trigger({
         function_id: "mem::context",
-        payload: {
-          sessionId: req.body.sessionId,
-          project: req.body.project,
-          query: req.body.query.trim().length > 10 ? req.body.query : undefined,
-          intent: "user_turn",
-        },
+        payload: parsed.payload,
       });
       return { status_code: 200, body: result };
     },
@@ -524,6 +595,7 @@ export function registerApiTriggers(
     config: {
       api_path: "/agentmemory/context/refresh",
       http_method: "POST",
+      middleware_function_ids: ["middleware::api-auth"],
     },
   });
 
@@ -696,6 +768,7 @@ export function registerApiTriggers(
         sessionId: string;
         project: string;
         cwd: string;
+        branch?: string;
         budget?: number;
       }>,
     ): Promise<Response> => {
@@ -703,12 +776,20 @@ export function registerApiTriggers(
       const sessionId = asNonEmptyString(body.sessionId);
       const project = asNonEmptyString(body.project);
       const cwd = asNonEmptyString(body.cwd);
+      const branch =
+        body.branch === undefined ? undefined : asNonEmptyString(body.branch);
       if (!sessionId || !project || !cwd) {
         return {
           status_code: 400,
           body: {
             error: "sessionId, project, and cwd are required non-empty strings",
           },
+        };
+      }
+      if (body.branch !== undefined && !branch) {
+        return {
+          status_code: 400,
+          body: { error: "branch must be a non-empty string when provided" },
         };
       }
       const budget = parseOptionalPositiveInt(body.budget);
@@ -722,7 +803,7 @@ export function registerApiTriggers(
         id: sessionId,
         project,
         cwd,
-        branch: (await detectWorktreeInfo(cwd)).branch || undefined,
+        branch: branch || (await detectWorktreeInfo(cwd)).branch || undefined,
         startedAt: new Date().toISOString(),
         status: "active",
         observationCount: 0,

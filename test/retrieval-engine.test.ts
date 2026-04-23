@@ -20,7 +20,10 @@ vi.mock("../src/functions/retrieval-blocks.js", async () => {
   };
 });
 
-import { retrieveRelevantBlocks } from "../src/functions/retrieval-engine.js";
+import {
+  resetRetrievalEngineStateForTests,
+  retrieveRelevantBlocks,
+} from "../src/functions/retrieval-engine.js";
 import { mockKV } from "./helpers/mocks.js";
 import { KV } from "../src/state/schema.js";
 import {
@@ -38,6 +41,7 @@ describe("retrieveRelevantBlocks", () => {
     collectLightweightRetrievalBlocksFromStateMock.mockClear();
     getRetrievalSearchIndex().clear();
     resetContextResultCacheForTests();
+    resetRetrievalEngineStateForTests();
     configureRetrievalBlockIndexingRuntime({
       embeddingProvider: null,
       vectorIndex: null,
@@ -275,5 +279,83 @@ describe("retrieveRelevantBlocks", () => {
     expect(collectRetrievalBlocksFromStateMock).not.toHaveBeenCalled();
     expect(result.searchResults).toHaveLength(1);
     expect(result.searchResults[0]?.block.id).toBe(block.id);
+  });
+
+  it("prefers explicit query matches over unrelated hot session continuity for targeted context", async () => {
+    const kv = mockKV();
+    const hotBlock: RetrievalBlock = {
+      id: "rblk_hot_unrelated",
+      sourceType: "turn_capsule",
+      sourceId: "turn-hot",
+      project: "/project",
+      sessionId: "session-1",
+      turnId: "turn-hot",
+      scope: "session",
+      freshnessLane: "hot",
+      canonicalText:
+        "## Current Turn\nUser: inspect worker health\nConclusion: service health looks stable",
+      title: "Current turn",
+      files: ["/project/src/health.ts"],
+      concepts: ["worker health"],
+      entities: ["worker", "health"],
+      sourceObservationIds: ["obs-hot"],
+      hadFailure: false,
+      hadDecision: false,
+      hadAssistantConclusion: true,
+      isResumeArtifact: false,
+      importance: 8,
+      createdAt: "2026-01-01T00:00:01Z",
+      updatedAt: "2026-01-01T00:00:01Z",
+      eventAt: "2026-01-01T00:00:01Z",
+    };
+    const warmMatch: RetrievalBlock = {
+      id: "rblk_guardrail_auth",
+      sourceType: "guardrail",
+      sourceId: "grd-auth",
+      project: "/project",
+      scope: "project",
+      freshnessLane: "warm",
+      canonicalText:
+        "## Guardrail\nExplanation: Production auth changes require approval\nFiles: /project/src/auth.ts",
+      title: "Auth approval guardrail",
+      files: ["/project/src/auth.ts"],
+      concepts: ["auth", "approval"],
+      entities: ["auth", "approval"],
+      sourceObservationIds: [],
+      hadFailure: true,
+      hadDecision: false,
+      hadAssistantConclusion: true,
+      isResumeArtifact: false,
+      importance: 9,
+      createdAt: "2026-01-01T00:00:02Z",
+      updatedAt: "2026-01-01T00:00:02Z",
+      eventAt: "2026-01-01T00:00:02Z",
+    };
+
+    await kv.set(KV.retrievalBlocks, hotBlock.id, hotBlock);
+    await kv.set(KV.retrievalBlocks, warmMatch.id, warmMatch);
+    await warmRetrievalBlockScopeMemberships(kv as never, [hotBlock, warmMatch]);
+    getRetrievalSearchIndex().addDocument(
+      hotBlock.id,
+      hotBlock.sessionId || hotBlock.project,
+      buildRetrievalBlockLexicalText(hotBlock),
+    );
+    getRetrievalSearchIndex().addDocument(
+      warmMatch.id,
+      warmMatch.project,
+      buildRetrievalBlockLexicalText(warmMatch),
+    );
+
+    const result = await retrieveRelevantBlocks(kv as never, {
+      project: "/project",
+      sessionId: "session-1",
+      query: "auth approval",
+      budget: 120,
+      purpose: "context",
+      intent: "user_turn",
+    });
+
+    expect(result.blocks.map((block) => block.id)).toContain(warmMatch.id);
+    expect(result.blocks.map((block) => block.id)).not.toContain(hotBlock.id);
   });
 });

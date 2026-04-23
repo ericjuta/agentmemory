@@ -51,6 +51,11 @@ type CachedQueryEmbedding = {
 const queryEmbeddingCache = new Map<string, CachedQueryEmbedding>();
 let retrievalBlockScopeUnavailableUntil = 0;
 
+export function resetRetrievalEngineStateForTests(): void {
+  queryEmbeddingCache.clear();
+  retrievalBlockScopeUnavailableUntil = 0;
+}
+
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 3);
 }
@@ -168,6 +173,19 @@ function lanePriority(lane: RetrievalTraceLane): number {
       return 2;
     case "cold":
       return 1;
+  }
+}
+
+function hotBlockPriority(block: RetrievalBlock): number {
+  switch (block.sourceType) {
+    case "working_set":
+      return 3;
+    case "turn_capsule":
+      return 2;
+    case "handoff":
+      return 1;
+    default:
+      return 0;
   }
 }
 
@@ -311,6 +329,17 @@ export interface UnifiedRetrievalResult {
   tokens: number;
   trace: RetrievalTrace;
   searchResults: RetrievalSearchResult[];
+}
+
+function hasExplicitRelevance(item: RankedRetrievalBlock): boolean {
+  return (
+    item.lexicalScore > 0 ||
+    item.fileScore > 0 ||
+    item.conceptScore > 0 ||
+    item.vectorScore > 0 ||
+    item.graphScore > 0 ||
+    item.resumeScore > 0
+  );
 }
 
 function describeWhyRetrieved(ranked: RankedRetrievalBlock): string {
@@ -514,25 +543,35 @@ export async function retrieveRelevantBlocks(
   ]);
   const focusFiles = uniqueStrings(query.focusFiles || []);
   const focusConcepts = uniqueStrings(query.focusConcepts || []);
-  const forceHotSessionBlocks =
-    query.purpose === "context" || query.purpose === "enrich";
-  const forcedIds = new Set<string>();
-
-  const candidateIds = new Set<string>();
-  if (forceHotSessionBlocks && query.sessionId) {
-    const hotSessionBlocks = blocks
-      .filter((block) => block.sessionId === query.sessionId)
-      .filter((block) => block.freshnessLane === "hot")
-      .sort((a, b) => new Date(b.eventAt).getTime() - new Date(a.eventAt).getTime())
-      .slice(0, 8);
-    for (const block of hotSessionBlocks) forcedIds.add(block.id);
-  }
-
   const lexicalQuery = uniqueStrings([
     query.query || "",
     ...focusFiles,
     ...focusConcepts,
   ]).join(" ");
+  const resumeQuery =
+    query.intent === "resume" ||
+    (query.intent !== "next_action" && isResumeQuery(query.query));
+  const nextActionIntent = query.intent === "next_action";
+  const hasTargetedInput =
+    lexicalQuery.trim().length > 0 || resumeQuery || nextActionIntent;
+  const forceHotSessionBlocks =
+    (query.purpose === "context" || query.purpose === "enrich") &&
+    (!hasTargetedInput || resumeQuery);
+  const forcedIds = new Set<string>();
+  const candidateIds = new Set<string>();
+  if (forceHotSessionBlocks && query.sessionId) {
+    const hotSessionBlocks = blocks
+      .filter((block) => block.sessionId === query.sessionId)
+      .filter((block) => block.freshnessLane === "hot")
+      .sort((a, b) => {
+        const priorityDelta = hotBlockPriority(b) - hotBlockPriority(a);
+        if (priorityDelta !== 0) return priorityDelta;
+        return new Date(b.eventAt).getTime() - new Date(a.eventAt).getTime();
+      })
+      .slice(0, resumeQuery ? 4 : 8);
+    for (const block of hotSessionBlocks) forcedIds.add(block.id);
+  }
+
   const lexicalScores = new Map<string, number>();
   if (lexicalQuery.trim()) {
     let lexicalResults = usingStateFallbackBlocks
@@ -675,10 +714,6 @@ export async function retrieveRelevantBlocks(
     }
   }
 
-  const resumeQuery =
-    query.intent === "resume" ||
-    (query.intent !== "next_action" && isResumeQuery(query.query));
-  const nextActionIntent = query.intent === "next_action";
   const now = Date.now();
   let candidateBlocks = blocks.filter((block) => {
     if (
@@ -718,8 +753,7 @@ export async function retrieveRelevantBlocks(
     newest,
     ...candidateBlocks.map((block) => new Date(block.eventAt).getTime()),
   );
-  const ranked = candidateBlocks
-    .map((block): RankedRetrievalBlock => {
+  const preliminaryRanked = candidateBlocks.map((block): RankedRetrievalBlock => {
       const eventMs = new Date(block.eventAt).getTime();
       const lexicalScore = Math.max(
         lexicalScores.get(block.id) || 0,
@@ -786,19 +820,20 @@ export async function retrieveRelevantBlocks(
         recencyScore,
         combinedScore,
       };
-    })
+    });
+  const hasExplicitRelevantCandidate = preliminaryRanked.some(hasExplicitRelevance);
+  const ranked = preliminaryRanked
     .filter((item) => {
-      if (query.purpose === "context") {
+      if (query.purpose !== "context") {
+        return hasExplicitRelevance(item);
+      }
+      if (!hasTargetedInput) {
         return true;
       }
-      const explicitRelevance =
-        item.lexicalScore > 0 ||
-        item.fileScore > 0 ||
-        item.conceptScore > 0 ||
-        item.vectorScore > 0 ||
-        item.graphScore > 0 ||
-        item.resumeScore > 0;
-      return explicitRelevance;
+      if (hasExplicitRelevantCandidate) {
+        return hasExplicitRelevance(item);
+      }
+      return item.block.freshnessLane === "hot" && item.sessionScore > 0;
     })
     .sort((a, b) => b.combinedScore - a.combinedScore);
 
