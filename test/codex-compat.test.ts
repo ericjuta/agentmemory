@@ -149,7 +149,7 @@ describe("Codex payload compatibility", () => {
     expect(result.items[0]?.freshness).toBeTruthy();
   });
 
-  it("returns a bootstrap payload for session start with latest handoff and coordination signals", async () => {
+  it("returns a bootstrap payload for session start with latest handoff and coordination signals for the current session", async () => {
     const sdk = mockSdk();
     const kv = mockKV();
     registerContextFunction(sdk as never, kv as never, 900);
@@ -263,7 +263,7 @@ describe("Codex payload compatibility", () => {
 
     const response = (await sdk.trigger("api::session::start", {
       body: {
-        sessionId: "session-codex-bootstrap",
+        sessionId: previousSession.id,
         project: "/project",
         cwd: "/project",
       },

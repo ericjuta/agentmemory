@@ -341,6 +341,7 @@ async function buildSessionBootstrap(
     findLatestHandoffPacket(kv, {
       project: session.project,
       scopeType: "session",
+      scopeId: session.id,
       preferScopeType: "session",
     }).catch(() => null),
     sdk
