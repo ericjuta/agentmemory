@@ -79,6 +79,30 @@ function asNonEmptyString(value: unknown): string | null {
   return trimmed ? trimmed : null;
 }
 
+function errorMessage(value: unknown, fallback: string): string {
+  if (value instanceof Error) {
+    const message = asNonEmptyString(value.message);
+    return message || fallback;
+  }
+  const direct = asNonEmptyString(value);
+  if (direct) return direct;
+  if (typeof value === "object" && value !== null) {
+    const record = value as Record<string, unknown>;
+    const known =
+      asNonEmptyString(record.error) ||
+      asNonEmptyString(record.message) ||
+      asNonEmptyString(record.detail);
+    if (known) return known;
+    try {
+      const serialized = JSON.stringify(value);
+      return serialized && serialized !== "{}" ? serialized : fallback;
+    } catch {
+      return fallback;
+    }
+  }
+  return fallback;
+}
+
 function parseOptionalFiniteNumber(value: unknown): number | undefined | null {
   if (value === undefined || value === null) return undefined;
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
@@ -2474,15 +2498,25 @@ export function registerApiTriggers(
       if (!project || !filePath) {
         return { status_code: 400, body: { error: "project and filePath are required" } };
       }
-      const result = await sdk.trigger({
-        function_id: "mem::dossier-refresh",
-        payload: {
-          project,
-          filePath,
-          branch: asNonEmptyString(body.branch) || undefined,
-        },
-      });
-      return { status_code: 200, body: result };
+      try {
+        const result = await sdk.trigger({
+          function_id: "mem::dossier-refresh",
+          payload: {
+            project,
+            filePath,
+            branch: asNonEmptyString(body.branch) || undefined,
+          },
+        });
+        return { status_code: 200, body: result };
+      } catch (err) {
+        return {
+          status_code: 500,
+          body: {
+            success: false,
+            error: errorMessage(err, "dossier refresh failed"),
+          },
+        };
+      }
     },
   );
   sdk.registerTrigger({
@@ -2495,17 +2529,27 @@ export function registerApiTriggers(
     async (req: ApiRequest): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
-      const result = await sdk.trigger({
-        function_id: "mem::dossier-get",
-        payload: {
-          dossierId: asNonEmptyString(req.query_params?.["dossierId"]) || undefined,
-          project: asNonEmptyString(req.query_params?.["project"]) || undefined,
-          filePath: asNonEmptyString(req.query_params?.["filePath"]) || undefined,
-          branch: asNonEmptyString(req.query_params?.["branch"]) || undefined,
-          refresh: req.query_params?.["refresh"] === "true",
-        },
-      });
-      return { status_code: 200, body: result };
+      try {
+        const result = await sdk.trigger({
+          function_id: "mem::dossier-get",
+          payload: {
+            dossierId: asNonEmptyString(req.query_params?.["dossierId"]) || undefined,
+            project: asNonEmptyString(req.query_params?.["project"]) || undefined,
+            filePath: asNonEmptyString(req.query_params?.["filePath"]) || undefined,
+            branch: asNonEmptyString(req.query_params?.["branch"]) || undefined,
+            refresh: req.query_params?.["refresh"] === "true",
+          },
+        });
+        return { status_code: 200, body: result };
+      } catch (err) {
+        return {
+          status_code: 500,
+          body: {
+            success: false,
+            error: errorMessage(err, "dossier get failed"),
+          },
+        };
+      }
     },
   );
   sdk.registerTrigger({

@@ -21,6 +21,157 @@ function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
+function asNonEmptyString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function safeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return uniqueStrings(
+    value
+      .map((entry) => asNonEmptyString(entry))
+      .filter((entry): entry is string => entry !== null),
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function coerceCompressedObservation(
+  value: unknown,
+): CompressedObservation | null {
+  if (!isRecord(value)) return null;
+  const id = asNonEmptyString(value.id);
+  const sessionId = asNonEmptyString(value.sessionId);
+  const timestamp = asNonEmptyString(value.timestamp);
+  const type = asNonEmptyString(value.type);
+  const title = asNonEmptyString(value.title);
+  const narrative = asNonEmptyString(value.narrative);
+  if (!id || !sessionId || !timestamp || !type || !title || !narrative) {
+    return null;
+  }
+  return {
+    id,
+    sessionId,
+    timestamp,
+    type: type as CompressedObservation["type"],
+    title,
+    subtitle: asNonEmptyString(value.subtitle) || undefined,
+    facts: safeStringArray(value.facts),
+    narrative,
+    concepts: safeStringArray(value.concepts),
+    files: safeStringArray(value.files),
+    importance:
+      typeof value.importance === "number" && Number.isFinite(value.importance)
+        ? value.importance
+        : 0,
+    confidence:
+      typeof value.confidence === "number" && Number.isFinite(value.confidence)
+        ? value.confidence
+        : undefined,
+    source: asNonEmptyString(value.source) || undefined,
+    payloadVersion: asNonEmptyString(value.payloadVersion) || undefined,
+    eventId: asNonEmptyString(value.eventId) || undefined,
+    sourceTimestamp: asNonEmptyString(value.sourceTimestamp) || undefined,
+    capabilities: safeStringArray(value.capabilities),
+    persistenceClass:
+      value.persistenceClass === "persistent" ||
+      value.persistenceClass === "ephemeral" ||
+      value.persistenceClass === "diagnostics_only"
+        ? value.persistenceClass
+        : undefined,
+    turnId: asNonEmptyString(value.turnId) || undefined,
+  };
+}
+
+function coerceInsight(value: unknown): Insight | null {
+  if (!isRecord(value)) return null;
+  const id = asNonEmptyString(value.id);
+  const title = asNonEmptyString(value.title);
+  const content = asNonEmptyString(value.content);
+  const createdAt = asNonEmptyString(value.createdAt);
+  const updatedAt = asNonEmptyString(value.updatedAt);
+  if (!id || !title || !content || !createdAt || !updatedAt) {
+    return null;
+  }
+  return {
+    id,
+    title,
+    content,
+    confidence:
+      typeof value.confidence === "number" && Number.isFinite(value.confidence)
+        ? value.confidence
+        : 0,
+    reinforcements:
+      typeof value.reinforcements === "number" &&
+      Number.isFinite(value.reinforcements)
+        ? value.reinforcements
+        : 0,
+    sourceConceptCluster: safeStringArray(value.sourceConceptCluster),
+    sourceMemoryIds: safeStringArray(value.sourceMemoryIds),
+    sourceLessonIds: safeStringArray(value.sourceLessonIds),
+    sourceCrystalIds: safeStringArray(value.sourceCrystalIds),
+    project: asNonEmptyString(value.project) || undefined,
+    tags: safeStringArray(value.tags),
+    createdAt,
+    updatedAt,
+    lastReinforcedAt: asNonEmptyString(value.lastReinforcedAt) || undefined,
+    lastDecayedAt: asNonEmptyString(value.lastDecayedAt) || undefined,
+    decayRate:
+      typeof value.decayRate === "number" && Number.isFinite(value.decayRate)
+        ? value.decayRate
+        : 0,
+    deleted: value.deleted === true,
+  };
+}
+
+function coerceLesson(value: unknown): Lesson | null {
+  if (!isRecord(value)) return null;
+  const id = asNonEmptyString(value.id);
+  const content = asNonEmptyString(value.content);
+  const context = asNonEmptyString(value.context);
+  const createdAt = asNonEmptyString(value.createdAt);
+  const updatedAt = asNonEmptyString(value.updatedAt);
+  if (!id || !content || !context || !createdAt || !updatedAt) {
+    return null;
+  }
+  return {
+    id,
+    content,
+    context,
+    confidence:
+      typeof value.confidence === "number" && Number.isFinite(value.confidence)
+        ? value.confidence
+        : 0,
+    reinforcements:
+      typeof value.reinforcements === "number" &&
+      Number.isFinite(value.reinforcements)
+        ? value.reinforcements
+        : 0,
+    source:
+      value.source === "crystal" ||
+      value.source === "manual" ||
+      value.source === "consolidation"
+        ? value.source
+        : "manual",
+    sourceIds: safeStringArray(value.sourceIds),
+    project: asNonEmptyString(value.project) || undefined,
+    tags: safeStringArray(value.tags),
+    createdAt,
+    updatedAt,
+    lastReinforcedAt: asNonEmptyString(value.lastReinforcedAt) || undefined,
+    lastDecayedAt: asNonEmptyString(value.lastDecayedAt) || undefined,
+    decayRate:
+      typeof value.decayRate === "number" && Number.isFinite(value.decayRate)
+        ? value.decayRate
+        : 0,
+    deleted: value.deleted === true,
+  };
+}
+
 function sortByUpdatedAt<T extends { updatedAt?: string; createdAt?: string; timestamp?: string }>(
   items: T[],
 ): T[] {
@@ -62,10 +213,17 @@ async function projectObservations(
     .filter((session) => branchMatches(session, branch));
   const buckets = await Promise.all(
     sessions.map((session) =>
-      kv.list<CompressedObservation>(KV.observations(session.id)).catch(() => []),
+      kv.list<unknown>(KV.observations(session.id)).catch(() => []),
     ),
   );
-  return sortByUpdatedAt(buckets.flatMap((bucket) => bucket));
+  return sortByUpdatedAt(
+    buckets
+      .flatMap((bucket) => bucket)
+      .map((entry) => coerceCompressedObservation(entry))
+      .filter(
+        (entry): entry is CompressedObservation => entry !== null,
+      ),
+  );
 }
 
 async function relevantProjectObservations(
@@ -89,7 +247,7 @@ async function relevantProjectObservations(
     const observations = await Promise.all(
       matchedBlocks.map((block) =>
         kv
-          .get<CompressedObservation>(
+          .get<unknown>(
             KV.observations(block.sessionId!),
             block.sourceId,
           )
@@ -98,8 +256,13 @@ async function relevantProjectObservations(
     );
     const matchedObservations = sortByUpdatedAt(
       observations.filter(
-        (observation): observation is CompressedObservation => observation !== null,
-      ),
+        (observation): observation is unknown => observation !== null,
+      )
+        .map((observation) => coerceCompressedObservation(observation))
+        .filter(
+          (observation): observation is CompressedObservation =>
+            observation !== null,
+        ),
     );
     if (matchedObservations.length > 0) {
       return matchedObservations;
@@ -107,8 +270,24 @@ async function relevantProjectObservations(
   }
 
   return (await projectObservations(kv, project, branch)).filter((observation) =>
-    observation.files.some((candidate) => filePathMatches(candidate, filePath)),
+    safeStringArray(observation.files).some((candidate) =>
+      filePathMatches(candidate, filePath),
+    ),
   );
+}
+
+function summaryParts(
+  observations: CompressedObservation[],
+  insights: Insight[],
+  decisions: DecisionMemory[],
+  guardrails: { explanation: string }[],
+): string[] {
+  return uniqueStrings([
+    observations[0]?.narrative || "",
+    guardrails[0]?.explanation ? `Risk: ${guardrails[0].explanation}` : "",
+    decisions[0]?.decision ? `Decision: ${decisions[0].decision}` : "",
+    insights[0]?.content ? `Insight: ${insights[0].content}` : "",
+  ]).slice(0, 3);
 }
 
 function buildSummary(
@@ -118,12 +297,7 @@ function buildSummary(
   decisions: DecisionMemory[],
   guardrails: { explanation: string }[],
 ): string {
-  const parts = uniqueStrings([
-    observations[0]?.narrative || "",
-    guardrails[0]?.explanation ? `Risk: ${guardrails[0].explanation}` : "",
-    decisions[0]?.decision ? `Decision: ${decisions[0].decision}` : "",
-    insights[0]?.content ? `Insight: ${insights[0].content}` : "",
-  ]).slice(0, 3);
+  const parts = summaryParts(observations, insights, decisions, guardrails);
   if (parts.length === 0) {
     return `${basename(filePath)} has no synthesized dossier context yet.`;
   }
@@ -137,7 +311,9 @@ export async function refreshComponentDossier(
   const { project, filePath, branch } = input;
   const observations = await relevantProjectObservations(kv, project, filePath, branch);
   const lessons = sortByUpdatedAt(
-    (await kv.list<Lesson>(KV.lessons).catch(() => []))
+    (await kv.list<unknown>(KV.lessons).catch(() => []))
+      .map((lesson) => coerceLesson(lesson))
+      .filter((lesson): lesson is Lesson => lesson !== null)
       .filter((lesson) => !lesson.deleted)
       .filter((lesson) => !lesson.project || lesson.project === project),
   ).filter((lesson) => {
@@ -148,7 +324,9 @@ export async function refreshComponentDossier(
     );
   });
   const insights = sortByUpdatedAt(
-    (await kv.list<Insight>(KV.insights).catch(() => []))
+    (await kv.list<unknown>(KV.insights).catch(() => []))
+      .map((insight) => coerceInsight(insight))
+      .filter((insight): insight is Insight => insight !== null)
       .filter((insight) => !insight.deleted)
       .filter((insight) => !insight.project || insight.project === project),
   );
@@ -168,21 +346,27 @@ export async function refreshComponentDossier(
   });
   const dossierConcepts = new Set(
     expandConceptTerms([
-      ...observations.flatMap((observation) => observation.concepts),
-      ...guardrails.flatMap((guardrail) => guardrail.relatedConcepts),
-      ...decisions.flatMap((decision) => decision.relatedConcepts),
+      ...observations.flatMap((observation) => safeStringArray(observation.concepts)),
+      ...guardrails.flatMap((guardrail) => safeStringArray(guardrail.relatedConcepts)),
+      ...decisions.flatMap((decision) => safeStringArray(decision.relatedConcepts)),
       basename(filePath),
     ]).map((concept) => concept.toLowerCase()),
   );
   const relatedInsights = insights.filter((insight) => {
     const text = `${insight.title} ${insight.content}`.toLowerCase();
+    const inferredConcepts = expandConceptTerms([insight.title, insight.content]).map(
+      (concept) => concept.toLowerCase(),
+    );
     return (
       text.includes(filePath.toLowerCase()) ||
       text.includes(basename(filePath).toLowerCase()) ||
-      insight.sourceConceptCluster.some((concept) =>
+      inferredConcepts.some((concept) => dossierConcepts.has(concept)) ||
+      safeStringArray(insight.sourceConceptCluster).some((concept) =>
         dossierConcepts.has(concept.toLowerCase()),
       ) ||
-      insight.tags.some((tag) => dossierConcepts.has(tag.toLowerCase()))
+      safeStringArray(insight.tags).some((tag) =>
+        dossierConcepts.has(tag.toLowerCase()),
+      )
     );
   });
   const overlays = sortByUpdatedAt(
@@ -207,21 +391,23 @@ export async function refreshComponentDossier(
     ...decisions.slice(0, 3).map((decision) => decision.decision),
   ]).slice(0, 8);
   const activeRisks = uniqueStrings([
-    ...guardrails.map((guardrail) => guardrail.explanation),
+    ...guardrails
+      .map((guardrail) => asNonEmptyString(guardrail.explanation))
+      .filter((value): value is string => value !== null),
     ...observations
       .filter((observation) => observation.type === "error")
       .slice(0, 3)
       .map((observation) => observation.narrative),
-    ...overlays.flatMap((overlay) => overlay.blockers),
+    ...overlays.flatMap((overlay) => safeStringArray(overlay.blockers)),
   ]).slice(0, 8);
   const openQuestions = uniqueStrings([
     ...guardrails.flatMap((guardrail) =>
-      guardrail.triggerConditions.map(
+      safeStringArray(guardrail.triggerConditions).map(
         (condition) => `How do we avoid: ${condition}?`,
       ),
     ),
-    ...decisions.flatMap((decision) => decision.reconsiderWhen),
-    ...overlays.flatMap((overlay) => overlay.notes),
+    ...decisions.flatMap((decision) => safeStringArray(decision.reconsiderWhen)),
+    ...overlays.flatMap((overlay) => safeStringArray(overlay.notes)),
   ]).slice(0, 8);
 
   const dossier: ComponentDossier = existing || {

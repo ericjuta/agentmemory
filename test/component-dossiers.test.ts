@@ -115,4 +115,68 @@ describe("component dossiers", () => {
     expect(result.dossier.relatedDecisionIds).toContain("dec-auth");
     expect(result.dossier.sourceObservationIds).toEqual(["obs-auth"]);
   });
+
+  it("tolerates raw observations and legacy insights without array fields", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerComponentDossiersFunction(sdk as never, kv as never);
+
+    const session: Session = {
+      id: "session-legacy",
+      project: "/project",
+      cwd: "/project",
+      branch: "main",
+      startedAt: "2026-03-29T12:00:00.000Z",
+      status: "active",
+      observationCount: 2,
+    };
+    const compressed: CompressedObservation = {
+      id: "obs-compressed",
+      sessionId: session.id,
+      timestamp: "2026-03-29T12:00:01.000Z",
+      type: "file_edit",
+      title: "Context file updated",
+      facts: [],
+      narrative: "Updated the context file.",
+      concepts: ["context"],
+      files: ["src/functions/context.ts"],
+      importance: 6,
+    };
+
+    await kv.set(KV.sessions, session.id, session);
+    await kv.set(KV.observations(session.id), "obs-raw", {
+      id: "obs-raw",
+      sessionId: session.id,
+      timestamp: "2026-03-29T12:00:00.500Z",
+      hookType: "post_tool_use",
+      raw: { file_path: "src/functions/context.ts" },
+    });
+    await kv.set(KV.observations(session.id), compressed.id, compressed);
+    await kv.set(KV.insights, "ins-legacy", {
+      id: "ins-legacy",
+      title: "Legacy context insight",
+      content: "Context files should stay small.",
+      createdAt: "2026-03-29T12:00:02.000Z",
+      updatedAt: "2026-03-29T12:00:02.000Z",
+      project: "/project",
+      confidence: 0.7,
+      reinforcements: 1,
+      decayRate: 0.05,
+      deleted: false,
+    });
+
+    const result = (await sdk.trigger("mem::dossier-refresh", {
+      project: "/project",
+      filePath: "src/functions/context.ts",
+      branch: "main",
+    })) as {
+      success: boolean;
+      dossier: { summary: string; sourceObservationIds: string[]; relatedInsightIds: string[] };
+    };
+
+    expect(result.success).toBe(true);
+    expect(result.dossier.summary).toContain("Updated the context file.");
+    expect(result.dossier.sourceObservationIds).toEqual(["obs-compressed"]);
+    expect(result.dossier.relatedInsightIds).toContain("ins-legacy");
+  });
 });
