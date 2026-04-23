@@ -6,6 +6,7 @@ import {
   createViewerNonce,
   buildViewerCsp,
 } from "../auth.js";
+import { VERSION } from "../version.js";
 
 function loadViewerTemplate(): string | null {
   const base = dirname(fileURLToPath(import.meta.url));
@@ -33,7 +34,9 @@ export function renderViewerDocument():
   const nonce = createViewerNonce();
   return {
     found: true,
-    html: template.replaceAll(VIEWER_NONCE_PLACEHOLDER, nonce),
+    html: template
+      .replaceAll(VIEWER_NONCE_PLACEHOLDER, nonce)
+      .replaceAll("__AGENTMEMORY_VIEWER_VERSION__", VERSION),
     csp: buildViewerCsp(nonce),
   };
 }

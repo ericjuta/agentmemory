@@ -168,9 +168,274 @@
       color: var(--ink);
       border-bottom-color: var(--accent);
     }
+    .subtab-bar {
+      display: flex;
+      gap: 8px;
+      padding: 10px 24px;
+      border-bottom: 1px solid var(--border-light);
+      background: var(--bg);
+      overflow-x: auto;
+      min-height: 46px;
+      align-items: center;
+    }
+    .subtab-bar.empty {
+      display: none;
+    }
+    .subtab-bar button {
+      background: var(--bg);
+      border: 1px solid var(--border-light);
+      color: var(--ink-muted);
+      padding: 6px 12px;
+      font-size: 10px;
+      cursor: pointer;
+      white-space: nowrap;
+      font-family: var(--font-ui);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      font-weight: 600;
+      transition: all 0.15s;
+    }
+    .subtab-bar button.active {
+      border-color: var(--ink);
+      color: var(--ink);
+      box-shadow: 2px 2px 0px 0px var(--border-light);
+    }
+    .subtab-label {
+      font-size: 10px;
+      color: var(--ink-faint);
+      font-family: var(--font-mono);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-right: 4px;
+      white-space: nowrap;
+    }
 
-    .view { display: none; height: calc(100vh - 90px); overflow-y: auto; padding: 24px; }
+    .view { display: none; height: calc(100vh - 136px); overflow-y: auto; padding: 24px; }
     .view.active { display: block; }
+    .status-rail {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 0;
+      border: 1px solid var(--border);
+      margin-bottom: 18px;
+    }
+    .status-cell {
+      padding: 12px 16px;
+      border-right: 1px solid var(--border-light);
+      border-bottom: 1px solid var(--border-light);
+      background: var(--bg);
+    }
+    .status-cell:last-child { border-right: none; }
+    .status-cell .k {
+      font-size: 9px;
+      color: var(--ink-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-family: var(--font-ui);
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .status-cell .v {
+      font-size: 18px;
+      color: var(--ink);
+      font-family: var(--font-display);
+      font-weight: 700;
+      line-height: 1.2;
+    }
+    .status-cell .m {
+      font-size: 11px;
+      color: var(--ink-faint);
+      font-family: var(--font-ui);
+      margin-top: 2px;
+    }
+    .overview-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    .overview-grid.three {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .overview-card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      padding: 18px 20px;
+      min-height: 220px;
+    }
+    .overview-card.wide {
+      grid-column: 1 / -1;
+      min-height: 0;
+    }
+    .overview-kicker {
+      font-size: 9px;
+      color: var(--ink-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      margin-bottom: 8px;
+      font-family: var(--font-ui);
+      font-weight: 700;
+    }
+    .overview-title {
+      font-size: 24px;
+      color: var(--ink);
+      font-family: var(--font-display);
+      font-weight: 900;
+      line-height: 1.15;
+      margin-bottom: 8px;
+    }
+    .overview-copy {
+      font-size: 13px;
+      color: var(--ink-muted);
+      line-height: 1.7;
+      margin-bottom: 10px;
+    }
+    .pill-row {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+    .scope-pill, .lane-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid var(--border-light);
+      padding: 2px 8px;
+      font-size: 9px;
+      color: var(--ink-muted);
+      font-family: var(--font-ui);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-weight: 700;
+    }
+    .lane-pill.hot { border-color: var(--red); color: var(--red); }
+    .lane-pill.warm { border-color: var(--yellow); color: var(--yellow); }
+    .lane-pill.cold { border-color: var(--blue); color: var(--blue); }
+    .source-state {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 2px 8px;
+      border: 1px solid var(--border-light);
+      font-size: 9px;
+      font-family: var(--font-ui);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-weight: 700;
+    }
+    .source-state.ok { color: var(--green); border-color: var(--green); }
+    .source-state.partial { color: var(--yellow); border-color: var(--yellow); }
+    .source-state.error { color: var(--accent); border-color: var(--accent); }
+    .source-note {
+      margin-top: 10px;
+      padding: 10px 12px;
+      border: 1px solid var(--border-light);
+      background: var(--bg-alt);
+      font-size: 12px;
+      color: var(--ink-muted);
+      line-height: 1.6;
+    }
+    .constraint-list, .resume-list, .overview-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .overview-item {
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border-light);
+    }
+    .overview-item:last-child { border-bottom: none; }
+    .overview-item .item-title {
+      font-size: 14px;
+      color: var(--ink);
+      font-family: var(--font-display);
+      font-weight: 700;
+      line-height: 1.3;
+    }
+    .overview-item .item-meta {
+      font-size: 11px;
+      color: var(--ink-faint);
+      font-family: var(--font-mono);
+      margin-top: 4px;
+      line-height: 1.5;
+    }
+    .overview-item .item-copy {
+      font-size: 12px;
+      color: var(--ink-muted);
+      line-height: 1.6;
+      margin-top: 6px;
+    }
+    .trace-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .trace-cell {
+      border: 1px solid var(--border-light);
+      padding: 10px 12px;
+      background: var(--bg);
+    }
+    .trace-cell .k {
+      font-size: 9px;
+      color: var(--ink-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-family: var(--font-ui);
+      font-weight: 700;
+    }
+    .trace-cell .v {
+      font-size: 20px;
+      color: var(--ink);
+      font-family: var(--font-display);
+      font-weight: 900;
+      margin-top: 2px;
+      line-height: 1.1;
+    }
+    .dossier-row {
+      padding: 12px 0;
+      border-bottom: 1px solid var(--border-light);
+    }
+    .dossier-row:last-child { border-bottom: none; }
+    .section-action {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 12px;
+      font-size: 10px;
+      color: var(--ink-muted);
+      font-family: var(--font-ui);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      font-weight: 700;
+    }
+    .section-action button {
+      margin-left: auto;
+    }
+    details.trace-details {
+      margin-top: 10px;
+      border: 1px solid var(--border-light);
+      background: var(--bg);
+      padding: 10px 12px;
+    }
+    details.trace-details summary {
+      cursor: pointer;
+      font-size: 11px;
+      color: var(--ink-muted);
+      font-family: var(--font-ui);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      font-weight: 700;
+    }
+    details.trace-details pre {
+      margin-top: 10px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--ink-muted);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
 
     .stats-grid {
       display: grid;
@@ -680,6 +945,9 @@
       .two-col { grid-template-columns: 1fr; }
       .graph-sidebar { width: 200px; }
       .stats-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+      .overview-grid, .overview-grid.three { grid-template-columns: 1fr; }
+      .trace-grid { grid-template-columns: 1fr; }
+      .status-rail { grid-template-columns: 1fr 1fr; }
     }
 
     .section-rule {
@@ -762,7 +1030,7 @@
   <div class="app-header">
     <div class="brand">
       <h1>agentmemory</h1>
-      <span class="version">v0.7.0</span>
+      <span class="version">v__AGENTMEMORY_VIEWER_VERSION__</span>
     </div>
     <div class="header-right">
       <span class="dateline" id="dateline"></span>
@@ -772,22 +1040,15 @@
   </div>
 
   <div class="tab-bar" id="tab-bar">
-    <button class="active" data-tab="dashboard">Dashboard</button>
-    <button data-tab="graph">Graph</button>
-    <button data-tab="memories">Memories</button>
-    <button data-tab="timeline">Timeline</button>
-    <button data-tab="sessions">Sessions</button>
-    <button data-tab="lessons">Lessons</button>
-    <button data-tab="actions">Actions</button>
-    <button data-tab="coordination">Coordination</button>
-    <button data-tab="guidance">Guidance</button>
-    <button data-tab="components">Components</button>
-    <button data-tab="crystals">Crystals</button>
-    <button data-tab="audit">Audit</button>
-    <button data-tab="activity">Activity</button>
-    <button data-tab="operations">Operations</button>
-    <button data-tab="profile">Profile</button>
+    <button class="active" data-group="overview">Overview</button>
+    <button data-group="sessions">Sessions</button>
+    <button data-group="memory">Memory</button>
+    <button data-group="coordination">Coordination</button>
+    <button data-group="files">Files</button>
+    <button data-group="graph">Graph</button>
+    <button data-group="diagnostics">Diagnostics</button>
   </div>
+  <div class="subtab-bar empty" id="subtab-bar"></div>
 
   <div id="view-dashboard" class="view active"></div>
   <div id="view-graph" class="view"></div>
@@ -866,9 +1127,50 @@
       task: '&#9745;', other: '&#128196;'
     };
     var CB_STATE_COLORS = { closed: 'badge-green', open: 'badge-red', 'half-open': 'badge-yellow' };
+    var TOP_TAB_GROUPS = {
+      overview: ['dashboard'],
+      sessions: ['sessions'],
+      memory: ['memories', 'lessons', 'crystals', 'timeline', 'profile'],
+      coordination: ['actions', 'coordination', 'guidance'],
+      files: ['components'],
+      graph: ['graph'],
+      diagnostics: ['operations', 'activity', 'audit']
+    };
+    var TOP_TAB_DEFAULTS = {
+      overview: 'dashboard',
+      sessions: 'sessions',
+      memory: 'memories',
+      coordination: 'coordination',
+      files: 'components',
+      graph: 'graph',
+      diagnostics: 'operations'
+    };
+    var SUBTAB_LABELS = {
+      memories: 'Memories',
+      lessons: 'Lessons',
+      crystals: 'Crystals',
+      timeline: 'Timeline',
+      profile: 'Profile',
+      actions: 'Actions',
+      coordination: 'Workspace',
+      guidance: 'Guidance',
+      operations: 'Operations',
+      activity: 'Activity',
+      audit: 'Audit'
+    };
 
     var state = {
       activeTab: 'dashboard',
+      activeGroup: 'overview',
+      groupTabs: {
+        overview: 'dashboard',
+        sessions: 'sessions',
+        memory: 'memories',
+        coordination: 'coordination',
+        files: 'components',
+        graph: 'graph',
+        diagnostics: 'operations'
+      },
       dashboard: { loaded: false, health: null, sessions: [], memories: [], graphStats: null, recentAudit: [], lessons: [], crystals: [], missions: [], handoffs: [], guardrails: [], decisions: [], dossiers: [], routineCandidates: [], branchOverlays: [] },
       graph: { loaded: false, nodes: [], edges: [], stats: null, filters: {}, selectedNode: null },
       memories: { loaded: false, items: [], search: '', typeFilter: '' },
@@ -939,6 +1241,34 @@
         t = setTimeout(function() { fn.apply(ctx, args); }, ms);
       };
     }
+    function topGroupFor(tab) {
+      for (var group in TOP_TAB_GROUPS) {
+        if (TOP_TAB_GROUPS[group].indexOf(tab) >= 0) return group;
+      }
+      return 'overview';
+    }
+    function renderTabShell() {
+      var topButtons = document.querySelectorAll('.tab-bar button');
+      topButtons.forEach(function(button) {
+        button.classList.toggle('active', button.dataset.group === state.activeGroup);
+      });
+
+      var subtabBar = document.getElementById('subtab-bar');
+      if (!subtabBar) return;
+      var subtabs = TOP_TAB_GROUPS[state.activeGroup] || [];
+      if (subtabs.length <= 1) {
+        subtabBar.className = 'subtab-bar empty';
+        subtabBar.innerHTML = '';
+        return;
+      }
+
+      var html = '<span class="subtab-label">' + esc(state.activeGroup) + '</span>';
+      subtabs.forEach(function(tab) {
+        html += '<button data-tab="' + esc(tab) + '"' + (state.activeTab === tab ? ' class="active"' : '') + '>' + esc(SUBTAB_LABELS[tab] || tab) + '</button>';
+      });
+      subtabBar.className = 'subtab-bar';
+      subtabBar.innerHTML = html;
+    }
 
     async function api(path, opts) {
       try {
@@ -971,12 +1301,52 @@
         body: JSON.stringify(body || {})
       });
     }
+    async function apiResult(path, opts) {
+      try {
+        var url = REST + '/agentmemory/' + path;
+        var headers = Object.assign({ 'Cache-Control': 'no-cache' }, (opts && opts.headers) || {});
+        var fetchOpts = Object.assign({}, opts || {}, { headers: headers });
+        var res = await fetch(url, fetchOpts);
+        var data = null;
+        try {
+          data = await res.json();
+        } catch (_) {}
+        if (!res.ok) {
+          return {
+            ok: false,
+            status: res.status,
+            error: (data && data.error) || ('HTTP ' + res.status),
+            data: data
+          };
+        }
+        return { ok: true, status: res.status, error: null, data: data };
+      } catch (err) {
+        return {
+          ok: false,
+          status: 0,
+          error: err && err.message ? err.message : 'network error',
+          data: null
+        };
+      }
+    }
+    async function apiResultGet(path) { return apiResult(path); }
+    async function apiResultPost(path, body) {
+      return apiResult(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body || {})
+      });
+    }
 
+    function switchGroup(group) {
+      var target = state.groupTabs[group] || TOP_TAB_DEFAULTS[group] || 'dashboard';
+      switchTab(target);
+    }
     function switchTab(tab) {
       state.activeTab = tab;
-      document.querySelectorAll('.tab-bar button').forEach(function(b) {
-        b.classList.toggle('active', b.dataset.tab === tab);
-      });
+      state.activeGroup = topGroupFor(tab);
+      state.groupTabs[state.activeGroup] = tab;
+      renderTabShell();
       document.querySelectorAll('.view').forEach(function(v) {
         v.classList.toggle('active', v.id === 'view-' + tab);
       });
@@ -1005,44 +1375,68 @@
 
     async function loadDashboard() {
       var el = document.getElementById('view-dashboard');
-      el.innerHTML = '<div class="loading">Loading dashboard...</div>';
-      var results = await Promise.all([
-        apiGet('health'),
-        apiGet('sessions?limit=100'),
-        apiGet('memories?latest=true'),
-        apiGet('graph/stats'),
-        apiGet('audit?limit=5'),
-        apiGet('semantic'),
-        apiGet('procedural'),
-        apiGet('memory-relations'),
-        apiGet('lessons'),
-        apiGet('crystals'),
-        apiGet('missions?limit=100'),
-        apiGet('handoffs?limit=100'),
-        apiGet('guardrails?limit=100'),
-        apiGet('decisions?limit=100'),
-        apiGet('dossiers?limit=100'),
-        apiGet('routine-candidates?limit=100'),
-        apiGet('branch-overlays?limit=100')
+      el.innerHTML = '<div class="loading">Loading overview...</div>';
+      var sources = await Promise.all([
+        apiResultGet('health'),
+        apiResultGet('sessions?limit=100'),
+        apiResultGet('memories?latest=true'),
+        apiResultGet('graph/stats'),
+        apiResultGet('audit?limit=5'),
+        apiResultGet('semantic'),
+        apiResultGet('procedural'),
+        apiResultGet('memory-relations'),
+        apiResultGet('lessons'),
+        apiResultGet('crystals'),
+        apiResultGet('missions?limit=100'),
+        apiResultGet('handoffs?limit=100'),
+        apiResultGet('guardrails?limit=100'),
+        apiResultGet('decisions?limit=100'),
+        apiResultGet('dossiers?limit=100'),
+        apiResultGet('routine-candidates?limit=100'),
+        apiResultGet('branch-overlays?limit=100'),
+        apiResultGet('next')
       ]);
-      state.dashboard.health = results[0];
-      state.dashboard.sessions = (results[1] && results[1].sessions) || [];
-      state.dashboard.memories = (results[2] && results[2].memories) || [];
-      state.dashboard.graphStats = results[3];
-      state.dashboard.recentAudit = (results[4] && results[4].entries) || [];
-      state.dashboard.semantic = (results[5] && results[5].facts) || (results[5] && results[5].semantic) || [];
-      state.dashboard.procedural = (results[6] && results[6].procedures) || (results[6] && results[6].procedural) || [];
-      state.dashboard.lessons = (results[8] && results[8].lessons) || [];
-      state.dashboard.crystals = (results[9] && results[9].crystals) || [];
-      state.dashboard.missions = (results[10] && results[10].missions) || [];
-      state.dashboard.handoffs = (results[11] && results[11].handoffPackets) || [];
-      state.dashboard.guardrails = (results[12] && results[12].guardrails) || [];
-      state.dashboard.decisions = (results[13] && results[13].decisions) || [];
-      state.dashboard.dossiers = (results[14] && results[14].dossiers) || [];
-      state.dashboard.routineCandidates = (results[15] && results[15].routineCandidates) || [];
-      state.dashboard.branchOverlays = (results[16] && results[16].overlays) || [];
-      state.dashboard.relations = (results[7] && results[7].relations) || [];
-      // Derive relation count from memory relatedIds if KV.relations is empty
+      state.dashboard.health = sources[0].data;
+      state.dashboard.sessions = (sources[1].data && sources[1].data.sessions) || [];
+      state.dashboard.memories = (sources[2].data && sources[2].data.memories) || [];
+      state.dashboard.graphStats = sources[3].data;
+      state.dashboard.recentAudit = (sources[4].data && sources[4].data.entries) || [];
+      state.dashboard.semantic = (sources[5].data && (sources[5].data.facts || sources[5].data.semantic)) || [];
+      state.dashboard.procedural = (sources[6].data && (sources[6].data.procedures || sources[6].data.procedural)) || [];
+      state.dashboard.lessons = (sources[8].data && sources[8].data.lessons) || [];
+      state.dashboard.crystals = (sources[9].data && sources[9].data.crystals) || [];
+      state.dashboard.missions = (sources[10].data && sources[10].data.missions) || [];
+      state.dashboard.handoffs = (sources[11].data && sources[11].data.handoffPackets) || [];
+      state.dashboard.guardrails = (sources[12].data && sources[12].data.guardrails) || [];
+      state.dashboard.decisions = (sources[13].data && sources[13].data.decisions) || [];
+      state.dashboard.dossiers = (sources[14].data && sources[14].data.dossiers) || [];
+      state.dashboard.routineCandidates = (sources[15].data && sources[15].data.routineCandidates) || [];
+      state.dashboard.branchOverlays = (sources[16].data && sources[16].data.overlays) || [];
+      state.dashboard.relations = (sources[7].data && sources[7].data.relations) || [];
+      state.dashboard.next = (sources[17].data && sources[17].data.suggestion) || null;
+      state.dashboard.nextMessage = (sources[17].data && sources[17].data.message) || '';
+      state.dashboard.sourceMeta = {
+        health: sources[0],
+        sessions: sources[1],
+        memories: sources[2],
+        graph: sources[3],
+        audit: sources[4],
+        semantic: sources[5],
+        procedural: sources[6],
+        relations: sources[7],
+        lessons: sources[8],
+        crystals: sources[9],
+        missions: sources[10],
+        handoffs: sources[11],
+        guardrails: sources[12],
+        decisions: sources[13],
+        dossiers: sources[14],
+        routines: sources[15],
+        branchOverlays: sources[16],
+        next: sources[17]
+      };
+      state.dashboard.lastUpdatedAt = new Date().toISOString();
+
       if (state.dashboard.relations.length === 0 && state.dashboard.memories.length > 0) {
         var relPairs = new Set();
         state.dashboard.memories.forEach(function(m) {
@@ -1054,8 +1448,88 @@
       } else {
         state.dashboard.relationCount = state.dashboard.relations.length;
       }
+
+      var anchorSession = state.dashboard.sessions
+        .slice()
+        .sort(function(a, b) {
+          var aKey = (a.status === 'active' ? '1' : '0') + (a.startedAt || a.updatedAt || '');
+          var bKey = (b.status === 'active' ? '1' : '0') + (b.startedAt || b.updatedAt || '');
+          return bKey.localeCompare(aKey);
+        })[0] || null;
+      state.dashboard.anchorSession = anchorSession;
+
+      if (anchorSession && anchorSession.id && anchorSession.project) {
+        var retrieval = await apiResultPost('context', {
+          sessionId: anchorSession.id,
+          project: anchorSession.project,
+          intent: 'resume',
+          query: 'resume blockers next step relevant files guardrails decisions',
+          budget: 1200
+        });
+        state.dashboard.retrievalItems = (retrieval.data && retrieval.data.items) || [];
+        state.dashboard.retrievalTrace = (retrieval.data && retrieval.data.trace) || null;
+        state.dashboard.retrievalContext = (retrieval.data && retrieval.data.context) || '';
+        state.dashboard.sourceMeta.retrieval = retrieval;
+      } else {
+        state.dashboard.retrievalItems = [];
+        state.dashboard.retrievalTrace = null;
+        state.dashboard.retrievalContext = '';
+        state.dashboard.sourceMeta.retrieval = {
+          ok: false,
+          status: 0,
+          error: 'no recent session available for retrieval context',
+          data: null
+        };
+      }
+
       state.dashboard.loaded = true;
       renderDashboard();
+    }
+
+    function sortByNewest(items) {
+      return (items || []).slice().sort(function(a, b) {
+        var aKey = a.updatedAt || a.lastRefreshedAt || a.startedAt || a.createdAt || '';
+        var bKey = b.updatedAt || b.lastRefreshedAt || b.startedAt || b.createdAt || '';
+        return bKey.localeCompare(aKey);
+      });
+    }
+    function sourceState(sources) {
+      var okCount = sources.filter(function(item) { return item && item.ok; }).length;
+      if (okCount === sources.length) return 'ok';
+      if (okCount > 0) return 'partial';
+      return 'error';
+    }
+    function sourceStateBadge(sources) {
+      var status = sourceState(sources);
+      return '<span class="source-state ' + status + '">' + esc(status) + '</span>';
+    }
+    function sourceStateNote(sources) {
+      var failures = sources.filter(function(item) { return item && !item.ok; });
+      if (failures.length === 0) return '';
+      return '<div class="source-note">' + esc(failures.map(function(item) { return item.error || ('HTTP ' + item.status); }).slice(0, 2).join(' | ')) + '</div>';
+    }
+    function bestBranchOverlaySummary(overlays, project) {
+      var items = sortByNewest((overlays || []).filter(function(item) {
+        return item && item.status === 'active' && (!project || item.project === project);
+      }));
+      return items[0] || null;
+    }
+    function bestResumePacket(packets, anchorSession) {
+      var items = sortByNewest(packets || []);
+      if (anchorSession) {
+        var exact = items.find(function(packet) {
+          return packet.scopeType === 'session' && packet.scopeId === anchorSession.id;
+        });
+        if (exact) return exact;
+      }
+      return items[0] || null;
+    }
+    function dossierPriority(item) {
+      var risk = (item.activeRisks || []).length * 4;
+      var questions = (item.openQuestions || []).length * 2;
+      var decisions = (item.relatedDecisionIds || []).length * 2;
+      var guardrails = (item.relatedGuardrailIds || []).length * 3;
+      return risk + questions + decisions + guardrails;
     }
 
     function renderDashboard() {
@@ -1065,49 +1539,35 @@
       var snap = h.health || {};
       var healthStatus = h.status || 'unknown';
       var dotClass = healthStatus === 'healthy' ? 'healthy' : healthStatus === 'degraded' ? 'degraded' : healthStatus === 'critical' ? 'critical' : '';
-      var activeSessions = d.sessions.filter(function(s) { return s.status === 'active'; }).length;
       var gs = d.graphStats || {};
       var nodeCount = (gs.nodes !== undefined) ? gs.nodes : (gs.nodeCount || 0);
       var edgeCount = (gs.edges !== undefined) ? gs.edges : (gs.edgeCount || 0);
       var fMetrics = h.functionMetrics || [];
       var cb = h.circuitBreaker || null;
       var workers = snap.workers || [];
-
-      var html = '<div class="stats-grid">';
-      html += '<div class="stat-card"><div class="label">Sessions</div><div class="value">' + d.sessions.length + '</div><div class="sub">' + activeSessions + ' active</div></div>';
-      html += '<div class="stat-card"><div class="label">Memories</div><div class="value">' + d.memories.length + '</div><div class="sub">latest versions</div></div>';
-      var lessonCount = (d.lessons || []).length;
-      var crystalCount = (d.crystals || []).length;
-      var missionCount = (d.missions || []).length;
-      var blockedMissionCount = (d.missions || []).filter(function(item) {
-        var status = (item && item.statusSummary && item.statusSummary.status) || (item && item.mission && item.mission.status) || '';
-        return status === 'blocked';
-      }).length;
-      var handoffCount = (d.handoffs || []).length;
-      var guardrailCount = (d.guardrails || []).length;
-      var decisionCount = (d.decisions || []).length;
-      var dossierCount = (d.dossiers || []).length;
-      var routineCandidateCount = (d.routineCandidates || []).length;
-      var overlayCount = (d.branchOverlays || []).length;
-      html += '<div class="stat-card"><div class="label">Lessons</div><div class="value">' + lessonCount + '</div><div class="sub">confidence-scored</div></div>';
-      html += '<div class="stat-card"><div class="label">Crystals</div><div class="value">' + crystalCount + '</div><div class="sub">action digests</div></div>';
-      html += '<div class="stat-card"><div class="label">Missions</div><div class="value">' + missionCount + '</div><div class="sub">' + blockedMissionCount + ' blocked</div></div>';
-      html += '<div class="stat-card"><div class="label">Handoffs</div><div class="value">' + handoffCount + '</div><div class="sub">durable resume packets</div></div>';
-      html += '<div class="stat-card"><div class="label">Guardrails</div><div class="value">' + guardrailCount + '</div><div class="sub">negative memory</div></div>';
-      html += '<div class="stat-card"><div class="label">Decisions</div><div class="value">' + decisionCount + '</div><div class="sub">active rationale</div></div>';
-      html += '<div class="stat-card"><div class="label">Dossiers</div><div class="value">' + dossierCount + '</div><div class="sub">file syntheses</div></div>';
-      html += '<div class="stat-card"><div class="label">Routine Proposals</div><div class="value">' + routineCandidateCount + '</div><div class="sub">compiler candidates</div></div>';
-      html += '<div class="stat-card"><div class="label">Branch Overlays</div><div class="value">' + overlayCount + '</div><div class="sub">branch-local notes</div></div>';
-      html += '<div class="stat-card"><div class="label">Graph Nodes</div><div class="value">' + nodeCount + '</div><div class="sub">' + edgeCount + ' edges</div></div>';
-      html += '<div class="stat-card"><div class="label">Health</div><div class="value"><div class="health-bar"><span class="health-dot ' + dotClass + '"></span> ' + esc(healthStatus) + '</div></div>';
-      html += '<div class="sub">' + esc(snap.connectionState || 'unknown') + '</div></div>';
+      var activeSessions = d.sessions.filter(function(s) { return s.status === 'active'; }).length;
+      var recentSessions = sortByNewest(d.sessions).slice(0, 5);
+      var activeGuardrails = sortByNewest(d.guardrails).slice(0, 3);
+      var activeDecisions = sortByNewest(d.decisions).slice(0, 3);
+      var overlay = bestBranchOverlaySummary(d.branchOverlays, d.anchorSession && d.anchorSession.project);
+      var resumePacket = bestResumePacket(d.handoffs, d.anchorSession);
+      var retrievalItems = (d.retrievalItems || []).slice(0, 5);
+      var trace = d.retrievalTrace || null;
+      var topDossiers = sortByNewest(d.dossiers).sort(function(a, b) {
+        var delta = dossierPriority(b) - dossierPriority(a);
+        if (delta !== 0) return delta;
+        return (b.updatedAt || '').localeCompare(a.updatedAt || '');
+      }).slice(0, 5);
       var totalCalls = fMetrics.reduce(function(a, m) { return a + (m.totalCalls || 0); }, 0);
-      html += '<div class="stat-card"><div class="label">Function Calls</div><div class="value">' + totalCalls + '</div><div class="sub">' + fMetrics.length + ' functions tracked</div></div>';
-      if (cb) {
-        var cbClass = cb.state === 'closed' ? 'cb-closed' : cb.state === 'open' ? 'cb-open' : 'cb-half-open';
-        html += '<div class="stat-card"><div class="label">Circuit Breaker</div><div class="value"><span class="cb-indicator ' + cbClass + '">' + esc(cb.state) + '</span></div>';
-        html += '<div class="sub">' + (cb.failures || 0) + ' failures</div></div>';
-      }
+      var attention = []
+        .concat((snap.alerts || []).map(function(text) { return { kind: 'alert', text: text }; }))
+        .concat((d.missions || []).filter(function(item) {
+          var status = (item && item.statusSummary && item.statusSummary.status) || (item && item.mission && item.mission.status) || '';
+          return status === 'blocked';
+        }).slice(0, 2).map(function(item) {
+          return { kind: 'blocked', text: (item.goal || (item.mission && item.mission.goal) || 'Blocked mission') };
+        }));
+
       var totalObs = d.sessions.reduce(function(a, s) { return a + (s.observationCount || 0); }, 0);
       var tokenBudget = parseInt(new URLSearchParams(window.location.search).get('tokenBudget') || '2000', 10) || 2000;
       var estFull = totalObs * 80;
@@ -1115,15 +1575,151 @@
       var savings = estFull > 0 ? Math.round((1 - estInjected / Math.max(estFull, 1)) * 100) : 0;
       if (savings < 0) savings = 0;
       var tokensSaved = Math.max(0, estFull - estInjected);
-      // Rate: $0.30 per 1K tokens (mid-tier model baseline)
       var costDollars = tokensSaved / 1000 * 0.3;
       var costCents = Math.round(costDollars * 100);
       var costStr = costCents >= 100 ? '$' + (costCents / 100).toFixed(2) : costCents + 'ct';
-      html += '<div class="stat-card"><div class="label">Token Savings</div><div class="value">' + savings + '%</div><div class="sub">~' + tokensSaved.toLocaleString() + ' tokens · ' + costStr + ' saved</div></div>';
+
+      var html = '<div class="status-rail">';
+      html += '<div class="status-cell"><div class="k">Health</div><div class="v"><span class="health-dot ' + dotClass + '"></span> ' + esc(healthStatus) + '</div><div class="m">' + esc(snap.connectionState || 'unknown') + '</div></div>';
+      html += '<div class="status-cell"><div class="k">Live Updates</div><div class="v">' + esc(document.getElementById('ws-status').textContent || 'off') + '</div><div class="m">' + workers.length + ' workers visible</div></div>';
+      html += '<div class="status-cell"><div class="k">Sessions</div><div class="v">' + d.sessions.length + '</div><div class="m">' + activeSessions + ' active</div></div>';
+      html += '<div class="status-cell"><div class="k">Function Calls</div><div class="v">' + totalCalls + '</div><div class="m">' + fMetrics.length + ' functions tracked</div></div>';
+      html += '<div class="status-cell"><div class="k">Updated</div><div class="v">' + esc(shortTime(d.lastUpdatedAt)) + '</div><div class="m">' + esc(formatTime(d.lastUpdatedAt)) + '</div></div>';
+      html += '<div class="status-cell"><div class="k">Version</div><div class="v">' + esc(h.version || 'unknown') + '</div><div class="m">viewer and API aligned</div></div>';
+      html += '</div>';
+
+      html += '<div class="overview-grid">';
+      html += '<div class="overview-card"><div class="overview-kicker">Suggested Next Work</div>' + sourceStateBadge([d.sourceMeta.next]) + '<div class="overview-title">' + esc((d.next && d.next.title) || 'No suggested next action') + '</div>';
+      if (d.next && d.next.description) html += '<div class="overview-copy">' + esc(d.next.description) + '</div>';
+      if (d.next) {
+        html += '<div class="detail-row"><div class="dl">Priority</div><div class="dv" style="font-family:var(--font-mono);">' + esc(d.next.priority || '-') + '</div></div>';
+        html += '<div class="detail-row"><div class="dl">Score</div><div class="dv" style="font-family:var(--font-mono);">' + esc(d.next.score || '-') + '</div></div>';
+        if (d.next.tags && d.next.tags.length) html += '<div class="pill-row">' + d.next.tags.slice(0, 5).map(function(tag) { return '<span class="scope-pill">' + esc(tag) + '</span>'; }).join('') + '</div>';
+      } else if (d.nextMessage) {
+        html += '<div class="overview-copy">' + esc(d.nextMessage) + '</div>';
+      }
+      html += sourceStateNote([d.sourceMeta.next]);
+      html += '<div class="section-action">Coordination lane <button class="btn btn-primary" data-action="goto-tab" data-target-tab="coordination">Open Coordination</button></div></div>';
+
+      html += '<div class="overview-card"><div class="overview-kicker">Active Constraints</div>' + sourceStateBadge([d.sourceMeta.guardrails, d.sourceMeta.decisions, d.sourceMeta.branchOverlays]) + '<div class="constraint-list">';
+      if (activeGuardrails.length === 0 && activeDecisions.length === 0 && !overlay) {
+        html += '<div class="overview-copy">No active guardrails, decisions, or branch overlays loaded.</div>';
+      } else {
+        activeGuardrails.forEach(function(item) {
+          html += '<div class="overview-item"><div class="item-title">' + esc(item.explanation || item.id || 'Guardrail') + '</div><div class="pill-row"><span class="scope-pill">' + esc(item.riskLevel || 'low') + '</span><span class="scope-pill">' + esc(item.scopeType || 'scope') + '</span></div></div>';
+        });
+        activeDecisions.forEach(function(item) {
+          html += '<div class="overview-item"><div class="item-title">' + esc(item.title || item.id || 'Decision') + '</div><div class="item-copy">' + esc(item.decision || '') + '</div></div>';
+        });
+        if (overlay) {
+          html += '<div class="overview-item"><div class="item-title">Branch Overlay</div><div class="item-copy">' + esc(overlay.summary || '') + '</div><div class="item-meta">' + esc(overlay.branch || '') + '</div></div>';
+        }
+      }
+      html += '</div>' + sourceStateNote([d.sourceMeta.guardrails, d.sourceMeta.decisions, d.sourceMeta.branchOverlays]) + '<div class="section-action">Constraint memory <button class="btn" data-action="goto-tab" data-target-tab="guidance">Open Guidance</button></div></div>';
+
+      html += '<div class="overview-card"><div class="overview-kicker">Resume Candidate</div>' + sourceStateBadge([d.sourceMeta.handoffs, d.sourceMeta.sessions]) + '<div class="resume-list">';
+      if (resumePacket) {
+        html += '<div class="overview-title">' + esc(resumePacket.summary || 'Resume packet') + '</div>';
+        if (resumePacket.recommendedNextStep) html += '<div class="overview-copy">' + esc(resumePacket.recommendedNextStep) + '</div>';
+        html += '<div class="pill-row"><span class="scope-pill">' + esc(resumePacket.scopeType || 'session') + '</span><span class="scope-pill">' + esc(shortTime(resumePacket.updatedAt)) + '</span></div>';
+        if (resumePacket.blockers && resumePacket.blockers.length) html += '<div class="source-note">' + esc(resumePacket.blockers.slice(0, 3).join(' | ')) + '</div>';
+        if (resumePacket.relevantFiles && resumePacket.relevantFiles.length) html += '<div class="item-meta">' + esc(resumePacket.relevantFiles.slice(0, 4).join(', ')) + '</div>';
+      } else if (d.anchorSession) {
+        html += '<div class="overview-title">' + esc((d.anchorSession.project || '').split('/').pop() || d.anchorSession.id) + '</div>';
+        html += '<div class="overview-copy">Most recent session available, but no handoff packet was loaded.</div>';
+        html += '<div class="item-meta">' + esc(formatTime(d.anchorSession.startedAt)) + '</div>';
+      } else {
+        html += '<div class="overview-copy">No recent session or handoff packet available yet.</div>';
+      }
+      html += '</div>' + sourceStateNote([d.sourceMeta.handoffs, d.sourceMeta.sessions]) + '<div class="section-action">Session continuity <button class="btn" data-action="goto-tab" data-target-tab="sessions">Open Sessions</button></div></div>';
+
+      html += '<div class="overview-card"><div class="overview-kicker">Attention Needed</div>' + sourceStateBadge([d.sourceMeta.health, d.sourceMeta.missions]) + '<div class="overview-list">';
+      if (attention.length === 0 && (!cb || cb.state === 'closed')) {
+        html += '<div class="overview-copy">No current warnings or blocked mission pressure.</div>';
+      } else {
+        attention.slice(0, 5).forEach(function(item) {
+          html += '<div class="overview-item"><div class="item-title">' + esc(item.text) + '</div><div class="item-meta">' + esc(item.kind) + '</div></div>';
+        });
+        if (cb && cb.state !== 'closed') {
+          html += '<div class="overview-item"><div class="item-title">Circuit breaker ' + esc(cb.state) + '</div><div class="item-meta">' + esc((cb.failures || 0) + ' failures') + '</div></div>';
+        }
+      }
+      html += '</div>' + sourceStateNote([d.sourceMeta.health, d.sourceMeta.missions]) + '<div class="section-action">Runtime checks <button class="btn" data-action="goto-tab" data-target-tab="operations">Open Diagnostics</button></div></div>';
+      html += '</div>';
+
+      html += '<div class="overview-grid">';
+      html += '<div class="overview-card"><div class="overview-kicker">Why This Context Matters</div>' + sourceStateBadge([d.sourceMeta.retrieval]) + '<div class="overview-list">';
+      if (retrievalItems.length === 0) {
+        html += '<div class="overview-copy">No retrieval items were returned for the latest session context.</div>';
+      } else {
+        retrievalItems.forEach(function(item) {
+          html += '<div class="overview-item">';
+          html += '<div class="item-title">' + esc(item.title || item.sourceId || 'Context item') + '</div>';
+          html += '<div class="pill-row"><span class="scope-pill">' + esc(item.sourceType || 'context') + '</span><span class="lane-pill ' + esc(item.freshness || 'cold') + '">' + esc(item.freshness || 'cold') + '</span><span class="scope-pill">' + esc(Math.round((item.confidence || 0) * 100)) + '%</span></div>';
+          html += '<div class="item-copy">' + esc(item.why || '') + '</div>';
+          if (item.blocker) html += '<div class="source-note">' + esc(item.blocker) + '</div>';
+          if (item.recommendedNextStep) html += '<div class="item-meta">Next: ' + esc(item.recommendedNextStep) + '</div>';
+          var related = [];
+          if (item.relevantFiles && item.relevantFiles.length) related.push(item.relevantFiles.slice(0, 2).join(', '));
+          if (item.concepts && item.concepts.length) related.push(item.concepts.slice(0, 3).join(', '));
+          if (related.length) html += '<div class="item-meta">' + esc(related.join(' | ')) + '</div>';
+          html += '</div>';
+        });
+      }
+      html += '</div>' + sourceStateNote([d.sourceMeta.retrieval]) + '</div>';
+
+      html += '<div class="overview-card"><div class="overview-kicker">Retrieval Trace Summary</div>' + sourceStateBadge([d.sourceMeta.retrieval]);
+      if (trace) {
+        html += '<div class="trace-grid">';
+        html += '<div class="trace-cell"><div class="k">Intent</div><div class="v">' + esc(trace.intent || 'resume') + '</div></div>';
+        html += '<div class="trace-cell"><div class="k">Selected</div><div class="v">' + esc((trace.selected || []).length) + '</div></div>';
+        html += '<div class="trace-cell"><div class="k">Skipped</div><div class="v">' + esc((trace.skipped || []).length) + '</div></div>';
+        html += '</div>';
+        html += '<div class="overview-item"><div class="item-title">Lane Usage</div><div class="item-meta">hot ' + esc((trace.laneUsage && trace.laneUsage.hot) || 0) + '/' + esc((trace.laneBudgets && trace.laneBudgets.hot) || 0) + ' · warm ' + esc((trace.laneUsage && trace.laneUsage.warm) || 0) + '/' + esc((trace.laneBudgets && trace.laneBudgets.warm) || 0) + ' · cold ' + esc((trace.laneUsage && trace.laneUsage.cold) || 0) + '/' + esc((trace.laneBudgets && trace.laneBudgets.cold) || 0) + '</div></div>';
+        if (trace.selected && trace.selected.length) {
+          html += '<div class="overview-item"><div class="item-title">Top Trace Decisions</div><div class="item-copy">' + esc(trace.selected.slice(0, 3).map(function(item) { return item.title || item.sourceId || item.blockId || 'candidate'; }).join(' | ')) + '</div></div>';
+        }
+        html += '<details class="trace-details"><summary>Raw Trace</summary><pre>' + esc(JSON.stringify(trace, null, 2)) + '</pre></details>';
+      } else {
+        html += '<div class="overview-copy">No retrieval trace is available for the current session context.</div>';
+      }
+      html += sourceStateNote([d.sourceMeta.retrieval]) + '</div>';
+      html += '</div>';
+
+      html += '<div class="overview-card wide"><div class="overview-kicker">File And Module Relevance</div>' + sourceStateBadge([d.sourceMeta.dossiers, d.sourceMeta.decisions, d.sourceMeta.guardrails]) + '<div class="overview-list">';
+      if (topDossiers.length === 0) {
+        html += '<div class="overview-copy">No component dossiers are available yet.</div>';
+      } else {
+        topDossiers.forEach(function(item) {
+          html += '<div class="dossier-row">';
+          html += '<div class="item-title">' + esc(item.filePath || item.id || 'Dossier') + '</div>';
+          html += '<div class="item-copy">' + esc(item.summary || item.currentState || '') + '</div>';
+          var pills = [];
+          if (item.activeRisks && item.activeRisks.length) pills.push('<span class="scope-pill">' + esc(item.activeRisks.length + ' risk') + '</span>');
+          if (item.openQuestions && item.openQuestions.length) pills.push('<span class="scope-pill">' + esc(item.openQuestions.length + ' open') + '</span>');
+          if (item.relatedDecisionIds && item.relatedDecisionIds.length) pills.push('<span class="scope-pill">' + esc(item.relatedDecisionIds.length + ' decisions') + '</span>');
+          if (item.relatedGuardrailIds && item.relatedGuardrailIds.length) pills.push('<span class="scope-pill">' + esc(item.relatedGuardrailIds.length + ' guardrails') + '</span>');
+          if (pills.length) html += '<div class="pill-row">' + pills.join('') + '</div>';
+          var notes = [];
+          if (item.activeRisks && item.activeRisks.length) notes.push('Risks: ' + item.activeRisks.slice(0, 2).join(' | '));
+          if (item.openQuestions && item.openQuestions.length) notes.push('Open: ' + item.openQuestions.slice(0, 2).join(' | '));
+          if (notes.length) html += '<div class="item-meta">' + esc(notes.join(' | ')) + '</div>';
+          html += '</div>';
+        });
+      }
+      html += '</div>' + sourceStateNote([d.sourceMeta.dossiers, d.sourceMeta.decisions, d.sourceMeta.guardrails]) + '<div class="section-action">File posture <button class="btn btn-primary" data-action="goto-tab" data-target-tab="components">Open Files</button></div></div>';
+
+      html += '<div class="stats-grid">';
+      html += '<div class="stat-card"><div class="label">Memories</div><div class="value">' + d.memories.length + '</div><div class="sub">latest versions</div></div>';
+      html += '<div class="stat-card"><div class="label">Lessons</div><div class="value">' + (d.lessons || []).length + '</div><div class="sub">confidence-scored</div></div>';
+      html += '<div class="stat-card"><div class="label">Crystals</div><div class="value">' + (d.crystals || []).length + '</div><div class="sub">action digests</div></div>';
+      html += '<div class="stat-card"><div class="label">Relations</div><div class="value">' + (d.relationCount || 0) + '</div><div class="sub">' + nodeCount + ' nodes · ' + edgeCount + ' edges</div></div>';
+      html += '<div class="stat-card"><div class="label">Token Savings</div><div class="value">' + savings + '%</div><div class="sub">estimate · ~' + tokensSaved.toLocaleString() + ' tokens · ' + costStr + '</div></div>';
+      html += '<div class="stat-card"><div class="label">Routine Proposals</div><div class="value">' + (d.routineCandidates || []).length + '</div><div class="sub">compiler candidates</div></div>';
       html += '</div>';
 
       if (snap.memory || snap.cpu) {
-        html += '<div class="card" style="margin-bottom:16px"><div class="card-title">System Resources</div>';
+        html += '<div class="card" style="margin-bottom:16px"><div class="card-title">Diagnostics Snapshot</div>';
         if (snap.memory) {
           var heapUsed = Math.round((snap.memory.heapUsed || 0) / 1024 / 1024);
           var heapTotal = Math.round((snap.memory.heapTotal || 0) / 1024 / 1024);
@@ -1132,10 +1728,6 @@
           var heapColor = heapPct > 80 ? 'var(--red)' : heapPct > 60 ? 'var(--yellow)' : 'var(--green)';
           html += '<div class="gauge"><span class="gauge-label">Heap</span><div class="gauge-bar"><div class="gauge-fill" style="width:' + heapPct + '%;background:' + heapColor + '"></div></div><span class="gauge-value">' + heapUsed + ' / ' + heapTotal + ' MB</span></div>';
           html += '<div class="gauge"><span class="gauge-label">RSS</span><div class="gauge-bar"><div class="gauge-fill" style="width:' + Math.min(100, Math.round(rss / 512 * 100)) + '%;background:var(--blue)"></div></div><span class="gauge-value">' + rss + ' MB</span></div>';
-          if (snap.memory.external) {
-            var ext = Math.round(snap.memory.external / 1024 / 1024);
-            html += '<div class="gauge"><span class="gauge-label">External</span><div class="gauge-bar"><div class="gauge-fill" style="width:' + Math.min(100, Math.round(ext / 128 * 100)) + '%;background:var(--purple)"></div></div><span class="gauge-value">' + ext + ' MB</span></div>';
-          }
         }
         if (snap.cpu) {
           var cpuPct = snap.cpu.percent || 0;
@@ -1147,77 +1739,19 @@
           var lagColor = lag > 100 ? 'var(--red)' : lag > 20 ? 'var(--yellow)' : 'var(--green)';
           html += '<div class="gauge"><span class="gauge-label">Event Loop</span><div class="gauge-bar"><div class="gauge-fill" style="width:' + Math.min(100, lag) + '%;background:' + lagColor + '"></div></div><span class="gauge-value">' + lag.toFixed(1) + ' ms</span></div>';
         }
-        if (snap.uptimeSeconds) {
-          var mins = Math.floor(snap.uptimeSeconds / 60);
-          var hrs = Math.floor(mins / 60);
-          var upStr = hrs > 0 ? hrs + 'h ' + (mins % 60) + 'm' : mins + 'm';
-          html += '<div style="font-size:10px;color:var(--ink-faint);margin-top:6px;font-family:var(--font-mono);letter-spacing:0.04em;">UPTIME: ' + upStr + '</div>';
+        if (snap.pipeline) {
+          html += '<div class="gauge"><span class="gauge-label">Pipeline</span><div class="gauge-bar"><div class="gauge-fill" style="width:' + Math.min(100, (snap.pipeline.totalInflight || 0) * 10) + '%;background:var(--purple)"></div></div><span class="gauge-value">' + (snap.pipeline.totalInflight || 0) + ' inflight</span></div>';
         }
-        html += '</div>';
-      }
-
-      if (snap.pipeline) {
-        var p = snap.pipeline;
-        html += '<div class="card" style="margin-bottom:16px"><div class="card-title">Compression Pipeline</div>';
-        html += '<div class="stats-grid" style="grid-template-columns:repeat(3,1fr)">';
-        html += '<div class="stat-card"><div class="label">Active</div><div class="value">' + (p.compressActive || 0) + '</div><div class="sub">concurrent LLM calls</div></div>';
-        html += '<div class="stat-card"><div class="label">Pending</div><div class="value">' + (p.compressPending || 0) + '</div><div class="sub">queued in semaphore</div></div>';
-        html += '<div class="stat-card"><div class="label">Inflight</div><div class="value">' + (p.totalInflight || 0) + '</div><div class="sub">total across sessions</div></div>';
-        html += '</div></div>';
-      }
-
-      if (snap.kvConnectivity || snap.snapshotPersistence) {
-        var kvConn = snap.kvConnectivity || null;
-        var snapshotPersist = snap.snapshotPersistence || null;
-        html += '<div class="card" style="margin-bottom:16px"><div class="card-title">Runtime Diagnostics</div>';
-        html += '<div class="stats-grid" style="grid-template-columns:repeat(2,1fr)">';
-        if (kvConn) {
-          var kvStatusClass = kvConn.status === 'ok' ? 'badge-green' : 'badge-red';
-          var kvSub = (kvConn.latencyMs !== undefined ? kvConn.latencyMs.toFixed(2) + ' ms' : 'no latency');
-          kvSub += ' · streak ' + (kvConn.consecutiveFailures || 0);
-          html += '<div class="stat-card"><div class="label">KV Probe</div><div class="value"><span class="badge ' + kvStatusClass + '">' + esc(kvConn.status) + '</span></div><div class="sub">' + esc(kvSub) + '</div>';
-          if (kvConn.lastSuccessAt || kvConn.lastFailureAt || kvConn.error) {
-            html += '<div style="margin-top:8px;font-size:11px;color:var(--ink-faint);font-family:var(--font-mono);line-height:1.5;">';
-            if (kvConn.lastSuccessAt) html += 'last ok ' + esc(shortTime(kvConn.lastSuccessAt)) + '<br>';
-            if (kvConn.lastFailureAt) html += 'last fail ' + esc(shortTime(kvConn.lastFailureAt)) + '<br>';
-            if (kvConn.error) html += esc(kvConn.error);
-            html += '</div>';
-          }
-          html += '</div>';
-        }
-        if (snapshotPersist) {
-          var persistStatusClass = snapshotPersist.status === 'ok' ? 'badge-green' : 'badge-red';
-          var persistSub = 'streak ' + (snapshotPersist.consecutiveFailures || 0);
-          html += '<div class="stat-card"><div class="label">Health Snapshot</div><div class="value"><span class="badge ' + persistStatusClass + '">' + esc(snapshotPersist.status) + '</span></div><div class="sub">' + esc(persistSub) + '</div>';
-          if (snapshotPersist.lastSuccessAt || snapshotPersist.lastFailureAt || snapshotPersist.error) {
-            html += '<div style="margin-top:8px;font-size:11px;color:var(--ink-faint);font-family:var(--font-mono);line-height:1.5;">';
-            if (snapshotPersist.lastSuccessAt) html += 'last ok ' + esc(shortTime(snapshotPersist.lastSuccessAt)) + '<br>';
-            if (snapshotPersist.lastFailureAt) html += 'last fail ' + esc(shortTime(snapshotPersist.lastFailureAt)) + '<br>';
-            if (snapshotPersist.error) html += esc(snapshotPersist.error);
-            html += '</div>';
-          }
-          html += '</div>';
-        }
-        html += '</div></div>';
-      }
-
-      if (snap.alerts && snap.alerts.length > 0) {
-        html += '<div class="card" style="margin-bottom:16px;border-color:var(--accent);border-width:2px;"><div class="card-title" style="color:var(--accent);border-bottom-color:var(--accent);">Alerts (' + snap.alerts.length + ')</div>';
-        snap.alerts.forEach(function(al) {
-          html += '<div style="font-size:12px;color:var(--accent);padding:4px 0;border-bottom:1px solid var(--border-light);font-family:var(--font-ui);">' + esc(al) + '</div>';
-        });
-        html += '</div>';
+        html += '<div class="section-action">Deep diagnostics <button class="btn" data-action="goto-tab" data-target-tab="operations">Open Diagnostics</button></div></div>';
       }
 
       html += '<div class="two-col">';
-
       html += '<div class="card"><div class="card-title">Recent Sessions</div>';
-      if (d.sessions.length === 0) {
+      if (recentSessions.length === 0) {
         html += '<div class="empty-state"><p>No sessions yet. Start a coding session with agentmemory hooks enabled.</p></div>';
       } else {
-        var recent = d.sessions.slice().sort(function(a, b) { return (b.startedAt || '').localeCompare(a.startedAt || ''); }).slice(0, 5);
         html += '<table><tr><th>Project</th><th>Status</th><th>Obs</th><th>Started</th></tr>';
-        recent.forEach(function(s) {
+        recentSessions.forEach(function(s) {
           var statusBadge = s.status === 'active' ? 'badge-green' : s.status === 'completed' ? 'badge-blue' : 'badge-muted';
           html += '<tr><td style="color:var(--ink);font-weight:500;">' + esc(s.project ? s.project.split('/').pop() : s.id.slice(0,8)) + '</td>';
           html += '<td><span class="badge ' + statusBadge + '">' + esc(s.status) + '</span></td>';
@@ -1243,152 +1777,10 @@
         });
       }
       html += '</div>';
-
       html += '</div>';
 
-      if (fMetrics.length > 0) {
-        var sorted = fMetrics.slice().sort(function(a, b) { return (b.totalCalls || 0) - (a.totalCalls || 0); });
-        html += '<div class="card" style="margin-top:16px"><div class="card-title">Function Metrics (OTel)</div>';
-        html += '<table class="metric-table"><tr><th>Function</th><th style="text-align:right">Calls</th><th style="text-align:right">Success</th><th style="text-align:right">Fail</th><th style="text-align:right">Avg Latency</th><th style="text-align:right">Quality</th></tr>';
-        sorted.forEach(function(m) {
-          var successRate = m.totalCalls > 0 ? Math.round((m.successCount / m.totalCalls) * 100) : 0;
-          var rateColor = successRate >= 95 ? 'var(--green)' : successRate >= 80 ? 'var(--yellow)' : 'var(--red)';
-          var latencyColor = m.avgLatencyMs > 1000 ? 'var(--red)' : m.avgLatencyMs > 200 ? 'var(--yellow)' : 'var(--green)';
-          html += '<tr>';
-          html += '<td class="metric-fn">' + esc(m.functionId) + '</td>';
-          html += '<td class="metric-num">' + m.totalCalls + '</td>';
-          html += '<td class="metric-num" style="color:' + rateColor + '">' + m.successCount + ' (' + successRate + '%)</td>';
-          html += '<td class="metric-num" style="color:' + (m.failureCount > 0 ? 'var(--red)' : 'var(--ink-faint)') + '">' + m.failureCount + '</td>';
-          html += '<td class="metric-num" style="color:' + latencyColor + '">' + Math.round(m.avgLatencyMs) + ' ms</td>';
-          html += '<td class="metric-num">' + (m.avgQualityScore > 0 ? m.avgQualityScore.toFixed(2) : '-') + '</td>';
-          html += '</tr>';
-        });
-        html += '</table></div>';
-      }
-
-      if (workers.length > 0) {
-        html += '<div class="card" style="margin-top:16px"><div class="card-title">Workers</div>';
-        workers.forEach(function(w) {
-          var statusClass = w.status === 'running' ? 'running' : w.status === 'starting' ? 'starting' : 'stopped';
-          html += '<div class="worker-row"><span class="worker-dot ' + statusClass + '"></span>';
-          html += '<span style="color:var(--ink);font-weight:600;font-family:var(--font-ui);font-size:12px;">' + esc(w.name) + '</span>';
-          html += '<span class="badge ' + (w.status === 'running' ? 'badge-green' : 'badge-muted') + '">' + esc(w.status) + '</span>';
-          html += '<span style="font-size:10px;color:var(--ink-faint);font-family:var(--font-mono);">' + esc(w.id) + '</span></div>';
-        });
-        html += '</div>';
-      }
-
-      if (cb && cb.state !== 'closed') {
-        html += '<div class="card" style="margin-top:16px;border-color:var(--accent);border-width:2px;"><div class="card-title" style="color:var(--accent);">Circuit Breaker Details</div>';
-        html += '<div class="detail-row"><div class="dl">State</div><div class="dv"><span class="cb-indicator ' + (cb.state === 'open' ? 'cb-open' : 'cb-half-open') + '">' + esc(cb.state) + '</span></div></div>';
-        html += '<div class="detail-row"><div class="dl">Failures</div><div class="dv" style="color:var(--accent);font-family:var(--font-mono);">' + (cb.failures || 0) + '</div></div>';
-        if (cb.lastFailureAt) html += '<div class="detail-row"><div class="dl">Last Failure</div><div class="dv" style="font-family:var(--font-mono);font-size:12px;">' + esc(formatTime(cb.lastFailureAt)) + '</div></div>';
-        if (cb.openedAt) html += '<div class="detail-row"><div class="dl">Opened At</div><div class="dv" style="font-family:var(--font-mono);font-size:12px;">' + esc(formatTime(cb.openedAt)) + '</div></div>';
-        html += '</div>';
-      }
-
-      var semFacts = d.semantic || [];
-      var procItems = d.procedural || [];
-      var relItems = d.relations || [];
-
-      html += '<hr class="section-rule">';
-      html += '<div class="two-col">';
-
-      html += '<div class="card"><div class="card-title">Semantic Memory</div>';
-      if (semFacts.length === 0) {
-        html += '<div style="font-size:13px;color:var(--ink-faint);font-style:italic;">No semantic facts yet. Observations will be consolidated into semantic memories over time.</div>';
-      } else {
-          semFacts.slice(0, 5).forEach(function(f) {
-            var conf = typeof f.confidence === 'number' ? Math.round(f.confidence * 100) : null;
-            var str = typeof f.strength === 'number' ? Math.round(f.strength * 100) : null;
-            var barColor = (str || 0) > 70 ? 'var(--green)' : (str || 0) > 40 ? 'var(--yellow)' : 'var(--red)';
-            html += '<div class="memory-fact">';
-            html += '<span style="color:var(--ink);">' + esc(f.fact || f.content || f.title || 'Fact') + '</span>';
-            html += '<span style="display:flex;align-items:center;gap:6px;">';
-            if (str !== null) html += '<span class="strength-bar" style="width:40px;"><span class="fill" style="width:' + str + '%;background:' + barColor + '"></span></span>';
-            if (conf !== null) html += '<span style="font-size:10px;font-family:var(--font-mono);color:var(--ink-faint);">' + conf + '%</span>';
-            html += '</span></div>';
-          });
-        }
-        html += '</div>';
-
-        html += '<div class="card"><div class="card-title">Procedural Memory</div>';
-      if (procItems.length === 0) {
-        html += '<div style="font-size:13px;color:var(--ink-faint);font-style:italic;">No procedures yet. Repeated patterns will be extracted as procedures.</div>';
-      } else {
-          procItems.slice(0, 5).forEach(function(p) {
-            html += '<div class="procedure-item">';
-            html += '<div style="font-weight:600;color:var(--ink);font-family:var(--font-display);font-size:13px;">' + esc(p.name || p.title || 'Procedure') + '</div>';
-            if (p.trigger || p.triggerCondition) html += '<div style="font-size:11px;color:var(--ink-faint);font-family:var(--font-mono);margin-top:2px;">Trigger: ' + esc(p.trigger || p.triggerCondition) + '</div>';
-            if (p.frequency) html += '<div style="font-size:11px;color:var(--ink-faint);margin-top:2px;">Freq: ' + p.frequency + '</div>';
-            if (p.steps && p.steps.length > 0) {
-              html += '<ol class="procedure-steps">';
-              p.steps.slice(0, 4).forEach(function(s) { html += '<li>' + esc(typeof s === 'string' ? s : s.description || s.action || JSON.stringify(s)) + '</li>'; });
-              if (p.steps.length > 4) html += '<li style="color:var(--ink-faint);font-style:italic;">+ ' + (p.steps.length - 4) + ' more...</li>';
-              html += '</ol>';
-            }
-            html += '</div>';
-          });
-        }
-      html += '</div>';
-
-      html += '</div>';
-
-      html += '<div class="card" style="margin-top:16px;"><div class="card-title">Consolidation Status</div>';
-      html += '<div class="consolidation-row"><span class="cl">Semantic facts</span><span class="cv">' + semFacts.length + '</span></div>';
-      html += '<div class="consolidation-row"><span class="cl">Procedures</span><span class="cv">' + procItems.length + '</span></div>';
-      html += '<div class="consolidation-row"><span class="cl">Relations</span><span class="cv">' + (d.relationCount || relItems.length) + '</span></div>';
-      html += '<div class="consolidation-row"><span class="cl">Consolidated memories</span><span class="cv">' + d.memories.length + '</span></div>';
-      html += '</div>';
-
-      if (d.memories.length > 0) {
-        html += '<div class="card" style="margin-top:16px;"><div class="card-title">Consolidated Memories (' + d.memories.length + ')</div>';
-        var typeGroups = {};
-        d.memories.forEach(function(m) {
-          var t = m.type || 'other';
-          if (!typeGroups[t]) typeGroups[t] = [];
-          typeGroups[t].push(m);
-        });
-        Object.keys(typeGroups).sort().forEach(function(type) {
-          var items = typeGroups[type];
-          html += '<div style="margin-bottom:12px;">';
-          html += '<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:var(--ink-faint);margin-bottom:4px;font-family:var(--font-ui);">' + esc(type) + ' (' + items.length + ')</div>';
-          items.sort(function(a, b) { return (b.strength || 0) - (a.strength || 0); }).slice(0, 5).forEach(function(m) {
-            var str = typeof m.strength === 'number' ? m.strength : 5;
-            var strPct = Math.round((str / 10) * 100);
-            var barColor = strPct > 70 ? 'var(--green)' : strPct > 40 ? 'var(--yellow)' : 'var(--red)';
-            html += '<div class="memory-fact">';
-            html += '<span style="color:var(--ink);" title="' + esc(m.content || '') + '">' + esc(m.title || m.id) + '</span>';
-            html += '<span style="display:flex;align-items:center;gap:6px;">';
-            html += '<span class="strength-bar" style="width:40px;"><span class="fill" style="width:' + strPct + '%;background:' + barColor + '"></span></span>';
-            html += '<span style="font-size:10px;font-family:var(--font-mono);color:var(--ink-faint);">v' + (m.version || 1) + '</span>';
-            html += '</span></div>';
-          });
-          if (items.length > 5) {
-            html += '<div style="font-size:10px;color:var(--ink-faint);font-style:italic;padding:2px 0;">+ ' + (items.length - 5) + ' more</div>';
-          }
-          html += '</div>';
-        });
-        html += '</div>';
-      }
-
-      if (relItems.length > 0) {
-        html += '<div class="card" style="margin-top:16px;"><div class="card-title">Memory Relations</div>';
-        relItems.slice(0, 8).forEach(function(r) {
-          var relType = r.type || r.relationType || 'related';
-          var badgeClass = relType === 'supersedes' ? 'badge-red' : relType === 'extends' ? 'badge-green' : relType === 'contradicts' ? 'badge-yellow' : 'badge-muted';
-          html += '<div style="padding:4px 0;border-bottom:1px solid var(--border-light);font-size:12px;display:flex;align-items:center;gap:6px;">';
-          html += '<span style="font-family:var(--font-mono);color:var(--blue);font-size:11px;">' + esc(truncate(r.sourceId || r.fromId || '', 8)) + '</span>';
-          html += '<span class="badge ' + badgeClass + '">' + esc(relType) + '</span>';
-          html += '<span style="font-family:var(--font-mono);color:var(--blue);font-size:11px;">' + esc(truncate(r.targetId || r.toId || '', 8)) + '</span>';
-          html += '</div>';
-        });
-        html += '</div>';
-      }
-
-      html += '<div style="text-align:center;margin-top:20px;"><button class="btn btn-primary" data-action="refresh-dashboard">Refresh</button>';
+      html += '<div style="text-align:center;margin-top:20px;"><button class="btn btn-primary" data-action="refresh-dashboard">Refresh Overview</button>';
       html += '<span style="font-size:10px;color:var(--ink-faint);margin-left:10px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.08em;">Auto-refresh 30s</span></div>';
-
       el.innerHTML = html;
     }
 
@@ -3701,7 +4093,7 @@
           renderObservations();
         }
       }
-      if (state.activeTab === 'dashboard') {
+      if (state.activeGroup === 'overview') {
         state.dashboard.loaded = false;
         scheduleDashboardRefresh(500);
       }
@@ -3712,6 +4104,11 @@
     }
 
     document.getElementById('tab-bar').addEventListener('click', function(e) {
+      if (e.target.tagName === 'BUTTON' && e.target.dataset.group) {
+        switchGroup(e.target.dataset.group);
+      }
+    });
+    document.getElementById('subtab-bar').addEventListener('click', function(e) {
       if (e.target.tagName === 'BUTTON' && e.target.dataset.tab) {
         switchTab(e.target.dataset.tab);
       }
@@ -3738,6 +4135,11 @@
       if (action === 'refresh-coordination') {
         state.coordination.loaded = false;
         loadCoordination();
+        return;
+      }
+      if (action === 'goto-tab') {
+        var targetTab = target.getAttribute('data-target-tab');
+        if (targetTab) switchTab(targetTab);
         return;
       }
       if (action === 'zoom-graph') {
@@ -3806,6 +4208,7 @@
       if (e.target === this) closeModal();
     });
 
+    renderTabShell();
     loadTab('dashboard');
     connectWs();
     startDashboardAutoRefresh();

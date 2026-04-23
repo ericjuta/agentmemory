@@ -357,7 +357,8 @@ describe("agentmemory integration", () => {
       expect(res.status).toBe(200);
       const body = await res.text();
       expect(body).toContain("html");
-      expect(body).toContain("Coordination");
+      expect(body).toContain("Overview");
+      expect(body).toContain("Diagnostics");
     });
   });
 
