@@ -37,6 +37,7 @@ services:
     environment:
       AGENTMEMORY_URL: http://iii-engine:3111
       VIEWER_UPSTREAM_URL: http://iii-engine:3111
+      VIEWER_HOST: 0.0.0.0
       III_ENGINE_URL: ws://iii-engine:49134
       III_REST_PORT: "3111"
       III_STREAMS_PORT: "3112"

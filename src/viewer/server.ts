@@ -18,6 +18,10 @@ const VIEWER_PROXY_TIMEOUT_MS = Number.parseInt(
   10,
 );
 
+function getViewerListenHost(): string {
+  return process.env["VIEWER_HOST"] || "127.0.0.1";
+}
+
 function corsHeaders(req: IncomingMessage): Record<string, string> {
   const origin = req.headers.origin || "";
   const allowed = ALLOWED_ORIGINS.includes(origin)
@@ -78,6 +82,7 @@ export function startViewerServer(
   restPort?: number,
 ): Server {
   const resolvedRestPort = restPort ?? port - 2;
+  const listenHost = getViewerListenHost();
 
   const server = createServer(async (req, res) => {
     const raw = req.url || "/";
@@ -145,9 +150,7 @@ export function startViewerServer(
     }
   });
 
-  // Listen on the IPv6 unspecified address so Docker/OrbStack can accept both
-  // localhost (::1) and 127.0.0.1 connections on the published port.
-  server.listen(port, "::", () => {
+  server.listen(port, listenHost, () => {
     console.log(`[agentmemory] Viewer: http://localhost:${port}`);
   });
 
