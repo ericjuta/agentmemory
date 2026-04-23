@@ -320,11 +320,15 @@ export async function retrieveRelevantBlocks(
   const shouldRefreshBlocks =
     allBlocks.length === 0 ||
     (Boolean(query.project) && !hasProjectCoverage(allBlocks));
-  const canFallbackFromState =
+  let canFallbackFromState =
     query.purpose === "context" ||
     query.purpose === "enrich" ||
     Boolean(query.project) ||
     Boolean(query.sessionId);
+  if (!canFallbackFromState && shouldRefreshBlocks) {
+    const sessionCount = await kv.list(KV.sessions).then((items) => items.length).catch(() => Infinity);
+    canFallbackFromState = sessionCount <= 32;
+  }
   if (shouldRefreshBlocks) {
     if (!canFallbackFromState && (storedBlockReadFailed || !canReadStoredBlocks)) {
       usingStateFallbackBlocks = true;

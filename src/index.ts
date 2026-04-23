@@ -519,96 +519,106 @@ async function main() {
     console.log(`[agentmemory] Auto-consolidation: enabled (every ${consolidationIntervalMs / 60000}m, adaptive)`);
   }
 
-  const compressRetryHandle = createAdaptiveTimer(
-    async () => {
-      const result = await sdk.trigger<
-        Record<string, never>,
-        { retried?: number; removed?: number }
-      >({ function_id: "mem::compress-retry", payload: {} });
-      return (result?.retried || 0) + (result?.removed || 0);
-    },
-    { baseMs: 300_000, minMs: 60_000, maxMs: 900_000, label: "Compress retry" },
-  );
+  let compressRetryHandle: AdaptiveTimerHandle | undefined;
+  if (process.env.COMPRESS_RETRY_ENABLED !== "false") {
+    compressRetryHandle = createAdaptiveTimer(
+      async () =>
+        runMaintenanceTask("Compress retry", async () => {
+          const result = await sdk.trigger<
+            Record<string, never>,
+            { retried?: number; removed?: number }
+          >({ function_id: "mem::compress-retry", payload: {} });
+          return (result?.retried || 0) + (result?.removed || 0);
+        }),
+      { baseMs: 300_000, minMs: 60_000, maxMs: 900_000, label: "Compress retry" },
+    );
+    console.log(`[agentmemory] Compress retry: enabled (every 5m, adaptive)`);
+  }
 
-  const evictionHandle = createAdaptiveTimer(
-    async () => {
-      // Run retention scoring first
-      try {
-        await sdk.trigger({ function_id: "mem::retention-score", payload: {} });
-      } catch {}
+  let evictionHandle: AdaptiveTimerHandle | undefined;
+  if (process.env.EVICTION_ENABLED !== "false") {
+    evictionHandle = createAdaptiveTimer(
+      async () =>
+        runMaintenanceTask("Eviction", async () => {
+          try {
+            await sdk.trigger({ function_id: "mem::retention-score", payload: {} });
+          } catch {}
 
-      // Then evict based on retention + age/importance
-      const retentionResult = await sdk.trigger<
-        { dryRun?: boolean },
-        { evicted?: number }
-      >({ function_id: "mem::retention-evict", payload: { dryRun: false } }).catch(() => ({ evicted: 0 }));
+          const retentionResult = await sdk.trigger<
+            { dryRun?: boolean },
+            { evicted?: number }
+          >({ function_id: "mem::retention-evict", payload: { dryRun: false } }).catch(() => ({ evicted: 0 }));
 
-      const evictResult = await sdk.trigger<
-        { dryRun?: boolean },
-        { staleSessions?: number; lowImportanceObs?: number; capEvictions?: number; expiredMemories?: number; nonLatestMemories?: number }
-      >({ function_id: "mem::evict", payload: { dryRun: false } }).catch(() => ({}));
+          const evictResult = await sdk.trigger<
+            { dryRun?: boolean },
+            { staleSessions?: number; lowImportanceObs?: number; capEvictions?: number; expiredMemories?: number; nonLatestMemories?: number }
+          >({ function_id: "mem::evict", payload: { dryRun: false } }).catch(() => ({}));
 
-      const work = (retentionResult?.evicted || 0) +
-        ((evictResult as any)?.staleSessions || 0) +
-        ((evictResult as any)?.lowImportanceObs || 0) +
-        ((evictResult as any)?.capEvictions || 0) +
-        ((evictResult as any)?.expiredMemories || 0) +
-        ((evictResult as any)?.nonLatestMemories || 0);
-      return work;
-    },
-    { baseMs: 14_400_000, minMs: 3_600_000, maxMs: 43_200_000, label: "Eviction" },
-  );
-  console.log(`[agentmemory] Eviction: enabled (every 240m, adaptive)`);
+          const work = (retentionResult?.evicted || 0) +
+            ((evictResult as any)?.staleSessions || 0) +
+            ((evictResult as any)?.lowImportanceObs || 0) +
+            ((evictResult as any)?.capEvictions || 0) +
+            ((evictResult as any)?.expiredMemories || 0) +
+            ((evictResult as any)?.nonLatestMemories || 0);
+          return work;
+        }),
+      { baseMs: 14_400_000, minMs: 3_600_000, maxMs: 43_200_000, label: "Eviction" },
+    );
+    console.log(`[agentmemory] Eviction: enabled (every 240m, adaptive)`);
+  }
 
-  const indexVerifyHandle = createAdaptiveTimer(
-    async () => {
-      const bm25Size = bm25Index.size;
-      const vectorSize = vectorIndex?.size ?? 0;
+  let indexVerifyHandle: AdaptiveTimerHandle | undefined;
+  if (process.env.INDEX_VERIFY_ENABLED !== "false") {
+    indexVerifyHandle = createAdaptiveTimer(
+      async () =>
+        runMaintenanceTask("Index verify", async () => {
+          const bm25Size = bm25Index.size;
+          const vectorSize = vectorIndex?.size ?? 0;
 
-      // Count actual compressed observations across all sessions
-      const sessions = await kv.list<{ id: string }>(KV.sessions).catch(() => []);
-      let kvObsCount = 0;
-      for (const session of sessions) {
-        const obs = await kv.list(KV.observations(session.id)).catch(() => []);
-        kvObsCount += obs.filter((o: any) => o.title).length; // only compressed
-      }
+          const sessions = await kv.list<{ id: string }>(KV.sessions).catch(() => []);
+          let kvObsCount = 0;
+          for (const session of sessions) {
+            const obs = await kv.list(KV.observations(session.id)).catch(() => []);
+            kvObsCount += obs.filter((o: any) => o.title).length;
+          }
 
-      const drift = Math.abs(bm25Size - kvObsCount);
-      const driftPct = kvObsCount > 0 ? drift / kvObsCount : 0;
-      const vectorDrift = Math.abs(vectorSize - kvObsCount);
-      const vectorDriftPct = kvObsCount > 0 ? vectorDrift / kvObsCount : 0;
+          const drift = Math.abs(bm25Size - kvObsCount);
+          const driftPct = kvObsCount > 0 ? drift / kvObsCount : 0;
+          const vectorDrift = Math.abs(vectorSize - kvObsCount);
+          const vectorDriftPct = kvObsCount > 0 ? vectorDrift / kvObsCount : 0;
 
-      const bm25NeedsRebuild = driftPct > 0.1 && drift > 50;
-      const vectorNeedsRebuild =
-        !!vectorIndex &&
-        ((kvObsCount > 0 && vectorSize === 0) ||
-          (vectorDriftPct > 0.1 && vectorDrift > 50));
+          const bm25NeedsRebuild = driftPct > 0.1 && drift > 50;
+          const vectorNeedsRebuild =
+            !!vectorIndex &&
+            ((kvObsCount > 0 && vectorSize === 0) ||
+              (vectorDriftPct > 0.1 && vectorDrift > 50));
 
-      if (bm25NeedsRebuild || vectorNeedsRebuild) {
-        console.warn(
-          `[agentmemory] Index drift detected: bm25=${bm25Size} vector=${vectorSize} kv=${kvObsCount}, rebuilding`,
-        );
-        const rebuilt = await rebuildIndex(kv).catch(() => 0);
-        if (rebuilt > 0) {
-          indexPersistence.scheduleSave();
-          console.log(`[agentmemory] Index rebuilt: ${rebuilt} observations`);
-        }
-        return 1;
-      }
-      return 0;
-    },
-    { baseMs: 7_200_000, minMs: 1_800_000, maxMs: 28_800_000, label: "Index verify" },
-  );
-  console.log(`[agentmemory] Index verify: enabled (every 120m, adaptive)`);
+          if (bm25NeedsRebuild || vectorNeedsRebuild) {
+            console.warn(
+              `[agentmemory] Index drift detected: bm25=${bm25Size} vector=${vectorSize} kv=${kvObsCount}, rebuilding`,
+            );
+            const rebuilt = await rebuildIndex(kv).catch(() => 0);
+            if (rebuilt > 0) {
+              indexPersistence.scheduleSave();
+              console.log(`[agentmemory] Index rebuilt: ${rebuilt} observations`);
+            }
+            return 1;
+          }
+          return 0;
+        }),
+      { baseMs: 7_200_000, minMs: 1_800_000, maxMs: 28_800_000, label: "Index verify" },
+    );
+    console.log(`[agentmemory] Index verify: enabled (every 120m, adaptive)`);
+  }
 
   const shutdown = async () => {
     console.log(`\n[agentmemory] Shutting down...`);
     healthMonitor.stop();
     autoForgetHandle?.stop();
     consolidationHandle?.stop();
-    compressRetryHandle.stop();
-    evictionHandle.stop();
-    indexVerifyHandle.stop();
+    compressRetryHandle?.stop();
+    evictionHandle?.stop();
+    indexVerifyHandle?.stop();
     dedupMap.stop();
     indexPersistence.stop();
     retrievalIndexPersistence?.stop();
