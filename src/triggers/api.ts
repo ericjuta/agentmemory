@@ -122,6 +122,14 @@ function parseOptionalPositiveInt(value: unknown): number | undefined | null {
   return parsed;
 }
 
+function parseOptionalNonNegativeNumber(
+  value: unknown,
+): number | undefined | null {
+  const parsed = parseOptionalFiniteNumber(value);
+  if (parsed === undefined || parsed === null) return parsed;
+  return parsed >= 0 ? parsed : null;
+}
+
 function parseOptionalStringArray(
   value: unknown,
 ): string[] | undefined | null {
@@ -3385,6 +3393,71 @@ export function registerApiTriggers(
     return { status_code: 200, body: result };
   });
   sdk.registerTrigger({ type: "http", function_id: "api::diagnose", config: { api_path: "/agentmemory/diagnostics", http_method: "POST" } });
+
+  sdk.registerFunction("api::retrieval-index-verify",  async (req: ApiRequest) => {
+    const denied = checkAuth(req, secret);
+    if (denied) return denied;
+    const body = (req.body || {}) as Record<string, unknown>;
+    const bm25DriftRatio = parseOptionalNonNegativeNumber(body.bm25DriftRatio);
+    const vectorDriftRatio = parseOptionalNonNegativeNumber(body.vectorDriftRatio);
+    const minAbsoluteDrift = parseOptionalNonNegativeNumber(body.minAbsoluteDrift);
+    if (
+      bm25DriftRatio === null ||
+      vectorDriftRatio === null ||
+      minAbsoluteDrift === null
+    ) {
+      return {
+        status_code: 400,
+        body: {
+          error:
+            "bm25DriftRatio, vectorDriftRatio, and minAbsoluteDrift must be non-negative numbers when provided",
+        },
+      };
+    }
+    if (
+      body.scheduleSave !== undefined &&
+      typeof body.scheduleSave !== "boolean"
+    ) {
+      return {
+        status_code: 400,
+        body: { error: "scheduleSave must be a boolean when provided" },
+      };
+    }
+    if (body.repair !== undefined && typeof body.repair !== "boolean") {
+      return {
+        status_code: 400,
+        body: { error: "repair must be a boolean when provided" },
+      };
+    }
+    if (
+      body.scanBlocks !== undefined &&
+      typeof body.scanBlocks !== "boolean"
+    ) {
+      return {
+        status_code: 400,
+        body: { error: "scanBlocks must be a boolean when provided" },
+      };
+    }
+    const payload: Record<string, unknown> = {};
+    if (bm25DriftRatio !== undefined) payload.bm25DriftRatio = bm25DriftRatio;
+    if (vectorDriftRatio !== undefined) {
+      payload.vectorDriftRatio = vectorDriftRatio;
+    }
+    if (minAbsoluteDrift !== undefined) {
+      payload.minAbsoluteDrift = minAbsoluteDrift;
+    }
+    if (typeof body.scheduleSave === "boolean") {
+      payload.scheduleSave = body.scheduleSave;
+    }
+    if (typeof body.repair === "boolean") {
+      payload.repair = body.repair;
+    }
+    payload.scanBlocks =
+      typeof body.scanBlocks === "boolean" ? body.scanBlocks : false;
+    const result = await sdk.trigger({ function_id: "mem::retrieval-index-verify", payload });
+    return { status_code: 200, body: result };
+  });
+  sdk.registerTrigger({ type: "http", function_id: "api::retrieval-index-verify", config: { api_path: "/agentmemory/retrieval-index/verify", http_method: "POST" } });
 
   sdk.registerFunction("api::heal",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);

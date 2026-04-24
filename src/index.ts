@@ -95,6 +95,7 @@ import {
   retrievalBlockId,
 } from "./functions/retrieval-blocks.js";
 import { registerRetrievalBlockRetryFunction } from "./functions/retrieval-block-retry.js";
+import { registerRetrievalIndexVerifyFunction } from "./functions/retrieval-index-verify.js";
 import { registerApiTriggers } from "./triggers/api.js";
 import { registerEventTriggers } from "./triggers/events.js";
 import { registerMcpEndpoints } from "./mcp/server.js";
@@ -226,6 +227,7 @@ async function main() {
   registerExportImportFunction(sdk, kv);
   registerEnrichFunction(sdk, kv);
   registerRetrievalBlockRetryFunction(sdk, kv);
+  registerRetrievalIndexVerifyFunction(sdk, persistenceKv);
 
   const claudeBridgeConfig = loadClaudeBridgeConfig();
   if (claudeBridgeConfig.enabled) {
@@ -424,7 +426,7 @@ async function main() {
     `[agentmemory] Ready. ${embeddingProvider ? "Triple-stream (BM25+Vector+Graph)" : "BM25+Graph"} search active.`,
   );
   console.log(
-    `[agentmemory] Endpoints: 129 REST + 44 MCP tools + 6 MCP resources + 3 MCP prompts`,
+    `[agentmemory] Endpoints: 130 REST + 44 MCP tools + 6 MCP resources + 3 MCP prompts`,
   );
 
   const viewerPort = config.restPort + 2;
@@ -594,6 +596,7 @@ async function main() {
 
   let indexVerifyHandle: AdaptiveTimerHandle | undefined;
   let retrievalIndexVerifyHandle: AdaptiveTimerHandle | undefined;
+  let delayedRetrievalIndexVerifyTimer: ReturnType<typeof setTimeout> | undefined;
   if (process.env.INDEX_VERIFY_ENABLED !== "false") {
     indexVerifyHandle = createAdaptiveTimer(
       async () =>
@@ -664,6 +667,52 @@ async function main() {
     console.log(
       `[agentmemory] Retrieval index verify: enabled (every 120m, adaptive)`,
     );
+    if (process.env.RETRIEVAL_INDEX_STARTUP_VERIFY_ENABLED !== "false") {
+      const startupVerifyDelayMs = parseInt(
+        process.env.RETRIEVAL_INDEX_STARTUP_VERIFY_DELAY_MS || "30000",
+        10,
+      );
+      if (Number.isFinite(startupVerifyDelayMs) && startupVerifyDelayMs > 0) {
+        delayedRetrievalIndexVerifyTimer = setTimeout(() => {
+          void runMaintenanceTask("Retrieval index startup verify", async () => {
+            const result = await sdk.trigger<
+              Record<string, unknown>,
+              { error?: string; repaired?: boolean; rebuilt?: number }
+            >({
+              function_id: "mem::retrieval-index-verify",
+              payload: {
+                reason: "startup",
+                repair: false,
+                scanBlocks: false,
+                scheduleSave: false,
+              },
+            });
+            if (result.error) {
+              console.warn(
+                `[agentmemory] Retrieval index startup verify failed: ${result.error}`,
+              );
+              return 0;
+            }
+            if (result.repaired) {
+              console.warn(
+                `[agentmemory] Retrieval index startup drift repaired: rebuilt=${result.rebuilt ?? 0}`,
+              );
+              return 1;
+            }
+            return 0;
+          }).catch((err) => {
+            console.warn(
+              `[agentmemory] Retrieval index startup verify failed:`,
+              err,
+            );
+          });
+        }, startupVerifyDelayMs);
+        delayedRetrievalIndexVerifyTimer.unref();
+        console.log(
+          `[agentmemory] Retrieval index startup verify: scheduled in ${startupVerifyDelayMs}ms`,
+        );
+      }
+    }
   }
 
   const shutdown = async () => {
@@ -676,6 +725,9 @@ async function main() {
     evictionHandle?.stop();
     indexVerifyHandle?.stop();
     retrievalIndexVerifyHandle?.stop();
+    if (delayedRetrievalIndexVerifyTimer) {
+      clearTimeout(delayedRetrievalIndexVerifyTimer);
+    }
     dedupMap.stop();
     indexPersistence.stop();
     retrievalIndexPersistence?.stop();

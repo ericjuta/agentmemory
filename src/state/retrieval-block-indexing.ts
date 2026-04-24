@@ -47,6 +47,8 @@ export interface VerifyRetrievalBlockIndexOptions {
   minAbsoluteDrift?: number;
   rebuild?: (kv: StateKV) => Promise<number>;
   scheduleSave?: boolean;
+  repair?: boolean;
+  scanBlocks?: boolean;
 }
 
 type RetrievalIndexingRuntime = {
@@ -422,6 +424,23 @@ export async function verifyRetrievalBlockIndex(
   const persistence = runtime.persistenceStatus?.();
 
   try {
+    if (options.scanBlocks === false) {
+      const blockCount = persistence?.manifest?.documentCount ?? bm25Size;
+      const expectedVectorCount =
+        runtime.embeddingProvider && vectorIndex ? blockCount : 0;
+      return {
+        blockCount,
+        bm25Size,
+        vectorSize,
+        expectedVectorCount,
+        bm25Drift: Math.abs(bm25Size - blockCount),
+        vectorDrift: Math.abs(vectorSize - expectedVectorCount),
+        rebuilt: 0,
+        repaired: false,
+        persistence,
+      };
+    }
+
     const blocks = await kv.list<RetrievalBlock>(KV.retrievalBlocks);
     const blockCount = blocks.length;
     const expectedVectorCount =
@@ -445,7 +464,7 @@ export async function verifyRetrievalBlockIndex(
           vectorDriftRatio > (options.vectorDriftRatio ?? 0.1)));
     const needsRebuild = bm25NeedsRebuild || vectorNeedsRebuild;
 
-    if (!needsRebuild) {
+    if (!needsRebuild || options.repair === false) {
       return {
         blockCount,
         bm25Size,
