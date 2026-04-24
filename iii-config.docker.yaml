@@ -38,9 +38,10 @@ workers:
   - name: iii-observability
     config:
       enabled: true
+      level: warn
       service_name: agentmemory
       exporter: memory
       sampling_ratio: 1.0
       metrics_enabled: true
       logs_enabled: true
-      logs_console_output: true
+      logs_console_output: false
