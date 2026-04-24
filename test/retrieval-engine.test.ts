@@ -37,8 +37,10 @@ import type { RetrievalBlock } from "../src/types.js";
 
 describe("retrieveRelevantBlocks", () => {
   beforeEach(() => {
-    collectRetrievalBlocksFromStateMock.mockClear();
-    collectLightweightRetrievalBlocksFromStateMock.mockClear();
+    collectRetrievalBlocksFromStateMock.mockReset();
+    collectRetrievalBlocksFromStateMock.mockResolvedValue([]);
+    collectLightweightRetrievalBlocksFromStateMock.mockReset();
+    collectLightweightRetrievalBlocksFromStateMock.mockResolvedValue([]);
     getRetrievalSearchIndex().clear();
     resetContextResultCacheForTests();
     resetRetrievalEngineStateForTests();
@@ -357,5 +359,167 @@ describe("retrieveRelevantBlocks", () => {
 
     expect(result.blocks.map((block) => block.id)).toContain(warmMatch.id);
     expect(result.blocks.map((block) => block.id)).not.toContain(hotBlock.id);
+  });
+
+  it("treats missing scope entries as incomplete and falls back to stored blocks", async () => {
+    const kv = mockKV();
+    const block: RetrievalBlock = {
+      id: "rblk_incomplete_scope",
+      sourceType: "memory",
+      sourceId: "mem_incomplete_scope",
+      project: "/project",
+      scope: "project",
+      freshnessLane: "warm",
+      canonicalText: "Incomplete scope fallback should still find alpha context",
+      title: "Alpha memory",
+      files: ["src/alpha.ts"],
+      concepts: ["alpha"],
+      entities: ["alpha"],
+      sourceObservationIds: [],
+      hadFailure: false,
+      hadDecision: false,
+      hadAssistantConclusion: true,
+      isResumeArtifact: false,
+      importance: 7,
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+      eventAt: "2026-01-01T00:00:00Z",
+    };
+
+    await kv.set(KV.retrievalBlocks, block.id, block);
+    await kv.set(KV.retrievalBlockIndex, "scope:index-ready", {
+      ready: true,
+      updatedAt: "2026-01-01T00:00:00Z",
+    });
+    await kv.set(KV.retrievalBlockIndex, "scope:project:%2Fproject", {
+      ids: [block.id],
+      updatedAt: "2026-01-01T00:00:00Z",
+    });
+    getRetrievalSearchIndex().addDocument(
+      block.id,
+      block.project,
+      buildRetrievalBlockLexicalText(block),
+    );
+
+    const rawList = kv.list.bind(kv);
+    const listSpy = vi.fn(rawList);
+    kv.list = (async <T>(scope: string): Promise<T[]> => {
+      return listSpy(scope);
+    }) as typeof kv.list;
+
+    const result = await retrieveRelevantBlocks(kv as never, {
+      project: "/project",
+      query: "alpha context",
+      budget: 300,
+      purpose: "smart-search",
+    });
+
+    expect(listSpy.mock.calls.some(([scope]) => scope === KV.retrievalBlocks)).toBe(true);
+    expect(result.searchResults.map((entry) => entry.block.id)).toEqual([block.id]);
+  });
+
+  it("excludes branch-specific blocks when branch is unknown", async () => {
+    const kv = mockKV();
+    const branchBlock: RetrievalBlock = {
+      id: "rblk_branch_only",
+      sourceType: "memory",
+      sourceId: "mem_branch_only",
+      project: "/project",
+      branch: "feature/retrieval",
+      scope: "project",
+      freshnessLane: "warm",
+      canonicalText: "Branch-only beta sentinel memory",
+      title: "Branch beta memory",
+      files: ["src/beta.ts"],
+      concepts: ["beta"],
+      entities: ["beta"],
+      sourceObservationIds: [],
+      hadFailure: false,
+      hadDecision: false,
+      hadAssistantConclusion: true,
+      isResumeArtifact: false,
+      importance: 7,
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+      eventAt: "2026-01-01T00:00:00Z",
+    };
+
+    await kv.set(KV.retrievalBlocks, branchBlock.id, branchBlock);
+    await warmRetrievalBlockScopeMemberships(kv as never, [branchBlock]);
+    getRetrievalSearchIndex().addDocument(
+      branchBlock.id,
+      branchBlock.project,
+      buildRetrievalBlockLexicalText(branchBlock),
+    );
+
+    const unknownBranch = await retrieveRelevantBlocks(kv as never, {
+      project: "/project",
+      query: "beta sentinel",
+      budget: 300,
+      purpose: "smart-search",
+    });
+    const knownBranch = await retrieveRelevantBlocks(kv as never, {
+      project: "/project",
+      branch: "feature/retrieval",
+      query: "beta sentinel",
+      budget: 300,
+      purpose: "smart-search",
+    });
+
+    expect(unknownBranch.searchResults).toHaveLength(0);
+    expect(knownBranch.searchResults.map((entry) => entry.block.id)).toEqual([
+      branchBlock.id,
+    ]);
+  });
+
+  it("excludes legacy global consolidated memories from project-scoped search", async () => {
+    const kv = mockKV();
+    const semanticBlock: RetrievalBlock = {
+      id: "rblk_global_semantic",
+      sourceType: "semantic_memory",
+      sourceId: "sem_global",
+      project: "global",
+      scope: "global",
+      freshnessLane: "cold",
+      canonicalText: "Global legacy retrieval scope sentinel",
+      title: "Global semantic",
+      files: [],
+      concepts: ["scope"],
+      entities: ["scope", "sentinel"],
+      sourceObservationIds: [],
+      hadFailure: false,
+      hadDecision: false,
+      hadAssistantConclusion: true,
+      isResumeArtifact: false,
+      importance: 7,
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+      eventAt: "2026-01-01T00:00:00Z",
+    };
+
+    await kv.set(KV.retrievalBlocks, semanticBlock.id, semanticBlock);
+    await warmRetrievalBlockScopeMemberships(kv as never, [semanticBlock]);
+    getRetrievalSearchIndex().addDocument(
+      semanticBlock.id,
+      semanticBlock.project,
+      buildRetrievalBlockLexicalText(semanticBlock),
+    );
+
+    const scoped = await retrieveRelevantBlocks(kv as never, {
+      project: "/project-a",
+      query: "legacy retrieval scope sentinel",
+      budget: 300,
+      purpose: "smart-search",
+    });
+    const unscoped = await retrieveRelevantBlocks(kv as never, {
+      query: "legacy retrieval scope sentinel",
+      budget: 300,
+      purpose: "smart-search",
+    });
+
+    expect(scoped.searchResults).toHaveLength(0);
+    expect(unscoped.searchResults.map((entry) => entry.block.id)).toEqual([
+      semanticBlock.id,
+    ]);
   });
 });

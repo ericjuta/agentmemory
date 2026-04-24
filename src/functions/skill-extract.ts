@@ -101,6 +101,10 @@ function parseSkillXml(
   };
 }
 
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
 export function registerSkillExtractFunctions(
   sdk: ISdk,
   kv: StateKV,
@@ -157,6 +161,7 @@ export function registerSkillExtractFunctions(
         const fp = fingerprintId(
           "skill",
           JSON.stringify({
+            project: session.project,
             title: parsed.title.toLowerCase(),
             trigger: parsed.trigger.toLowerCase(),
             steps: parsed.steps.map((s) => s.toLowerCase().trim()),
@@ -173,6 +178,12 @@ export function registerSkillExtractFunctions(
             existing.frequency++;
             existing.sourceSessionIds = [...existing.sourceSessionIds, data.sessionId];
           }
+          existing.project = existing.project || session.project;
+          existing.sourceScope = existing.project ? "project" : "global";
+          existing.sourceProjects = uniqueStrings([
+            ...(existing.sourceProjects || []),
+            session.project,
+          ]);
           existing.updatedAt = new Date().toISOString();
           await kv.set(KV.procedural, existing.id, existing);
           await upsertProceduralRetrievalBlock(kv, existing);
@@ -206,6 +217,9 @@ export function registerSkillExtractFunctions(
           expectedOutcome: parsed.expectedOutcome,
           strength: 0.6,
           frequency: 1,
+          project: session.project,
+          sourceScope: "project",
+          sourceProjects: [session.project],
           tags: parsed.tags,
           concepts: summary.concepts,
           sourceSessionIds: [data.sessionId],

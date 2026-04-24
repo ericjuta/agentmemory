@@ -42,6 +42,7 @@ const QUERY_EMBEDDING_CACHE_MAX_ENTRIES = 128;
 const QUERY_EMBEDDING_CACHE_TTL_MS = 5 * 60_000;
 const QUERY_EMBEDDING_TIMEOUT_MS = 2500;
 const RETRIEVAL_BLOCK_SCOPE_COOLDOWN_MS = 60_000;
+const RETRIEVAL_BLOCK_VECTOR_MIN_SCORE = 0.35;
 
 type CachedQueryEmbedding = {
   embedding: Float32Array;
@@ -259,8 +260,18 @@ async function embedQueryWithTimeout(
 }
 
 function branchMatches(block: RetrievalBlock, branch?: string): boolean {
-  if (!branch) return true;
+  if (!branch) return !block.branch;
   return !block.branch || block.branch === branch;
+}
+
+function projectMatches(block: RetrievalBlock, project?: string): boolean {
+  if (!project) return true;
+  if (block.project === project) return true;
+  if (block.project !== "global") return false;
+  return (
+    block.sourceType !== "semantic_memory" &&
+    block.sourceType !== "procedural_memory"
+  );
 }
 
 type RankedRetrievalBlock = {
@@ -471,12 +482,11 @@ export async function retrieveRelevantBlocks(
   }
 
   const hasProjectCoverage = (blocks: RetrievalBlock[]): boolean =>
-    blocks.some(
-      (block) => block.project === query.project || block.project === "global",
-    );
+    blocks.some((block) => projectMatches(block, query.project));
   let allBlocks: RetrievalBlock[] = [];
   let usingStateFallbackBlocks = false;
   let storedBlockReadFailed = false;
+  let scopedBlockReadIncomplete = false;
   const canReadStoredBlocks = Date.now() >= retrievalBlockScopeUnavailableUntil;
   if (canReadStoredBlocks) {
     try {
@@ -488,6 +498,7 @@ export async function retrieveRelevantBlocks(
       if (scopedBlocks.complete) {
         allBlocks = scopedBlocks.blocks;
       } else {
+        scopedBlockReadIncomplete = true;
         allBlocks = await kv.list<RetrievalBlock>(KV.retrievalBlocks);
         if (allBlocks.length > 0) {
           void warmRetrievalBlockScopeMemberships(kv, allBlocks).catch(() => {});
@@ -499,7 +510,7 @@ export async function retrieveRelevantBlocks(
       retrievalBlockScopeUnavailableUntil = Date.now() + RETRIEVAL_BLOCK_SCOPE_COOLDOWN_MS;
     }
   }
-  const shouldRefreshBlocks =
+  const needsProjectCoverageRefresh =
     allBlocks.length === 0 ||
     (Boolean(query.project) && !hasProjectCoverage(allBlocks));
   let canFallbackFromState =
@@ -507,10 +518,13 @@ export async function retrieveRelevantBlocks(
     query.purpose === "enrich" ||
     Boolean(query.project) ||
     Boolean(query.sessionId);
-  if (!canFallbackFromState && shouldRefreshBlocks) {
+  if (!canFallbackFromState && needsProjectCoverageRefresh) {
     const sessionCount = await kv.list(KV.sessions).then((items) => items.length).catch(() => Infinity);
     canFallbackFromState = sessionCount <= 32;
   }
+  const shouldRefreshBlocks =
+    needsProjectCoverageRefresh ||
+    (scopedBlockReadIncomplete && canFallbackFromState);
   if (shouldRefreshBlocks) {
     if (!canFallbackFromState && (storedBlockReadFailed || !canReadStoredBlocks)) {
       usingStateFallbackBlocks = true;
@@ -523,17 +537,16 @@ export async function retrieveRelevantBlocks(
         allBlocks = lightweightBlocks;
         usingStateFallbackBlocks = true;
       } else if (canFallbackFromState) {
-        allBlocks = await collectRetrievalBlocksFromState(kv).catch(() => []);
-        usingStateFallbackBlocks = allBlocks.length > 0;
+        const stateBlocks = await collectRetrievalBlocksFromState(kv).catch(() => []);
+        if (stateBlocks.length > 0) {
+          allBlocks = stateBlocks;
+          usingStateFallbackBlocks = true;
+        }
       }
     }
   }
   const blocks = allBlocks
-    .filter((block) =>
-      query.project
-        ? block.project === query.project || block.project === "global"
-        : true,
-    )
+    .filter((block) => projectMatches(block, query.project))
     .filter((block) => branchMatches(block, query.branch));
 
   const terms = uniqueStrings([
@@ -602,6 +615,7 @@ export async function retrieveRelevantBlocks(
   const graphContexts = new Map<string, string>();
   const runtime = getRetrievalBlockIndexingRuntime();
   const vectorIndex = getRetrievalVectorIndex();
+  const scopedBlockIds = new Set(blocks.map((block) => block.id));
   if (lexicalQuery.trim() && runtime.embeddingProvider && vectorIndex && vectorIndex.size > 0) {
     try {
       const cacheKey = `${runtime.embeddingProvider.name}:${lexicalQuery}`;
@@ -613,7 +627,10 @@ export async function retrieveRelevantBlocks(
         );
         setCachedQueryEmbedding(cacheKey, queryEmbedding);
       }
-      const vectorResults = vectorIndex.search(queryEmbedding, 120);
+      const vectorResults = vectorIndex.search(queryEmbedding, 120, {
+        candidateIds: scopedBlockIds,
+        minScore: RETRIEVAL_BLOCK_VECTOR_MIN_SCORE,
+      });
       const maxVector = vectorResults[0]?.score || 0;
       for (const result of vectorResults) {
         candidateIds.add(result.obsId);
@@ -628,6 +645,11 @@ export async function retrieveRelevantBlocks(
   }
 
   const graphScores = new Map<string, number>();
+  let graphRetrieval: GraphRetrieval | null = null;
+  const getGraphRetrieval = () => {
+    graphRetrieval ??= new GraphRetrieval(kv);
+    return graphRetrieval;
+  };
   const entityHints = uniqueStrings([
     ...extractEntitiesFromQuery(lexicalQuery),
     ...focusFiles.map((filePath) => basename(filePath)),
@@ -635,8 +657,7 @@ export async function retrieveRelevantBlocks(
   ]);
   if (entityHints.length > 0) {
     try {
-      const graphRetrieval = new GraphRetrieval(kv);
-      const graphResults = await graphRetrieval.searchByEntities(entityHints, 2, 40);
+      const graphResults = await getGraphRetrieval().searchByEntities(entityHints, 2, 40);
       const byObservationId = new Map<string, number>();
       const contextByObservationId = new Map<string, string>();
       for (const result of graphResults) {
@@ -672,14 +693,13 @@ export async function retrieveRelevantBlocks(
 
   if (forceHotSessionBlocks && query.sessionId) {
     try {
-      const graphRetrieval = new GraphRetrieval(kv);
       const seedObservationIds = blocks
         .filter((block) => block.sessionId === query.sessionId)
         .filter((block) => block.freshnessLane === "hot")
         .flatMap((block) => block.sourceObservationIds)
         .slice(0, 12);
       if (seedObservationIds.length > 0) {
-        const graphResults = await graphRetrieval.expandFromChunks(seedObservationIds, 1, 20);
+        const graphResults = await getGraphRetrieval().expandFromChunks(seedObservationIds, 1, 20);
         const byObservationId = new Map<string, number>();
         const contextByObservationId = new Map<string, string>();
         for (const result of graphResults) {

@@ -13,6 +13,7 @@ vi.mock("../src/config.js", () => ({
 
 import { registerConsolidationPipelineFunction } from "../src/functions/consolidation-pipeline.js";
 import { isConsolidationEnabled } from "../src/config.js";
+import { KV } from "../src/state/schema.js";
 import type { SessionSummary, Memory, SemanticMemory, ProceduralMemory } from "../src/types.js";
 
 function mockKV() {
@@ -169,6 +170,55 @@ describe("Consolidation Pipeline", () => {
     expect(stored[0].confidence).toBe(0.9);
   });
 
+  it("creates project-scoped semantic memories and retrieval blocks", async () => {
+    const provider = {
+      name: "test",
+      compress: vi.fn(),
+      summarize: vi.fn().mockResolvedValue(
+        `<facts><fact confidence="0.8">Project auth config uses RS256</fact></facts>`,
+      ),
+    };
+    registerConsolidationPipelineFunction(sdk as never, kv as never, provider as never);
+
+    for (let i = 0; i < 6; i++) {
+      await kv.set("mem:summaries", `project_ses_${i}`, {
+        ...makeSummary(i),
+        sessionId: `project_ses_${i}`,
+        project: "/project-a",
+      });
+    }
+    await kv.set("mem:summaries", "other_ses", {
+      ...makeSummary(99),
+      sessionId: "other_ses",
+      project: "/project-b",
+    });
+
+    const result = (await sdk.trigger("mem::consolidate-pipeline", {
+      tier: "semantic",
+      project: "/project-a",
+    })) as { success: boolean; results: Record<string, unknown> };
+
+    expect(result.success).toBe(true);
+    const stored = await kv.list<SemanticMemory>("mem:semantic");
+    expect(stored).toHaveLength(1);
+    expect(stored[0]).toMatchObject({
+      project: "/project-a",
+      sourceScope: "project",
+      sourceProjects: ["/project-a"],
+    });
+    expect(stored[0].sourceSessionIds).not.toContain("other_ses");
+
+    const blocks = await kv.list<{ project: string; scope: string; sourceId: string }>(
+      KV.retrievalBlocks,
+    );
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({
+      project: "/project-a",
+      scope: "project",
+      sourceId: stored[0].id,
+    });
+  });
+
   it("with enough patterns, creates procedural memories from provider response", async () => {
     const provider = {
       name: "test",
@@ -196,6 +246,55 @@ describe("Consolidation Pipeline", () => {
     expect(stored[0].name).toBe("Test Workflow");
     expect(stored[0].steps.length).toBe(2);
     expect(stored[0].triggerCondition).toBe("when writing tests");
+  });
+
+  it("creates project-scoped procedural memories and retrieval blocks", async () => {
+    const provider = {
+      name: "test",
+      compress: vi.fn(),
+      summarize: vi.fn().mockResolvedValue(
+        `<procedures><procedure name="Auth Review" trigger="when touching auth config"><step>Inspect auth config</step><step>Run auth tests</step></procedure></procedures>`,
+      ),
+    };
+    registerConsolidationPipelineFunction(sdk as never, kv as never, provider as never);
+
+    for (let i = 0; i < 3; i++) {
+      await kv.set("mem:memories", `mem_${i}`, {
+        ...makePattern(i),
+        id: `mem_${i}`,
+        project: "/project-a",
+      });
+    }
+    await kv.set("mem:memories", "mem_other", {
+      ...makePattern(99),
+      id: "mem_other",
+      project: "/project-b",
+    });
+
+    const result = (await sdk.trigger("mem::consolidate-pipeline", {
+      tier: "procedural",
+      project: "/project-a",
+    })) as { success: boolean; results: Record<string, unknown> };
+
+    expect(result.success).toBe(true);
+    const stored = await kv.list<ProceduralMemory>("mem:procedural");
+    expect(stored).toHaveLength(1);
+    expect(stored[0]).toMatchObject({
+      project: "/project-a",
+      sourceScope: "project",
+      sourceProjects: ["/project-a"],
+    });
+    expect(stored[0].sourceMemoryIds).not.toContain("mem_other");
+
+    const blocks = await kv.list<{ project: string; scope: string; sourceId: string }>(
+      KV.retrievalBlocks,
+    );
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({
+      project: "/project-a",
+      scope: "project",
+      sourceId: stored[0].id,
+    });
   });
 
   it("consolidation records an audit entry", async () => {

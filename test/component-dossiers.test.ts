@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { registerComponentDossiersFunction } from "../src/functions/component-dossiers.js";
+import { filePathMatches } from "../src/functions/file-path-match.js";
 import { upsertObservationRetrievalBlock } from "../src/functions/retrieval-blocks.js";
 import { KV } from "../src/state/schema.js";
 import type {
@@ -12,6 +13,12 @@ import type {
 import { mockKV, mockSdk } from "./helpers/mocks.js";
 
 describe("component dossiers", () => {
+  it("matches exact and segment-boundary file paths without basename-only full-path collisions", () => {
+    expect(filePathMatches("/repo/src/auth/config.ts", "src/auth/config.ts")).toBe(true);
+    expect(filePathMatches("auth/config.ts", "/repo/src/auth/config.ts")).toBe(true);
+    expect(filePathMatches("src/auth/config.ts", "src/payments/config.ts")).toBe(false);
+  });
+
   it("uses file-matched retrieval state and ignores unrelated project insights", async () => {
     const sdk = mockSdk();
     const kv = mockKV();
@@ -178,5 +185,63 @@ describe("component dossiers", () => {
     expect(result.dossier.summary).toContain("Updated the context file.");
     expect(result.dossier.sourceObservationIds).toEqual(["obs-compressed"]);
     expect(result.dossier.relatedInsightIds).toContain("ins-legacy");
+  });
+
+  it("ignores unrelated duplicate basename observations during refresh", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerComponentDossiersFunction(sdk as never, kv as never);
+
+    const session: Session = {
+      id: "session-config",
+      project: "/project",
+      cwd: "/project",
+      branch: "main",
+      startedAt: "2026-03-29T12:00:00.000Z",
+      status: "active",
+      observationCount: 2,
+    };
+    const authObservation: CompressedObservation = {
+      id: "obs-auth-config",
+      sessionId: session.id,
+      timestamp: "2026-03-29T12:00:01.000Z",
+      type: "file_edit",
+      title: "Auth config tightened",
+      facts: [],
+      narrative: "Updated auth config validation.",
+      concepts: ["auth"],
+      files: ["src/auth/config.ts"],
+      importance: 7,
+    };
+    const paymentObservation: CompressedObservation = {
+      id: "obs-payment-config",
+      sessionId: session.id,
+      timestamp: "2026-03-29T12:00:02.000Z",
+      type: "file_edit",
+      title: "Payment config changed",
+      facts: [],
+      narrative: "Updated payment config routing.",
+      concepts: ["payments"],
+      files: ["src/payments/config.ts"],
+      importance: 7,
+    };
+
+    await kv.set(KV.sessions, session.id, session);
+    await kv.set(KV.observations(session.id), authObservation.id, authObservation);
+    await kv.set(KV.observations(session.id), paymentObservation.id, paymentObservation);
+
+    const result = (await sdk.trigger("mem::dossier-refresh", {
+      project: "/project",
+      filePath: "src/auth/config.ts",
+      branch: "main",
+    })) as {
+      success: boolean;
+      dossier: { summary: string; sourceObservationIds: string[] };
+    };
+
+    expect(result.success).toBe(true);
+    expect(result.dossier.summary).toContain("Updated auth config validation.");
+    expect(result.dossier.summary).not.toContain("payment config");
+    expect(result.dossier.sourceObservationIds).toEqual(["obs-auth-config"]);
   });
 });

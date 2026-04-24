@@ -119,6 +119,9 @@ describe("skill-extract", () => {
     expect(result.skill.name).toBe("Fix JWT Token Expiration");
     expect(result.skill.steps).toHaveLength(3);
     expect(result.skill.triggerCondition).toContain("JWT");
+    expect(result.skill.project).toBe("test");
+    expect(result.skill.sourceScope).toBe("project");
+    expect(result.skill.sourceProjects).toEqual(["test"]);
     expect(mockKv.set).toHaveBeenCalled();
   });
 

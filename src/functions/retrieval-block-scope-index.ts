@@ -78,12 +78,10 @@ async function writeScopeEntry(
   key: string,
   ids: string[],
 ): Promise<void> {
-  await kv
-    .set(KV.retrievalBlockIndex, key, {
-      ids: uniqueStrings(ids),
-      updatedAt: new Date().toISOString(),
-    } satisfies RetrievalBlockScopeEntry)
-    .catch(() => {});
+  await kv.set(KV.retrievalBlockIndex, key, {
+    ids: uniqueStrings(ids),
+    updatedAt: new Date().toISOString(),
+  } satisfies RetrievalBlockScopeEntry);
 }
 
 export async function upsertRetrievalBlockScopeMembership(
@@ -108,9 +106,10 @@ export async function upsertRetrievalBlockScopeMembership(
       await writeScopeEntry(kv, key, nextIds);
     }),
   );
-  await kv
-    .set(KV.retrievalBlockIndex, READY_SCOPE_KEY, { ready: true, updatedAt: new Date().toISOString() })
-    .catch(() => {});
+  await kv.set(KV.retrievalBlockIndex, READY_SCOPE_KEY, {
+    ready: true,
+    updatedAt: new Date().toISOString(),
+  });
 }
 
 export async function removeRetrievalBlockScopeMembership(
@@ -129,9 +128,10 @@ export async function removeRetrievalBlockScopeMembership(
       );
     }),
   );
-  await kv
-    .set(KV.retrievalBlockIndex, READY_SCOPE_KEY, { ready: true, updatedAt: new Date().toISOString() })
-    .catch(() => {});
+  await kv.set(KV.retrievalBlockIndex, READY_SCOPE_KEY, {
+    ready: true,
+    updatedAt: new Date().toISOString(),
+  });
 }
 
 export async function warmRetrievalBlockScopeMemberships(
@@ -144,12 +144,16 @@ export async function warmRetrievalBlockScopeMemberships(
       grouped.set(key, [...(grouped.get(key) || []), block.id]);
     }
   }
+  if (!grouped.has(GLOBAL_SCOPE_KEY)) {
+    grouped.set(GLOBAL_SCOPE_KEY, []);
+  }
   await Promise.all(
     [...grouped.entries()].map(([key, ids]) => writeScopeEntry(kv, key, ids)),
   );
-  await kv
-    .set(KV.retrievalBlockIndex, READY_SCOPE_KEY, { ready: true, updatedAt: new Date().toISOString() })
-    .catch(() => {});
+  await kv.set(KV.retrievalBlockIndex, READY_SCOPE_KEY, {
+    ready: true,
+    updatedAt: new Date().toISOString(),
+  });
 }
 
 export async function loadScopedRetrievalBlocks(
@@ -177,6 +181,9 @@ export async function loadScopedRetrievalBlocks(
       entry: await readScopeEntry(kv, key),
     })),
   );
+  if (scopeEntries.some(({ entry }) => !entry)) {
+    return { blocks: [], complete: false };
+  }
   const ids = uniqueStrings(
     scopeEntries.flatMap(({ entry }) => entry?.ids || []),
   );
@@ -214,6 +221,6 @@ export async function loadScopedRetrievalBlocks(
     blocks: loaded
       .map((entry) => entry.block)
       .filter((block): block is RetrievalBlock => block !== null),
-    complete: true,
+    complete: missingIds.size === 0,
   };
 }

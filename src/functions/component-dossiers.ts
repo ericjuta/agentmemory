@@ -12,7 +12,7 @@ import type {
 } from "../types.js";
 import { recordAudit } from "./audit.js";
 import { listScopedDecisions } from "./decisions.js";
-import { basename, filePathMatches } from "./file-path-match.js";
+import { basename, filePathMatchesAny } from "./file-path-match.js";
 import { listScopedGuardrails } from "./guardrails.js";
 import { loadScopedRetrievalBlocks } from "./retrieval-block-scope-index.js";
 import { upsertDossierRetrievalBlock } from "./retrieval-blocks.js";
@@ -242,7 +242,7 @@ async function relevantProjectObservations(
       (block) =>
         block.sourceType === "observation" &&
         block.sessionId &&
-        block.files.some((candidate) => filePathMatches(candidate, filePath)),
+        filePathMatchesAny(block.files, filePath),
     );
     const observations = await Promise.all(
       matchedBlocks.map((block) =>
@@ -270,9 +270,7 @@ async function relevantProjectObservations(
   }
 
   return (await projectObservations(kv, project, branch)).filter((observation) =>
-    safeStringArray(observation.files).some((candidate) =>
-      filePathMatches(candidate, filePath),
-    ),
+    filePathMatchesAny(safeStringArray(observation.files), filePath),
   );
 }
 

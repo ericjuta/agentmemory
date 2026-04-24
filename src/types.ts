@@ -211,6 +211,7 @@ export interface RetrievalBlockRetryEntry {
   retries: number;
   firstFailedAt: string;
   lastFailedAt: string;
+  nextAttemptAt?: string;
   lastError: string;
 }
 
@@ -729,6 +730,9 @@ export interface SemanticMemory {
   id: string;
   fact: string;
   confidence: number;
+  project?: string;
+  sourceScope?: "project" | "global";
+  sourceProjects?: string[];
   sourceSessionIds: string[];
   sourceMemoryIds: string[];
   accessCount: number;
@@ -744,8 +748,12 @@ export interface ProceduralMemory {
   steps: string[];
   triggerCondition: string;
   expectedOutcome?: string;
+  project?: string;
+  sourceScope?: "project" | "global";
+  sourceProjects?: string[];
   frequency: number;
   sourceSessionIds: string[];
+  sourceMemoryIds?: string[];
   sourceObservationIds?: string[];
   tags?: string[];
   concepts?: string[];

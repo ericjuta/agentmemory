@@ -474,12 +474,13 @@ export function buildMemoryRetrievalBlock(memory: Memory): RetrievalBlock {
 
 export function buildSemanticRetrievalBlock(memory: SemanticMemory): RetrievalBlock {
   const canonicalText = formatSemantic(memory);
+  const project = memory.project || "global";
   return {
     id: retrievalBlockId("semantic_memory", memory.id),
     sourceType: "semantic_memory",
     sourceId: memory.id,
-    project: "global",
-    scope: "global",
+    project,
+    scope: memory.project ? "project" : "global",
     freshnessLane: "cold",
     canonicalText,
     title: memory.fact.slice(0, 80),
@@ -500,12 +501,13 @@ export function buildSemanticRetrievalBlock(memory: SemanticMemory): RetrievalBl
 
 export function buildProceduralRetrievalBlock(memory: ProceduralMemory): RetrievalBlock {
   const canonicalText = formatProcedural(memory);
+  const project = memory.project || "global";
   return {
     id: retrievalBlockId("procedural_memory", memory.id),
     sourceType: "procedural_memory",
     sourceId: memory.id,
-    project: "global",
-    scope: "global",
+    project,
+    scope: memory.project ? "project" : "global",
     freshnessLane: "cold",
     canonicalText,
     title: memory.name,

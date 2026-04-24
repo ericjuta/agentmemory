@@ -49,6 +49,28 @@ describe("VectorIndex", () => {
     expect(results.length).toBe(3);
   });
 
+  it("filters searches to candidate ids", () => {
+    index.add("obs_allowed", "ses_1", new Float32Array([1, 0, 0]));
+    index.add("obs_filtered", "ses_1", new Float32Array([0.9, 0.1, 0]));
+
+    const results = index.search(new Float32Array([1, 0, 0]), 10, {
+      candidateIds: ["obs_allowed"],
+    });
+
+    expect(results.map((result) => result.obsId)).toEqual(["obs_allowed"]);
+  });
+
+  it("filters weak absolute scores before ranking", () => {
+    index.add("obs_strong", "ses_1", new Float32Array([1, 0, 0]));
+    index.add("obs_weak", "ses_1", new Float32Array([0.2, 0.98, 0]));
+
+    const results = index.search(new Float32Array([1, 0, 0]), 10, {
+      minScore: 0.35,
+    });
+
+    expect(results.map((result) => result.obsId)).toEqual(["obs_strong"]);
+  });
+
   it("clears all vectors", () => {
     index.add("obs_1", "ses_1", new Float32Array([0.1, 0.2, 0.3]));
     index.add("obs_2", "ses_1", new Float32Array([0.4, 0.5, 0.6]));

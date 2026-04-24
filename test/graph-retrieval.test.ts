@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { GraphRetrieval } from "../src/functions/graph-retrieval.js";
 import type { GraphNode, GraphEdge } from "../src/types.js";
 
@@ -182,5 +182,27 @@ describe("GraphRetrieval", () => {
     const directScore = results.find((r) => r.obsId === "obs_1")?.score ?? 0;
     const indirectScore = results.find((r) => r.obsId === "obs_3")?.score ?? 0;
     expect(directScore).toBeGreaterThan(indirectScore);
+  });
+
+  it("reuses one graph snapshot across retrieval methods", async () => {
+    const nodes = [
+      makeNode("n1", "React", "library", ["obs_1"]),
+      makeNode("n2", "Hook", "concept", ["obs_2"]),
+    ];
+    const edges = [makeEdge("e1", "n1", "n2", "uses")];
+    const kv = mockKV(nodes, edges);
+    const rawList = kv.list.bind(kv);
+    const listSpy = vi.fn(rawList);
+    kv.list = (async <T>(scope: string): Promise<T[]> => {
+      return listSpy(scope);
+    }) as typeof kv.list;
+    const retrieval = new GraphRetrieval(kv as never);
+
+    await retrieval.searchByEntities(["React"], 2);
+    await retrieval.expandFromChunks(["obs_1"], 1);
+    await retrieval.temporalQuery("React");
+
+    expect(listSpy.mock.calls.filter(([scope]) => scope === "mem:graph:nodes")).toHaveLength(1);
+    expect(listSpy.mock.calls.filter(([scope]) => scope === "mem:graph:edges")).toHaveLength(1);
   });
 });

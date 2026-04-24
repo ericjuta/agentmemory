@@ -12,6 +12,12 @@ import { KV, fingerprintId } from "../state/schema.js";
 import type { StateKV } from "../state/kv.js";
 import { recordAudit } from "./audit.js";
 import { logger } from "../logger.js";
+import {
+  buildBeliefRetrievalBlock,
+  deleteStoredRetrievalBlock,
+  retrievalBlockId,
+  upsertRetrievalBlock,
+} from "./retrieval-blocks.js";
 
 type BeliefGroup = {
   claim: string;
@@ -164,6 +170,31 @@ export function beliefProjection(belief: Belief): BeliefProjection {
     concepts: belief.concepts,
     updatedAt: belief.updatedAt,
   };
+}
+
+async function syncBeliefRetrievalBlocks(
+  kv: StateKV,
+  beliefs: Belief[],
+  removedBeliefs: Belief[],
+): Promise<void> {
+  const activeBlocks = beliefs
+    .filter((belief) => belief.status === "active")
+    .map((belief) => {
+      const block = buildBeliefRetrievalBlock(beliefProjection(belief));
+      block.project = belief.project;
+      return block;
+    });
+  const inactiveBeliefs = beliefs.filter((belief) => belief.status !== "active");
+  const deletionIds = uniqueStrings(
+    [...inactiveBeliefs, ...removedBeliefs].map((belief) =>
+      retrievalBlockId("belief", belief.id),
+    ),
+  );
+
+  await Promise.all([
+    ...activeBlocks.map((block) => upsertRetrievalBlock(kv, block)),
+    ...deletionIds.map((id) => deleteStoredRetrievalBlock(kv, id)),
+  ]);
 }
 
 export async function deriveBeliefsForProject(
@@ -448,6 +479,9 @@ export function registerBeliefsFunctions(sdk: ISdk, kv: StateKV): void {
       );
       const nextBeliefIds = new Set(beliefs.map((belief) => belief.id));
       const nextEvidenceIds = new Set(evidence.map((entry) => entry.id));
+      const removedBeliefs = existingBeliefs.filter(
+        (belief) => targetProjects.has(belief.project) && !nextBeliefIds.has(belief.id),
+      );
 
       await Promise.all([
         ...beliefs.map((belief) => kv.set(KV.beliefs, belief.id, belief)),
@@ -455,9 +489,7 @@ export function registerBeliefsFunctions(sdk: ISdk, kv: StateKV): void {
       ]);
 
       await Promise.all([
-        ...existingBeliefs
-          .filter((belief) => targetProjects.has(belief.project) && !nextBeliefIds.has(belief.id))
-          .map((belief) => kv.delete(KV.beliefs, belief.id)),
+        ...removedBeliefs.map((belief) => kv.delete(KV.beliefs, belief.id)),
         ...existingEvidence
           .filter(
             (entry) =>
@@ -465,6 +497,8 @@ export function registerBeliefsFunctions(sdk: ISdk, kv: StateKV): void {
           )
           .map((entry) => kv.delete(KV.beliefEvidence, entry.id)),
       ]);
+
+      await syncBeliefRetrievalBlocks(kv, beliefs, removedBeliefs);
 
       await recordAudit(
         kv,

@@ -22,6 +22,19 @@ function asNonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+function optionalStringArg(
+  args: Record<string, unknown>,
+  key: string,
+): { value?: string; error?: string } {
+  const raw = args[key];
+  if (raw === undefined || raw === null) return {};
+  if (typeof raw !== "string") {
+    return { error: `${key} must be a string` };
+  }
+  const value = raw.trim();
+  return value ? { value } : {};
+}
+
 function asNumber(value: unknown, fallback?: number): number | undefined {
   const n = Number(value);
   if (Number.isFinite(n)) return n;
@@ -113,11 +126,26 @@ export function registerMcpEndpoints(
                 body: { error: "token_budget must be a positive integer" },
               };
             }
+            const projectArg = optionalStringArg(args, "project");
+            if (projectArg.error) {
+              return { status_code: 400, body: { error: projectArg.error } };
+            }
+            const cwdArg = optionalStringArg(args, "cwd");
+            if (cwdArg.error) {
+              return { status_code: 400, body: { error: cwdArg.error } };
+            }
+            const branchArg = optionalStringArg(args, "branch");
+            if (branchArg.error) {
+              return { status_code: 400, body: { error: branchArg.error } };
+            }
+            const project = projectArg.value || cwdArg.value;
             const result = await sdk.trigger({ function_id: "mem::search", payload: {
-              query: args.query,
+              query: args.query.trim(),
               limit: typeof args.limit === "number" ? args.limit : 10,
               format,
               token_budget: tokenBudget,
+              project,
+              branch: branchArg.value,
             } });
             const text =
               format === "narrative" &&
@@ -258,12 +286,27 @@ export function registerMcpEndpoints(
             }
             const expandIds = parseCsvList(args.expandIds).slice(0, 20);
             const limit = Math.max(1, Math.min(100, asNumber(args.limit, 10) ?? 10));
+            const projectArg = optionalStringArg(args, "project");
+            if (projectArg.error) {
+              return { status_code: 400, body: { error: projectArg.error } };
+            }
+            const cwdArg = optionalStringArg(args, "cwd");
+            if (cwdArg.error) {
+              return { status_code: 400, body: { error: cwdArg.error } };
+            }
+            const branchArg = optionalStringArg(args, "branch");
+            if (branchArg.error) {
+              return { status_code: 400, body: { error: branchArg.error } };
+            }
+            const project = projectArg.value || cwdArg.value;
             const result = await sdk.trigger({
               function_id: "mem::smart-search",
               payload: {
-                query: args.query,
+                query: args.query.trim(),
                 expandIds,
                 limit,
+                project,
+                branch: branchArg.value,
               },
             });
             return {

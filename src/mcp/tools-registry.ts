@@ -32,6 +32,18 @@ export const CORE_TOOLS: McpToolDef[] = [
           type: "number",
           description: "Optional token budget to trim returned results",
         },
+        project: {
+          type: "string",
+          description: "Optional project path to scope retrieval",
+        },
+        cwd: {
+          type: "string",
+          description: "Optional current working directory used as project scope",
+        },
+        branch: {
+          type: "string",
+          description: "Optional git branch to scope retrieval",
+        },
       },
       required: ["query"],
     },
@@ -122,6 +134,18 @@ export const CORE_TOOLS: McpToolDef[] = [
           description: "Comma-separated observation IDs to expand",
         },
         limit: { type: "number", description: "Max results (default 10)" },
+        project: {
+          type: "string",
+          description: "Optional project path to scope retrieval",
+        },
+        cwd: {
+          type: "string",
+          description: "Optional current working directory used as project scope",
+        },
+        branch: {
+          type: "string",
+          description: "Optional git branch to scope retrieval",
+        },
       },
       required: ["query"],
     },

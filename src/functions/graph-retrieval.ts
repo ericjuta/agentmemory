@@ -13,6 +13,13 @@ export interface GraphRetrievalResult {
   pathLength: number;
 }
 
+type GraphSnapshot = {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  nodesById: Map<string, GraphNode>;
+  adjacency: Map<string, GraphEdge[]>;
+};
+
 function buildGraphContext(
   path: Array<{ node: GraphNode; edge?: GraphEdge }>,
 ): string {
@@ -39,17 +46,44 @@ function buildGraphContext(
 }
 
 export class GraphRetrieval {
+  private snapshotPromise: Promise<GraphSnapshot> | null = null;
+
   constructor(private kv: StateKV) {}
+
+  private async loadSnapshot(): Promise<GraphSnapshot> {
+    if (!this.snapshotPromise) {
+      this.snapshotPromise = Promise.all([
+        this.kv.list<GraphNode>(KV.graphNodes),
+        this.kv.list<GraphEdge>(KV.graphEdges),
+      ]).then(([rawNodes, rawEdges]) => {
+        const nodes = rawNodes.filter((n) => !n.stale);
+        const edges = rawEdges.filter((e) => !e.stale);
+        const nodesById = new Map(nodes.map((node) => [node.id, node]));
+        const adjacency = new Map<string, GraphEdge[]>();
+        for (const edge of edges) {
+          if (!adjacency.has(edge.sourceNodeId)) {
+            adjacency.set(edge.sourceNodeId, []);
+          }
+          adjacency.get(edge.sourceNodeId)!.push(edge);
+          if (!adjacency.has(edge.targetNodeId)) {
+            adjacency.set(edge.targetNodeId, []);
+          }
+          adjacency.get(edge.targetNodeId)!.push(edge);
+        }
+        return { nodes, edges, nodesById, adjacency };
+      });
+    }
+    return this.snapshotPromise;
+  }
 
   async searchByEntities(
     entityNames: string[],
     maxDepth = 2,
     maxResults = 20,
   ): Promise<GraphRetrievalResult[]> {
-    const allNodes = (await this.kv.list<GraphNode>(KV.graphNodes)).filter((n) => !n.stale);
-    const allEdges = (await this.kv.list<GraphEdge>(KV.graphEdges)).filter((e) => !e.stale);
+    const snapshot = await this.loadSnapshot();
 
-    const matchingNodes = allNodes.filter((n) => {
+    const matchingNodes = snapshot.nodes.filter((n) => {
       const nameLower = n.name.toLowerCase();
       return entityNames.some(
         (e) =>
@@ -66,8 +100,7 @@ export class GraphRetrieval {
     for (const startNode of matchingNodes) {
       const paths = this.bfsTraversal(
         startNode,
-        allNodes,
-        allEdges,
+        snapshot,
         maxDepth,
       );
 
@@ -119,10 +152,9 @@ export class GraphRetrieval {
     maxDepth = 1,
     maxResults = 10,
   ): Promise<GraphRetrievalResult[]> {
-    const allNodes = (await this.kv.list<GraphNode>(KV.graphNodes)).filter((n) => !n.stale);
-    const allEdges = (await this.kv.list<GraphEdge>(KV.graphEdges)).filter((e) => !e.stale);
+    const snapshot = await this.loadSnapshot();
 
-    const linkedNodes = allNodes.filter((n) =>
+    const linkedNodes = snapshot.nodes.filter((n) =>
       n.sourceObservationIds.some((id) => obsIds.includes(id)),
     );
 
@@ -130,7 +162,7 @@ export class GraphRetrieval {
     const visitedObs = new Set<string>(obsIds);
 
     for (const node of linkedNodes) {
-      const paths = this.bfsTraversal(node, allNodes, allEdges, maxDepth);
+      const paths = this.bfsTraversal(node, snapshot, maxDepth);
       for (const path of paths) {
         const lastNode = path[path.length - 1].node;
         for (const obsId of lastNode.sourceObservationIds) {
@@ -163,15 +195,14 @@ export class GraphRetrieval {
     currentState: GraphEdge[];
     history: GraphEdge[];
   }> {
-    const allNodes = (await this.kv.list<GraphNode>(KV.graphNodes)).filter((n) => !n.stale);
-    const allEdges = (await this.kv.list<GraphEdge>(KV.graphEdges)).filter((e) => !e.stale);
+    const snapshot = await this.loadSnapshot();
 
-    const entity = allNodes.find(
+    const entity = snapshot.nodes.find(
       (n) => n.name.toLowerCase() === entityName.toLowerCase(),
     );
     if (!entity) return { entity: null, currentState: [], history: [] };
 
-    const relatedEdges = allEdges.filter(
+    const relatedEdges = snapshot.edges.filter(
       (e) => e.sourceNodeId === entity.id || e.targetNodeId === entity.id,
     );
 
@@ -229,8 +260,7 @@ export class GraphRetrieval {
 
   private bfsTraversal(
     startNode: GraphNode,
-    allNodes: GraphNode[],
-    allEdges: GraphEdge[],
+    snapshot: GraphSnapshot,
     maxDepth: number,
   ): Array<Array<{ node: GraphNode; edge?: GraphEdge }>> {
     const paths: Array<Array<{ node: GraphNode; edge?: GraphEdge }>> = [];
@@ -249,9 +279,7 @@ export class GraphRetrieval {
 
       if (depth >= maxDepth) continue;
 
-      const neighborEdges = allEdges.filter(
-        (e) => e.sourceNodeId === nodeId || e.targetNodeId === nodeId,
-      );
+      const neighborEdges = snapshot.adjacency.get(nodeId) || [];
 
       for (const edge of neighborEdges) {
         const nextId =
@@ -261,7 +289,7 @@ export class GraphRetrieval {
         if (visited.has(nextId)) continue;
         visited.add(nextId);
 
-        const nextNode = allNodes.find((n) => n.id === nextId);
+        const nextNode = snapshot.nodesById.get(nextId);
         if (!nextNode) continue;
 
         queue.push({

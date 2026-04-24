@@ -4,7 +4,11 @@ import { KV, fingerprintId } from "../state/schema.js";
 import type { DecisionMemory } from "../types.js";
 import { recordAudit } from "./audit.js";
 import { filePathMatches } from "./file-path-match.js";
-import { upsertDecisionRetrievalBlock } from "./retrieval-blocks.js";
+import {
+  deleteStoredRetrievalBlock,
+  retrievalBlockId,
+  upsertDecisionRetrievalBlock,
+} from "./retrieval-blocks.js";
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
@@ -183,6 +187,10 @@ export function registerDecisionsFunction(sdk: ISdk, kv: StateKV): void {
         superseded.supersededBy = record.id;
         superseded.updatedAt = now;
         await kv.set(KV.decisions, superseded.id, superseded);
+        await deleteStoredRetrievalBlock(
+          kv,
+          retrievalBlockId("decision", superseded.id),
+        );
       }
 
       await kv.set(KV.decisions, record.id, record);

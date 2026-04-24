@@ -288,3 +288,89 @@ describe("MCP Resources", () => {
     expect(result.body.error).toContain("percent-encoding");
   });
 });
+
+describe("MCP Tool Scoping", () => {
+  let sdk: ReturnType<typeof mockSdk>;
+  let kv: ReturnType<typeof mockKV>;
+
+  beforeEach(() => {
+    sdk = mockSdk();
+    kv = mockKV();
+    registerMcpEndpoints(sdk as never, kv as never);
+  });
+
+  it("passes project and branch scope through memory_recall", async () => {
+    let captured: unknown;
+    sdk.overrideTrigger("mem::search", async (payload: unknown) => {
+      captured = payload;
+      return { results: [] };
+    });
+
+    const fn = sdk.getFunction("mcp::tools::call")!;
+    const result = (await fn(
+      makeReq({
+        name: "memory_recall",
+        arguments: {
+          query: " auth ",
+          project: "/repo",
+          cwd: "/other",
+          branch: "feature/context",
+          limit: 3,
+        },
+      }),
+    )) as { status_code: number };
+
+    expect(result.status_code).toBe(200);
+    expect(captured).toMatchObject({
+      query: "auth",
+      project: "/repo",
+      branch: "feature/context",
+      limit: 3,
+    });
+  });
+
+  it("uses cwd as memory_smart_search project fallback", async () => {
+    let captured: unknown;
+    sdk.overrideTrigger("mem::smart-search", async (payload: unknown) => {
+      captured = payload;
+      return { mode: "compact", results: [] };
+    });
+
+    const fn = sdk.getFunction("mcp::tools::call")!;
+    const result = (await fn(
+      makeReq({
+        name: "memory_smart_search",
+        arguments: {
+          query: "graph",
+          cwd: "/repo",
+          branch: "main",
+          limit: 5,
+        },
+      }),
+    )) as { status_code: number };
+
+    expect(result.status_code).toBe(200);
+    expect(captured).toMatchObject({
+      query: "graph",
+      project: "/repo",
+      branch: "main",
+      limit: 5,
+    });
+  });
+
+  it("rejects non-string scope args", async () => {
+    const fn = sdk.getFunction("mcp::tools::call")!;
+    const result = (await fn(
+      makeReq({
+        name: "memory_smart_search",
+        arguments: {
+          query: "graph",
+          project: 123,
+        },
+      }),
+    )) as { status_code: number; body: { error: string } };
+
+    expect(result.status_code).toBe(400);
+    expect(result.body.error).toBe("project must be a string");
+  });
+});

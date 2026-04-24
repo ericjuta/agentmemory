@@ -26,6 +26,7 @@ import { IndexPersistence } from "./state/index-persistence.js";
 import {
   configureRetrievalBlockIndexingRuntime,
   getRetrievalSearchIndex,
+  verifyRetrievalBlockIndex,
 } from "./state/retrieval-block-indexing.js";
 import { registerPrivacyFunction } from "./functions/privacy.js";
 import { registerObserveFunction } from "./functions/observe.js";
@@ -585,6 +586,7 @@ async function main() {
   }
 
   let indexVerifyHandle: AdaptiveTimerHandle | undefined;
+  let retrievalIndexVerifyHandle: AdaptiveTimerHandle | undefined;
   if (process.env.INDEX_VERIFY_ENABLED !== "false") {
     indexVerifyHandle = createAdaptiveTimer(
       async () =>
@@ -626,6 +628,35 @@ async function main() {
       { baseMs: 7_200_000, minMs: 1_800_000, maxMs: 28_800_000, label: "Index verify" },
     );
     console.log(`[agentmemory] Index verify: enabled (every 120m, adaptive)`);
+
+    retrievalIndexVerifyHandle = createAdaptiveTimer(
+      async () =>
+        runMaintenanceTask("Retrieval index verify", async () => {
+          const result = await verifyRetrievalBlockIndex(kv);
+          if (result.error) {
+            console.warn(
+              `[agentmemory] Retrieval index verify failed: ${result.error}`,
+            );
+            return 0;
+          }
+          if (result.repaired) {
+            console.warn(
+              `[agentmemory] Retrieval index drift repaired: bm25=${result.bm25Size} vector=${result.vectorSize} kv=${result.blockCount}, rebuilt=${result.rebuilt}`,
+            );
+            return 1;
+          }
+          return 0;
+        }),
+      {
+        baseMs: 7_200_000,
+        minMs: 1_800_000,
+        maxMs: 28_800_000,
+        label: "Retrieval index verify",
+      },
+    );
+    console.log(
+      `[agentmemory] Retrieval index verify: enabled (every 120m, adaptive)`,
+    );
   }
 
   const shutdown = async () => {
@@ -637,6 +668,7 @@ async function main() {
     retrievalBlockRetryHandle?.stop();
     evictionHandle?.stop();
     indexVerifyHandle?.stop();
+    retrievalIndexVerifyHandle?.stop();
     dedupMap.stop();
     indexPersistence.stop();
     retrievalIndexPersistence?.stop();

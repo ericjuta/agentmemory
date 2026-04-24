@@ -76,6 +76,15 @@ function selectDecayBatch<T extends {
     .slice(0, maxItems);
 }
 
+function uniqueStrings(values: Array<string | undefined>): string[] {
+  return [...new Set(values.map((value) => value?.trim()).filter(Boolean) as string[])];
+}
+
+function singleProject(values: Array<string | undefined>): string | undefined {
+  const projects = uniqueStrings(values);
+  return projects.length === 1 ? projects[0] : undefined;
+}
+
 export function registerConsolidationPipelineFunction(
   sdk: ISdk,
   kv: StateKV,
@@ -92,7 +101,8 @@ export function registerConsolidationPipelineFunction(
       const results: Record<string, unknown> = {};
 
       if (tier === "all" || tier === "semantic") {
-        const summaries = await kv.list<SessionSummary>(KV.summaries);
+        const summaries = (await kv.list<SessionSummary>(KV.summaries))
+          .filter((summary) => !data?.project || summary.project === data.project);
         const existingSemantic = await kv.list<SemanticMemory>(KV.semantic);
 
         if (summaries.length >= 5) {
@@ -126,15 +136,26 @@ export function registerConsolidationPipelineFunction(
               const parsedConf = parseFloat(match[1]);
               const confidence = Number.isNaN(parsedConf) ? 0.5 : parsedConf;
               const fact = match[2].trim();
+              const sourceProjects = uniqueStrings(recentSummaries.map((s) => s.project));
+              const project = data?.project || singleProject(sourceProjects);
 
               const existing = existingSemantic.find(
-                (s) => s.fact.toLowerCase() === fact.toLowerCase(),
+                (s) =>
+                  s.fact.toLowerCase() === fact.toLowerCase() &&
+                  (s.project || undefined) === project,
               );
               if (existing) {
                 existing.accessCount++;
                 existing.lastAccessedAt = now;
                 existing.updatedAt = now;
                 existing.confidence = Math.max(existing.confidence, confidence);
+                existing.project = project;
+                existing.sourceScope = project ? "project" : "global";
+                existing.sourceProjects = project ? sourceProjects : [];
+                existing.sourceSessionIds = uniqueStrings([
+                  ...existing.sourceSessionIds,
+                  ...recentSummaries.map((s) => s.sessionId),
+                ]);
                 await kv.set(KV.semantic, existing.id, existing);
                 await upsertSemanticRetrievalBlock(kv, existing);
               } else {
@@ -144,6 +165,9 @@ export function registerConsolidationPipelineFunction(
                   confidence,
                   sourceSessionIds: recentSummaries.map((s) => s.sessionId),
                   sourceMemoryIds: [],
+                  project,
+                  sourceScope: project ? "project" : "global",
+                  sourceProjects: project ? sourceProjects : [],
                   accessCount: 1,
                   lastAccessedAt: now,
                   strength: confidence,
@@ -184,10 +208,13 @@ export function registerConsolidationPipelineFunction(
       }
 
       if (tier === "all" || tier === "procedural") {
-        const memories = await kv.list<Memory>(KV.memories);
+        const memories = (await kv.list<Memory>(KV.memories))
+          .filter((memory) => !data?.project || memory.project === data.project);
         const patterns = memories
           .filter((m) => m.isLatest && m.type === "pattern")
           .map((m) => ({
+            id: m.id,
+            project: m.project,
             content: m.content,
             frequency: m.sessionIds.length || 1,
           }))
@@ -215,6 +242,9 @@ export function registerConsolidationPipelineFunction(
               const trigger = match[2];
               const stepsBlock = match[3];
               const steps: string[] = [];
+              const sourceProjects = uniqueStrings(patterns.map((p) => p.project));
+              const project = data?.project || singleProject(sourceProjects);
+              const sourceMemoryIds = patterns.map((p) => p.id);
 
               const stepRegex = /<step>([^<]+)<\/step>/g;
               let stepMatch;
@@ -223,12 +253,21 @@ export function registerConsolidationPipelineFunction(
               }
 
               const existing = existingProcs.find(
-                (p) => p.name.toLowerCase() === name.toLowerCase(),
+                (p) =>
+                  p.name.toLowerCase() === name.toLowerCase() &&
+                  (p.project || undefined) === project,
               );
               if (existing) {
                 existing.frequency++;
                 existing.updatedAt = now;
                 existing.strength = Math.min(1, existing.strength + 0.1);
+                existing.project = project;
+                existing.sourceScope = project ? "project" : "global";
+                existing.sourceProjects = project ? sourceProjects : [];
+                existing.sourceMemoryIds = uniqueStrings([
+                  ...(existing.sourceMemoryIds || []),
+                  ...sourceMemoryIds,
+                ]);
                 await kv.set(KV.procedural, existing.id, existing);
                 await upsertProceduralRetrievalBlock(kv, existing);
               } else {
@@ -239,6 +278,10 @@ export function registerConsolidationPipelineFunction(
                   triggerCondition: trigger,
                   frequency: 1,
                   sourceSessionIds: [],
+                  sourceMemoryIds,
+                  project,
+                  sourceScope: project ? "project" : "global",
+                  sourceProjects: project ? sourceProjects : [],
                   strength: 0.5,
                   createdAt: now,
                   updatedAt: now,

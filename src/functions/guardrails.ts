@@ -4,7 +4,11 @@ import { KV, fingerprintId } from "../state/schema.js";
 import type { GuardrailMemory } from "../types.js";
 import { recordAudit } from "./audit.js";
 import { filePathMatches } from "./file-path-match.js";
-import { upsertGuardrailRetrievalBlock } from "./retrieval-blocks.js";
+import {
+  deleteStoredRetrievalBlock,
+  retrievalBlockId,
+  upsertGuardrailRetrievalBlock,
+} from "./retrieval-blocks.js";
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
@@ -24,18 +28,23 @@ async function expireElapsedGuardrails(
   kv: StateKV,
   guardrails: GuardrailMemory[],
 ): Promise<GuardrailMemory[]> {
-  const now = Date.now();
+  const nowMs = Date.now();
+  const now = new Date().toISOString();
   const next = [...guardrails];
   await Promise.all(
     next.map(async (guardrail) => {
       if (
         guardrail.status === "active" &&
         guardrail.expiresAt &&
-        new Date(guardrail.expiresAt).getTime() <= now
+        new Date(guardrail.expiresAt).getTime() <= nowMs
       ) {
         guardrail.status = "expired";
-        guardrail.updatedAt = new Date().toISOString();
+        guardrail.updatedAt = now;
         await kv.set(KV.guardrails, guardrail.id, guardrail);
+        await deleteStoredRetrievalBlock(
+          kv,
+          retrievalBlockId("guardrail", guardrail.id),
+        );
       }
     }),
   );
@@ -228,6 +237,10 @@ export function registerGuardrailsFunction(sdk: ISdk, kv: StateKV): void {
         superseded.supersededBy = guardrail.id;
         superseded.updatedAt = now;
         await kv.set(KV.guardrails, superseded.id, superseded);
+        await deleteStoredRetrievalBlock(
+          kv,
+          retrievalBlockId("guardrail", superseded.id),
+        );
       }
 
       await kv.set(KV.guardrails, guardrail.id, guardrail);

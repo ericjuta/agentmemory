@@ -37,7 +37,16 @@ export class VectorIndex {
   search(
     query: Float32Array,
     limit = 20,
+    options?: {
+      candidateIds?: Iterable<string>;
+      minScore?: number;
+    },
   ): Array<{ obsId: string; sessionId: string; score: number }> {
+    if (limit <= 0) return [];
+    const candidates = options?.candidateIds
+      ? new Set(options.candidateIds)
+      : null;
+    const minAllowedScore = options?.minScore ?? -Infinity;
     const results: Array<{
       obsId: string;
       sessionId: string;
@@ -46,7 +55,9 @@ export class VectorIndex {
     let minScore = -Infinity;
 
     for (const [obsId, entry] of this.vectors) {
+      if (candidates && !candidates.has(obsId)) continue;
       const score = cosineSimilarity(query, entry.embedding);
+      if (score < minAllowedScore) continue;
       if (results.length < limit) {
         results.push({ obsId, sessionId: entry.sessionId, score });
         if (results.length === limit) {

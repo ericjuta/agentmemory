@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { registerRetrievalBlockRetryFunction } from "../src/functions/retrieval-block-retry.js";
 import { KV } from "../src/state/schema.js";
@@ -41,6 +41,14 @@ function makeBlock(id: string): RetrievalBlock {
 }
 
 describe("retrieval block retry", () => {
+  afterEach(() => {
+    configureRetrievalBlockIndexingRuntime({
+      embeddingProvider: null,
+      vectorIndex: null,
+      scheduleSave: undefined,
+    });
+  });
+
   it("retries queued retrieval block indexing and clears successful entries", async () => {
     const sdk = mockSdk();
     const kv = mockKV();
@@ -74,7 +82,14 @@ describe("retrieval block retry", () => {
 
     const result = await sdk.trigger("mem::retrieval-block-retry", {});
 
-    expect(result).toEqual({ retried: 0, removed: 0, succeeded: 1 });
+    expect(result).toEqual({
+      retried: 0,
+      removed: 0,
+      succeeded: 1,
+      skipped: 0,
+      deferred: 0,
+      processed: 1,
+    });
     expect(await kv.get(KV.retrievalBlockRetry, block.id)).toBeNull();
     expect(await kv.get(KV.retrievalBlockEmbeddings(block.id), "data")).toBeTruthy();
   });
@@ -117,8 +132,14 @@ describe("retrieval block retry", () => {
     };
     const updated = await kv.get<RetrievalBlockRetryEntry>(KV.retrievalBlockRetry, block.id);
 
-    expect(first).toEqual({ retried: 1, removed: 0, succeeded: 0 });
+    expect(first).toMatchObject({ retried: 1, removed: 0, succeeded: 0 });
     expect(updated?.retries).toBe(2);
+    expect(updated?.nextAttemptAt).toEqual(expect.any(String));
+
+    await kv.set(KV.retrievalBlockRetry, block.id, {
+      ...updated!,
+      nextAttemptAt: "2026-04-23T14:55:48.000Z",
+    });
 
     const second = (await sdk.trigger("mem::retrieval-block-retry", {})) as {
       retried: number;
@@ -126,8 +147,17 @@ describe("retrieval block retry", () => {
       succeeded: number;
     };
 
-    expect(second).toEqual({ retried: 1, removed: 0, succeeded: 0 });
-    expect((await kv.get<RetrievalBlockRetryEntry>(KV.retrievalBlockRetry, block.id))?.retries).toBe(3);
+    expect(second).toMatchObject({ retried: 1, removed: 0, succeeded: 0 });
+    const exhausted = await kv.get<RetrievalBlockRetryEntry>(
+      KV.retrievalBlockRetry,
+      block.id,
+    );
+    expect(exhausted?.retries).toBe(3);
+
+    await kv.set(KV.retrievalBlockRetry, block.id, {
+      ...exhausted!,
+      nextAttemptAt: "2026-04-23T14:55:48.000Z",
+    });
 
     const third = (await sdk.trigger("mem::retrieval-block-retry", {})) as {
       retried: number;
@@ -135,7 +165,96 @@ describe("retrieval block retry", () => {
       succeeded: number;
     };
 
-    expect(third).toEqual({ retried: 0, removed: 1, succeeded: 0 });
+    expect(third).toMatchObject({ retried: 0, removed: 1, succeeded: 0 });
     expect(await kv.get(KV.retrievalBlockRetry, block.id)).toBeNull();
+  });
+
+  it("skips queued entries whose next attempt is in the future", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    const provider: EmbeddingProvider = {
+      name: "test-embeddings",
+      dimensions: 3,
+      embed: vi.fn(async () => new Float32Array([0.1, 0.2, 0.3])),
+      embedBatch: vi.fn(async () => []),
+    };
+
+    configureRetrievalBlockIndexingRuntime({
+      embeddingProvider: provider,
+      vectorIndex: new VectorIndex(),
+      scheduleSave: vi.fn(),
+    });
+    registerRetrievalBlockRetryFunction(sdk as never, kv as never);
+
+    const block = makeBlock("rblk-future");
+    await kv.set(KV.retrievalBlocks, block.id, block);
+    await kv.set(KV.retrievalBlockRetry, block.id, {
+      blockId: block.id,
+      sourceType: block.sourceType,
+      retries: 0,
+      firstFailedAt: "2026-04-23T14:55:48.000Z",
+      lastFailedAt: "2026-04-23T14:55:48.000Z",
+      nextAttemptAt: "2999-01-01T00:00:00.000Z",
+      lastError: "Gemini embedding failed (429): RESOURCE_EXHAUSTED",
+    } satisfies RetrievalBlockRetryEntry);
+
+    const result = await sdk.trigger("mem::retrieval-block-retry", {});
+
+    expect(result).toEqual({
+      retried: 0,
+      removed: 0,
+      succeeded: 0,
+      skipped: 1,
+      deferred: 0,
+      processed: 0,
+    });
+    expect(provider.embed).not.toHaveBeenCalled();
+    expect(await kv.get(KV.retrievalBlockRetry, block.id)).toBeTruthy();
+  });
+
+  it("processes no more than the configured retry batch cap", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    const provider: EmbeddingProvider = {
+      name: "test-embeddings",
+      dimensions: 3,
+      embed: vi.fn(async () => new Float32Array([0.1, 0.2, 0.3])),
+      embedBatch: vi.fn(async () => []),
+    };
+
+    configureRetrievalBlockIndexingRuntime({
+      embeddingProvider: provider,
+      vectorIndex: new VectorIndex(),
+      scheduleSave: vi.fn(),
+    });
+    registerRetrievalBlockRetryFunction(sdk as never, kv as never);
+
+    for (let i = 0; i < 3; i++) {
+      const block = makeBlock(`rblk-cap-${i}`);
+      await kv.set(KV.retrievalBlocks, block.id, block);
+      await kv.set(KV.retrievalBlockRetry, block.id, {
+        blockId: block.id,
+        sourceType: block.sourceType,
+        retries: 0,
+        firstFailedAt: "2026-04-23T14:55:48.000Z",
+        lastFailedAt: "2026-04-23T14:55:48.000Z",
+        lastError: "Gemini embedding failed (429): RESOURCE_EXHAUSTED",
+      } satisfies RetrievalBlockRetryEntry);
+    }
+
+    const result = await sdk.trigger("mem::retrieval-block-retry", {
+      batchSize: 2,
+    });
+
+    expect(result).toEqual({
+      retried: 0,
+      removed: 0,
+      succeeded: 2,
+      skipped: 0,
+      deferred: 1,
+      processed: 2,
+    });
+    expect(provider.embed).toHaveBeenCalledTimes(2);
+    expect(await kv.list(KV.retrievalBlockRetry)).toHaveLength(1);
   });
 });

@@ -5,8 +5,9 @@ vi.mock("../src/logger.js", () => ({
 }));
 
 import { registerBeliefsFunctions } from "../src/functions/beliefs.js";
+import { retrievalBlockId } from "../src/functions/retrieval-blocks.js";
 import { KV } from "../src/state/schema.js";
-import type { Memory, MemoryRelation, Session } from "../src/types.js";
+import type { Memory, MemoryRelation, RetrievalBlock, Session } from "../src/types.js";
 import { mockKV, mockSdk } from "./helpers/mocks.js";
 
 describe("belief projection", () => {
@@ -77,6 +78,16 @@ describe("belief projection", () => {
       memoryId: "mem-1",
       relationType: "supports",
     });
+    expect(
+      await kv.get<RetrievalBlock>(
+        KV.retrievalBlocks,
+        retrievalBlockId("belief", beliefs[0].id),
+      ),
+    ).toMatchObject({
+      sourceType: "belief",
+      sourceId: beliefs[0].id,
+      project: "/project",
+    });
   });
 
   it("keeps superseded claims inspectable while default list stays current", async () => {
@@ -144,6 +155,75 @@ describe("belief projection", () => {
       claim: "Use parser X for ingest.",
       status: "superseded",
     });
+
+    const storedBeliefs = await kv.list<{ id: string; claim: string }>(KV.beliefs);
+    const oldBelief = storedBeliefs.find((belief) => belief.claim.includes("parser X"));
+    const newBelief = storedBeliefs.find((belief) => belief.claim.includes("parser Y"));
+    expect(oldBelief).toBeTruthy();
+    expect(newBelief).toBeTruthy();
+    expect(
+      await kv.get<RetrievalBlock>(
+        KV.retrievalBlocks,
+        retrievalBlockId("belief", oldBelief!.id),
+      ),
+    ).toBeNull();
+    expect(
+      await kv.get<RetrievalBlock>(
+        KV.retrievalBlocks,
+        retrievalBlockId("belief", newBelief!.id),
+      ),
+    ).toMatchObject({
+      sourceType: "belief",
+      sourceId: newBelief!.id,
+    });
+  });
+
+  it("removes retrieval blocks for beliefs removed by projection refresh", async () => {
+    const session: Session = {
+      id: "session-removed-belief",
+      project: "/project",
+      cwd: "/project",
+      startedAt: "2026-04-19T00:00:00.000Z",
+      status: "active",
+      observationCount: 1,
+    };
+    const memory: Memory = {
+      id: "mem-removed-belief",
+      createdAt: "2026-04-19T00:01:00.000Z",
+      updatedAt: "2026-04-19T00:01:00.000Z",
+      type: "fact",
+      title: "Removed belief",
+      content: "Use removed parser for ingest.",
+      concepts: ["parser"],
+      files: ["/project/src/parser.ts"],
+      sessionIds: [session.id],
+      strength: 8,
+      version: 1,
+      isLatest: true,
+      sourceObservationIds: [],
+    };
+
+    await kv.set(KV.sessions, session.id, session);
+    await kv.set(KV.memories, memory.id, memory);
+    await sdk.trigger("mem::belief-project", { project: "/project" });
+    const [createdBelief] = await kv.list<{ id: string }>(KV.beliefs);
+    expect(
+      await kv.get<RetrievalBlock>(
+        KV.retrievalBlocks,
+        retrievalBlockId("belief", createdBelief.id),
+      ),
+    ).toBeTruthy();
+
+    await kv.delete(KV.memories, memory.id);
+    await sdk.trigger("mem::belief-project", { project: "/project" });
+
+    expect(await kv.list(KV.beliefs)).toHaveLength(0);
+    expect(
+      await kv.get<RetrievalBlock>(
+        KV.retrievalBlocks,
+        retrievalBlockId("belief", createdBelief.id),
+      ),
+    ).toBeNull();
   });
 
   it("keeps contradictory beliefs and lowers confidence", async () => {

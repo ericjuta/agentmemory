@@ -9,16 +9,19 @@ import { registerComponentDossiersFunction } from "../src/functions/component-do
 import { registerDecisionsFunction } from "../src/functions/decisions.js";
 import { registerGuardrailsFunction } from "../src/functions/guardrails.js";
 import { registerRoutineCompilerFunction } from "../src/functions/routine-compiler.js";
+import { retrievalBlockId } from "../src/functions/retrieval-blocks.js";
 import { KV } from "../src/state/schema.js";
 import type {
   Action,
   BranchOverlay,
   ComponentDossier,
   Crystal,
+  DecisionMemory,
   GuardrailMemory,
   Insight,
   Lesson,
   Mission,
+  RetrievalBlock,
   Session,
 } from "../src/types.js";
 import { mockKV, mockSdk } from "./helpers/mocks.js";
@@ -133,6 +136,21 @@ describe("deferred memory primitives", () => {
     const firstStored = await kv.get<GuardrailMemory>(KV.guardrails, first.guardrail.id);
     expect(firstStored?.status).toBe("superseded");
     expect(firstStored?.supersededBy).toBe(second.guardrail.id);
+    expect(
+      await kv.get<RetrievalBlock>(
+        KV.retrievalBlocks,
+        retrievalBlockId("guardrail", first.guardrail.id),
+      ),
+    ).toBeNull();
+    expect(
+      await kv.get<RetrievalBlock>(
+        KV.retrievalBlocks,
+        retrievalBlockId("guardrail", second.guardrail.id),
+      ),
+    ).toMatchObject({
+      sourceType: "guardrail",
+      sourceId: second.guardrail.id,
+    });
 
     const blockerOverlay = (await sdk.trigger("mem::branch-overlay-save", {
       project: "/repo",
@@ -159,6 +177,88 @@ describe("deferred memory primitives", () => {
     })) as { success: boolean; guardrails: Array<GuardrailMemory & { score: number }> };
     expect(searched.success).toBe(true);
     expect(searched.guardrails.length).toBeGreaterThan(0);
+  });
+
+  it("removes expired guardrails from retrieval blocks during scoped listing", async () => {
+    const saved = (await sdk.trigger("mem::guardrail-save", {
+      project: "/repo",
+      scopeType: "project",
+      scopeId: "/repo",
+      triggerConditions: ["when testing expired guardrails"],
+      riskLevel: "medium",
+      explanation: "Temporary guardrail expires out of retrieval",
+      expiresAt: "2000-01-01T00:00:00.000Z",
+      relatedConcepts: ["expiry"],
+    })) as {
+      success: boolean;
+      guardrail: GuardrailMemory;
+    };
+    expect(saved.success).toBe(true);
+    expect(
+      await kv.get<RetrievalBlock>(
+        KV.retrievalBlocks,
+        retrievalBlockId("guardrail", saved.guardrail.id),
+      ),
+    ).toBeTruthy();
+
+    const listed = (await sdk.trigger("mem::guardrail-list", {
+      project: "/repo",
+      includeExpired: true,
+    })) as { success: boolean; guardrails: GuardrailMemory[] };
+
+    expect(listed.success).toBe(true);
+    expect(listed.guardrails[0]?.status).toBe("expired");
+    expect(
+      await kv.get<RetrievalBlock>(
+        KV.retrievalBlocks,
+        retrievalBlockId("guardrail", saved.guardrail.id),
+      ),
+    ).toBeNull();
+  });
+
+  it("removes superseded decisions from retrieval blocks", async () => {
+    const first = (await sdk.trigger("mem::decision-save", {
+      title: "Use context V1",
+      decision: "Use context pipeline V1",
+      rationale: "Initial retrieval design",
+      project: "/repo",
+      relatedConcepts: ["context"],
+    })) as {
+      success: boolean;
+      decisionRecord: DecisionMemory;
+    };
+    expect(first.success).toBe(true);
+
+    const second = (await sdk.trigger("mem::decision-save", {
+      title: "Use context V2",
+      decision: "Use context pipeline V2",
+      rationale: "Supersedes stale retrieval shape",
+      project: "/repo",
+      supersedes: [first.decisionRecord.id],
+      relatedConcepts: ["context"],
+    })) as {
+      success: boolean;
+      decisionRecord: DecisionMemory;
+    };
+    expect(second.success).toBe(true);
+
+    const firstStored = await kv.get<DecisionMemory>(KV.decisions, first.decisionRecord.id);
+    expect(firstStored?.status).toBe("superseded");
+    expect(
+      await kv.get<RetrievalBlock>(
+        KV.retrievalBlocks,
+        retrievalBlockId("decision", first.decisionRecord.id),
+      ),
+    ).toBeNull();
+    expect(
+      await kv.get<RetrievalBlock>(
+        KV.retrievalBlocks,
+        retrievalBlockId("decision", second.decisionRecord.id),
+      ),
+    ).toMatchObject({
+      sourceType: "decision",
+      sourceId: second.decisionRecord.id,
+    });
   });
 
   it("saves decisions and builds dossiers from observations, guardrails, and decisions", async () => {
