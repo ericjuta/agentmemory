@@ -5,6 +5,7 @@ vi.mock("../src/logger.js", () => ({
 }));
 
 import { registerGraphFunction } from "../src/functions/graph.js";
+import { KV } from "../src/state/schema.js";
 import type {
   CompressedObservation,
   GraphNode,
@@ -157,5 +158,26 @@ describe("Graph Functions", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("No observations");
+  });
+
+  it("defers graph extraction while health is unhealthy", async () => {
+    await kv.set(KV.health, "latest", {
+      status: "critical",
+      kvConnectivity: {
+        status: "error",
+        error: "StateKV state::set timed out after 5000ms",
+      },
+    });
+    const result = (await sdk.trigger("mem::graph-extract", {
+      observations: [testObs],
+    })) as { success: boolean; error: string; skipped: boolean };
+
+    expect(result).toMatchObject({
+      success: false,
+      error: "health_unhealthy",
+      skipped: true,
+    });
+    expect(mockProvider.compress).not.toHaveBeenCalled();
+    expect(await kv.list<GraphNode>(KV.graphNodes)).toHaveLength(0);
   });
 });

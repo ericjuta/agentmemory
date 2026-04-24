@@ -199,6 +199,45 @@ describe("IndexPersistence", () => {
     expect(retryingKv.set).toHaveBeenCalledTimes(2);
   });
 
+  it("defers scheduled saves while the runtime is unhealthy", async () => {
+    const bm25 = new SearchIndex();
+    bm25.add(makeObs({ id: "obs_1", title: "auth handler" }));
+    const recordingKv = {
+      ...kv,
+      set: vi.fn(kv.set),
+    };
+    const shouldDeferSave = vi
+      .fn<() => boolean>()
+      .mockReturnValueOnce(true)
+      .mockReturnValue(false);
+    const persistence = new IndexPersistence(
+      recordingKv as never,
+      bm25,
+      null,
+      KV.bm25Index,
+      { shouldDeferSave },
+    );
+
+    persistence.scheduleSave();
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(recordingKv.set).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Index persistence deferred while health is unhealthy",
+      { scope: KV.bm25Index },
+    );
+
+    await vi.advanceTimersByTimeAsync(14999);
+    expect(recordingKv.set).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(recordingKv.set).toHaveBeenCalledWith(
+      KV.bm25Index,
+      "data",
+      expect.any(String),
+    );
+  });
+
   it("saves sharded indexes as bounded StateKV writes", async () => {
     const bm25 = new SearchIndex();
     const vector = new VectorIndex();
@@ -261,6 +300,45 @@ describe("IndexPersistence", () => {
       manifest: {
         documentCount: 40,
         vectorCount: 12,
+      },
+    });
+  });
+
+  it("saves observation indexes in sharded mode without legacy blobs", async () => {
+    const bm25 = new SearchIndex();
+    const vector = new VectorIndex();
+    for (let i = 0; i < 30; i++) {
+      bm25.add(makeObs({
+        id: `obs_${i}`,
+        title: `Observation index timeout regression ${i}`,
+        narrative: "StateKV write amplification must stay bounded ".repeat(12),
+      }));
+    }
+    vector.add("obs_1", "ses_1", new Float32Array([0.1, 0.2, 0.3]));
+
+    const persistence = new IndexPersistence(
+      kv as never,
+      bm25,
+      vector,
+      KV.bm25Index,
+      { mode: "sharded", shardSizeBytes: 250 },
+    );
+
+    await persistence.save();
+
+    const manifest = await kv.get<any>(KV.bm25Index, "manifest");
+    expect(manifest.mode).toBe("sharded");
+    expect(manifest.bm25.shards.length).toBeGreaterThan(1);
+    expect(manifest.vector.shards.length).toBeGreaterThan(0);
+    expect(await kv.get(KV.bm25Index, "data")).toBeNull();
+    expect(await kv.get(KV.bm25Index, "vectors")).toBeNull();
+    expect(persistence.getStatus()).toMatchObject({
+      scope: KV.bm25Index,
+      mode: "sharded",
+      status: "ok",
+      manifest: {
+        documentCount: 30,
+        vectorCount: 1,
       },
     });
   });

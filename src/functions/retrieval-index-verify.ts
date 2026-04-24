@@ -5,6 +5,7 @@ import {
   verifyRetrievalBlockIndex,
   type VerifyRetrievalBlockIndexOptions,
 } from "../state/retrieval-block-indexing.js";
+import type { IndexPersistenceStatus } from "../state/index-persistence.js";
 
 type RetrievalIndexVerifyPayload = {
   bm25DriftRatio?: unknown;
@@ -13,6 +14,10 @@ type RetrievalIndexVerifyPayload = {
   scheduleSave?: unknown;
   repair?: unknown;
   scanBlocks?: unknown;
+};
+
+type RetrievalIndexVerifyFunctionOptions = {
+  observationPersistenceStatus?: (() => IndexPersistenceStatus | undefined) | undefined;
 };
 
 function optionalFiniteNumber(value: unknown): number | undefined {
@@ -27,6 +32,7 @@ function optionalFiniteNumber(value: unknown): number | undefined {
 export function registerRetrievalIndexVerifyFunction(
   sdk: ISdk,
   kv: StateKV,
+  functionOptions: RetrievalIndexVerifyFunctionOptions = {},
 ): void {
   sdk.registerFunction("mem::retrieval-index-verify", async (payload: unknown) => {
     const data =
@@ -53,6 +59,18 @@ export function registerRetrievalIndexVerifyFunction(
     if (typeof data.scanBlocks === "boolean") {
       options.scanBlocks = data.scanBlocks;
     }
-    return verifyRetrievalBlockIndex(kv, options);
+    const result = await verifyRetrievalBlockIndex(kv, options);
+    const observationPersistence =
+      functionOptions.observationPersistenceStatus?.();
+    if (!observationPersistence && !result.persistence) {
+      return result;
+    }
+    return {
+      ...result,
+      persistenceScopes: {
+        observation: observationPersistence,
+        retrieval: result.persistence,
+      },
+    };
   });
 }

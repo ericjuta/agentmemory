@@ -16,6 +16,7 @@ import {
 import { recordAudit } from "./audit.js";
 import { logger } from "../logger.js";
 import { Semaphore } from "../state/semaphore.js";
+import { getUnhealthyPauseReason } from "../health/write-gate.js";
 
 const graphSemaphore = new Semaphore(2);
 
@@ -124,6 +125,14 @@ export function registerGraphFunction(
     async (data: { observations: CompressedObservation[] }) => {
       if (!data.observations || data.observations.length === 0) {
         return { success: false, error: "No observations provided" };
+      }
+      const pauseReason = await getUnhealthyPauseReason(kv);
+      if (pauseReason) {
+        logger.warn("Graph extraction deferred while health is unhealthy", {
+          reason: pauseReason,
+          observations: data.observations.length,
+        });
+        return { success: false, error: "health_unhealthy", skipped: true, reason: pauseReason };
       }
 
       const prompt = buildGraphExtractionPrompt(

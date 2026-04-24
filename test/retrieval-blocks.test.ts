@@ -1,9 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../src/health/write-gate.js", () => ({
+  getUnhealthyPauseReason: vi.fn(async () => null),
+}));
 
 import {
   buildMemoryRetrievalBlock,
   refreshRetrievalBlocksFromState,
+  upsertMemoryRetrievalBlock,
 } from "../src/functions/retrieval-blocks.js";
+import { getUnhealthyPauseReason } from "../src/health/write-gate.js";
 import { KV } from "../src/state/schema.js";
 import type { Memory } from "../src/types.js";
 
@@ -69,6 +75,10 @@ function createMockKV() {
 }
 
 describe("refreshRetrievalBlocksFromState", () => {
+  beforeEach(() => {
+    vi.mocked(getUnhealthyPauseReason).mockResolvedValue(null);
+  });
+
   it("writes retrieval blocks sequentially", async () => {
     const mock = createMockKV();
     const memories = Array.from({ length: 40 }, (_, index) => createMemory(index + 1));
@@ -101,5 +111,20 @@ describe("refreshRetrievalBlocksFromState", () => {
     expect(count).toBe(1);
     expect(stored).toEqual([block]);
     expect(stats.setCalls).toBe(0);
+  });
+
+  it("defers derived retrieval block writes while health is unhealthy", async () => {
+    vi.mocked(getUnhealthyPauseReason).mockResolvedValueOnce(
+      "StateKV state::set timed out after 5000ms",
+    );
+    const mock = createMockKV();
+    const memory = createMemory(1);
+    const expectedBlock = buildMemoryRetrievalBlock(memory);
+
+    const block = await upsertMemoryRetrievalBlock(mock.kv as never, memory);
+
+    expect(block).toEqual(expectedBlock);
+    expect(await mock.kv.list(KV.retrievalBlocks)).toHaveLength(0);
+    expect(mock.stats().setCalls).toBe(0);
   });
 });

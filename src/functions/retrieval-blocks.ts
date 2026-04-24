@@ -29,6 +29,8 @@ import {
   removeRetrievalBlockScopeMembership,
   upsertRetrievalBlockScopeMembership,
 } from "./retrieval-block-scope-index.js";
+import { logger } from "../logger.js";
+import { getUnhealthyPauseReason } from "../health/write-gate.js";
 
 function uniqueStrings(values: Array<string | undefined>): string[] {
   return [...new Set(values.filter((value): value is string => Boolean(value && value.trim())).map((value) => value.trim()))];
@@ -722,6 +724,15 @@ export async function upsertRetrievalBlock(
   kv: StateKV,
   block: RetrievalBlock,
 ): Promise<RetrievalBlock> {
+  const pauseReason = await getUnhealthyPauseReason(kv);
+  if (pauseReason) {
+    logger.warn("Retrieval block upsert deferred while health is unhealthy", {
+      blockId: block.id,
+      sourceType: block.sourceType,
+      reason: pauseReason,
+    });
+    return block;
+  }
   const previous = await kv.get<RetrievalBlock>(KV.retrievalBlocks, block.id).catch(() => null);
   await kv.set(KV.retrievalBlocks, block.id, block);
   await upsertRetrievalBlockScopeMembership(kv, block, previous);

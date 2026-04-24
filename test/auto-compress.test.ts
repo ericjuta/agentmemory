@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { RawObservation } from "../src/types.js";
+import { KV } from "../src/state/schema.js";
 
 vi.mock("../src/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -153,6 +154,28 @@ describe("mem::observe auto-compress gate (#138)", () => {
 
     const compressCalls = sdk.triggered.filter((t) => t.id === "mem::compress");
     expect(compressCalls).toHaveLength(1);
+  });
+
+  it("AGENTMEMORY_AUTO_COMPRESS=true: defers compression while health is unhealthy", async () => {
+    process.env["AGENTMEMORY_AUTO_COMPRESS"] = "true";
+    const { registerObserveFunction } = await import(
+      "../src/functions/observe.js"
+    );
+    const sdk = mockSdk();
+    const kv = mockKV();
+    await kv.set(KV.health, "latest", {
+      status: "critical",
+      kvConnectivity: {
+        status: "error",
+        error: "StateKV state::set timed out after 5000ms",
+      },
+    });
+    registerObserveFunction(sdk as never, kv as never);
+
+    await sdk.trigger("mem::observe", validPayload());
+
+    const compressCalls = sdk.triggered.filter((t) => t.id === "mem::compress");
+    expect(compressCalls).toHaveLength(0);
   });
 
   it("AGENTMEMORY_AUTO_COMPRESS=false explicitly: does NOT fire mem::compress", async () => {

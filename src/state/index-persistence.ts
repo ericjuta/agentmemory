@@ -19,6 +19,7 @@ export interface IndexPersistenceOptions {
   mode?: IndexPersistenceMode;
   shardSizeBytes?: number;
   now?: () => string;
+  shouldDeferSave?: (() => boolean | Promise<boolean>) | undefined;
 }
 
 export interface IndexPersistenceStatus {
@@ -144,6 +145,7 @@ export class IndexPersistence {
   private readonly mode: IndexPersistenceMode;
   private readonly shardSizeBytes: number;
   private readonly now: () => string;
+  private readonly shouldDeferSave: () => boolean | Promise<boolean>;
   private completeManifest: ShardedIndexManifest | null = null;
   private status: IndexPersistenceStatus;
 
@@ -160,6 +162,7 @@ export class IndexPersistence {
       DEFAULT_SHARD_BYTES,
     );
     this.now = options.now ?? (() => new Date().toISOString());
+    this.shouldDeferSave = options.shouldDeferSave ?? (() => false);
     this.status = {
       scope: this.scope,
       mode: this.mode,
@@ -198,10 +201,12 @@ export class IndexPersistence {
   private async flushDeferredSave(): Promise<void> {
     if (this.inFlight || !this.dirty) return;
     this.dirty = false;
-    this.inFlight = this.saveNow();
+    this.inFlight = this.saveDeferred();
     try {
-      await this.inFlight;
-      this.nextDelayMs = DEBOUNCE_MS;
+      const result = await this.inFlight;
+      if (result === "saved") {
+        this.nextDelayMs = DEBOUNCE_MS;
+      }
     } catch (error) {
       this.dirty = true;
       this.nextDelayMs = Math.min(
@@ -216,6 +221,22 @@ export class IndexPersistence {
       this.inFlight = null;
       if (this.dirty) this.armTimer(this.nextDelayMs);
     }
+  }
+
+  private async saveDeferred(): Promise<"saved" | "deferred"> {
+    if (await this.shouldDeferSave()) {
+      this.dirty = true;
+      this.nextDelayMs = Math.min(
+        MAX_RETRY_BACKOFF_MS,
+        Math.max(RETRY_BACKOFF_MS, this.nextDelayMs * 2),
+      );
+      logger.warn("Index persistence deferred while health is unhealthy", {
+        scope: this.scope,
+      });
+      return "deferred";
+    }
+    await this.saveNow();
+    return "saved";
   }
 
   private async saveNow(): Promise<void> {

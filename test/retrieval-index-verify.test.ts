@@ -207,6 +207,55 @@ describe("mem::retrieval-index-verify", () => {
     });
     expect(kv.list).not.toHaveBeenCalled();
   });
+
+  it("reports observation and retrieval persistence scopes separately", async () => {
+    const sdk = mockSdk();
+    const kv = {
+      ...mockKV(),
+      list: vi.fn(async () => {
+        throw new Error("scan should not run");
+      }),
+    };
+    configureRetrievalBlockIndexingRuntime({
+      embeddingProvider: null,
+      vectorIndex: null,
+      persistenceStatus: () => ({
+        scope: KV.retrievalBlockIndex,
+        mode: "sharded",
+        status: "ok",
+      }),
+    });
+    registerRetrievalIndexVerifyFunction(sdk as never, kv as never, {
+      observationPersistenceStatus: () => ({
+        scope: KV.bm25Index,
+        mode: "sharded",
+        status: "ok",
+      }),
+    });
+
+    const result = (await sdk.trigger("mem::retrieval-index-verify", {
+      scanBlocks: false,
+    })) as {
+      persistenceScopes?: {
+        observation?: { scope: string; mode: string; status: string };
+        retrieval?: { scope: string; mode: string; status: string };
+      };
+    };
+
+    expect(result.persistenceScopes).toEqual({
+      observation: {
+        scope: KV.bm25Index,
+        mode: "sharded",
+        status: "ok",
+      },
+      retrieval: {
+        scope: KV.retrievalBlockIndex,
+        mode: "sharded",
+        status: "ok",
+      },
+    });
+    expect(kv.list).not.toHaveBeenCalled();
+  });
 });
 
 describe("api::retrieval-index-verify", () => {

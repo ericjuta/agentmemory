@@ -16,6 +16,7 @@ import { isAutoCompressEnabled } from "../config.js";
 import { buildSyntheticCompression } from "./compress-synthetic.js";
 import { getSearchIndex } from "./search.js";
 import { logger } from "../logger.js";
+import { getUnhealthyPauseReason } from "../health/write-gate.js";
 import {
   upsertTurnCapsuleFromCompressed,
   upsertTurnCapsuleFromRaw,
@@ -472,6 +473,7 @@ export function registerObserveFunction(
         );
       }
 
+      let compressionMode: "llm" | "synthetic" | "deferred" = "synthetic";
       if (metadata.persistenceClass === "persistent") {
         await kv.set(KV.observations(payload.sessionId), obsId, raw);
 
@@ -515,19 +517,30 @@ export function registerObserveFunction(
         }
 
         if (isAutoCompressEnabled()) {
-          tracker?.increment(payload.sessionId);
-          void sdk
-            .trigger({
-              function_id: "mem::compress",
-              payload: {
-                observationId: obsId,
-                sessionId: payload.sessionId,
-                raw,
-              },
-            })
-            .catch(() => {
-              tracker?.decrement(payload.sessionId);
+          const pauseReason = await getUnhealthyPauseReason(kv);
+          if (pauseReason) {
+            compressionMode = "deferred";
+            logger.warn("Auto compression deferred while health is unhealthy", {
+              obsId,
+              sessionId: payload.sessionId,
+              reason: pauseReason,
             });
+          } else {
+            compressionMode = "llm";
+            tracker?.increment(payload.sessionId);
+            void sdk
+              .trigger({
+                function_id: "mem::compress",
+                payload: {
+                  observationId: obsId,
+                  sessionId: payload.sessionId,
+                  raw,
+                },
+              })
+              .catch(() => {
+                tracker?.decrement(payload.sessionId);
+              });
+          }
         } else {
           const synthetic = buildSyntheticCompression(raw);
           const storedSynthetic = {
@@ -583,9 +596,7 @@ export function registerObserveFunction(
         persistenceClass: metadata.persistenceClass,
         compress:
           metadata.persistenceClass === "persistent"
-            ? isAutoCompressEnabled()
-              ? "llm"
-              : "synthetic"
+            ? compressionMode
             : "skipped",
       });
       return {

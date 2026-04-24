@@ -20,6 +20,7 @@ import { scoreCompression } from "../eval/quality.js";
 import { compressWithRetry } from "../eval/self-correct.js";
 import type { MetricsStore } from "../eval/metrics-store.js";
 import { logger } from "../logger.js";
+import { getUnhealthyPauseReason } from "../health/write-gate.js";
 import { upsertTurnCapsuleFromCompressed } from "./turn-capsules.js";
 import { Semaphore } from "../state/semaphore.js";
 import type { CompressionTracker } from "../state/compression-tracker.js";
@@ -49,6 +50,15 @@ const VALID_TYPES = new Set<string>([
   "task",
   "other",
 ]);
+
+function isStateKvPressureError(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("statekv") &&
+    (normalized.includes("timed out") ||
+      normalized.includes("temporarily unavailable"))
+  );
+}
 
 function parseCompressionXml(
   xml: string,
@@ -90,6 +100,21 @@ export function registerCompressFunction(
       try {
         return await compressSemaphore.run(async () => {
           const startMs = Date.now();
+          const initialPauseReason = await getUnhealthyPauseReason(kv);
+          if (initialPauseReason) {
+            logger.warn("Compression deferred while health is unhealthy", {
+              obsId: data.observationId,
+              sessionId: data.sessionId,
+              reason: initialPauseReason,
+            });
+            return {
+              success: false,
+              error: "health_unhealthy",
+              deferred: true,
+              reason: initialPauseReason,
+            };
+          }
+
           const prompt = buildCompressionPrompt({
             hookType: data.raw.hookType,
             toolName: data.raw.toolName,
@@ -248,12 +273,21 @@ export function registerCompressFunction(
               error: msg,
             });
 
-            await kv.set(KV.compressRetry, data.observationId, {
-              obsId: data.observationId,
-              sessionId: data.sessionId,
-              retries: 0,
-              failedAt: new Date().toISOString(),
-            }).catch(() => {});
+            const pauseReason = await getUnhealthyPauseReason(kv);
+            if (pauseReason || isStateKvPressureError(msg)) {
+              logger.warn("Compression retry enqueue skipped under StateKV pressure", {
+                obsId: data.observationId,
+                sessionId: data.sessionId,
+                reason: pauseReason || msg,
+              });
+            } else {
+              await kv.set(KV.compressRetry, data.observationId, {
+                obsId: data.observationId,
+                sessionId: data.sessionId,
+                retries: 0,
+                failedAt: new Date().toISOString(),
+              }).catch(() => {});
+            }
 
             return { success: false, error: "compression_failed" };
           }

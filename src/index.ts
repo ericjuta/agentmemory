@@ -112,6 +112,7 @@ import {
   getMaintenancePauseReason,
   shouldPauseMaintenance,
 } from "./health/maintenance-gate.js";
+import { getUnhealthyPauseReason } from "./health/write-gate.js";
 import { initMetrics, OTEL_CONFIG } from "./telemetry/setup.js";
 import { VERSION } from "./version.js";
 import { configureObservationIndexingRuntime } from "./state/observation-indexing.js";
@@ -229,7 +230,9 @@ async function main() {
   registerExportImportFunction(sdk, kv);
   registerEnrichFunction(sdk, kv);
   registerRetrievalBlockRetryFunction(sdk, kv);
-  registerRetrievalIndexVerifyFunction(sdk, persistenceKv);
+  registerRetrievalIndexVerifyFunction(sdk, persistenceKv, {
+    observationPersistenceStatus: () => indexPersistence?.getStatus(),
+  });
   registerRetrievalBlockDiagnosticsFunction(sdk, kv);
   registerConsolidatedMemoryBackfillFunction(sdk, kv);
 
@@ -355,14 +358,22 @@ async function main() {
       totalInflight: compressionTracker.totalInflight(),
     };
   });
+  const shouldDeferIndexSave = async () =>
+    Boolean(await getUnhealthyPauseReason(kv));
 
-  indexPersistence = new IndexPersistence(persistenceKv, bm25Index, vectorIndex);
+  indexPersistence = new IndexPersistence(
+    persistenceKv,
+    bm25Index,
+    vectorIndex,
+    KV.bm25Index,
+    { mode: "sharded", shouldDeferSave: shouldDeferIndexSave },
+  );
   retrievalIndexPersistence = new IndexPersistence(
     persistenceKv,
     getRetrievalSearchIndex(),
     retrievalVectorIndex,
     KV.retrievalBlockIndex,
-    { mode: "sharded" },
+    { mode: "sharded", shouldDeferSave: shouldDeferIndexSave },
   );
   configureObservationIndexingRuntime({
     embeddingProvider,
