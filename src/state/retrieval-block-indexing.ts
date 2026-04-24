@@ -7,6 +7,7 @@ import { KV, fingerprintId } from "./schema.js";
 import type { StateKV } from "./kv.js";
 import { SearchIndex } from "./search-index.js";
 import { VectorIndex } from "./vector-index.js";
+import type { IndexPersistenceStatus } from "./index-persistence.js";
 import { logger } from "../logger.js";
 
 export interface StoredRetrievalBlockEmbedding {
@@ -32,6 +33,7 @@ export interface RetrievalBlockIndexVerificationResult {
   vectorDrift: number;
   rebuilt: number;
   repaired: boolean;
+  persistence?: IndexPersistenceStatus;
   error?: string;
 }
 
@@ -51,12 +53,14 @@ type RetrievalIndexingRuntime = {
   embeddingProvider: EmbeddingProvider | null;
   vectorIndex: VectorIndex | null;
   scheduleSave?: (() => void) | undefined;
+  persistenceStatus?: (() => IndexPersistenceStatus) | undefined;
 };
 
 const runtime: RetrievalIndexingRuntime = {
   embeddingProvider: null,
   vectorIndex: null,
   scheduleSave: undefined,
+  persistenceStatus: undefined,
 };
 
 let index: SearchIndex | null = null;
@@ -169,6 +173,7 @@ export function configureRetrievalBlockIndexingRuntime(
   runtime.embeddingProvider = next.embeddingProvider;
   runtime.vectorIndex = next.vectorIndex;
   runtime.scheduleSave = next.scheduleSave;
+  runtime.persistenceStatus = next.persistenceStatus;
 }
 
 export function getRetrievalBlockIndexingRuntime(): Readonly<RetrievalIndexingRuntime> {
@@ -414,6 +419,7 @@ export async function verifyRetrievalBlockIndex(
   const vectorIndex = runtime.vectorIndex;
   const bm25Size = bm25.size;
   const vectorSize = vectorIndex?.size ?? 0;
+  const persistence = runtime.persistenceStatus?.();
 
   try {
     const blocks = await kv.list<RetrievalBlock>(KV.retrievalBlocks);
@@ -449,6 +455,7 @@ export async function verifyRetrievalBlockIndex(
         vectorDrift,
         rebuilt: 0,
         repaired: false,
+        persistence,
       };
     }
 
@@ -465,6 +472,7 @@ export async function verifyRetrievalBlockIndex(
       vectorDrift,
       rebuilt,
       repaired: rebuilt > 0,
+      persistence: runtime.persistenceStatus?.() ?? persistence,
     };
   } catch (err) {
     return {
@@ -477,6 +485,7 @@ export async function verifyRetrievalBlockIndex(
       vectorDrift: 0,
       rebuilt: 0,
       repaired: false,
+      persistence,
       error: errorMessage(err),
     };
   }

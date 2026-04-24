@@ -356,6 +356,7 @@ async function main() {
     getRetrievalSearchIndex(),
     retrievalVectorIndex,
     KV.retrievalBlockIndex,
+    { mode: "sharded" },
   );
   configureObservationIndexingRuntime({
     embeddingProvider,
@@ -366,6 +367,12 @@ async function main() {
     embeddingProvider,
     vectorIndex: retrievalVectorIndex,
     scheduleSave: () => retrievalIndexPersistence?.scheduleSave(),
+    persistenceStatus: () =>
+      retrievalIndexPersistence?.getStatus() ?? {
+        scope: KV.retrievalBlockIndex,
+        mode: "sharded",
+        status: "idle",
+      },
   });
 
   const loaded = await indexPersistence.load().catch((err) => {

@@ -7,6 +7,7 @@ vi.mock("../src/logger.js", () => ({
 import { IndexPersistence } from "../src/state/index-persistence.js";
 import { SearchIndex } from "../src/state/search-index.js";
 import { VectorIndex } from "../src/state/vector-index.js";
+import { KV } from "../src/state/schema.js";
 import type { CompressedObservation } from "../src/types.js";
 import { logger } from "../src/logger.js";
 
@@ -196,5 +197,231 @@ describe("IndexPersistence", () => {
 
     await vi.advanceTimersByTimeAsync(10000);
     expect(retryingKv.set).toHaveBeenCalledTimes(2);
+  });
+
+  it("saves sharded indexes as bounded StateKV writes", async () => {
+    const bm25 = new SearchIndex();
+    const vector = new VectorIndex();
+    for (let i = 0; i < 40; i++) {
+      bm25.addDocument(
+        `doc_${i}`,
+        "session_1",
+        `auth middleware token validation ${i} `.repeat(20),
+      );
+    }
+    for (let i = 0; i < 12; i++) {
+      vector.add(
+        `doc_${i}`,
+        "session_1",
+        new Float32Array([i + 0.1, i + 0.2, i + 0.3, i + 0.4]),
+      );
+    }
+
+    const baseKv = mockKV();
+    const writes: Array<{ key: string; data: unknown }> = [];
+    const recordingKv = {
+      ...baseKv,
+      set: vi.fn(async <T>(scope: string, key: string, data: T): Promise<T> => {
+        writes.push({ key, data });
+        return baseKv.set(scope, key, data);
+      }),
+    };
+    const persistence = new IndexPersistence(
+      recordingKv as never,
+      bm25,
+      vector,
+      KV.retrievalBlockIndex,
+      {
+        mode: "sharded",
+        shardSizeBytes: 300,
+        now: () => "2026-04-24T12:00:00.000Z",
+      },
+    );
+
+    await persistence.save();
+
+    const manifest = await baseKv.get<any>(
+      KV.retrievalBlockIndex,
+      "manifest",
+    );
+    expect(manifest.bm25.shards.length).toBeGreaterThan(1);
+    expect(manifest.vector.shards.length).toBeGreaterThan(1);
+    const shardWrites = writes.filter((write) => write.key.includes(":shard:"));
+    expect(shardWrites.length).toBeGreaterThan(1);
+    expect(
+      shardWrites.every(
+        (write) =>
+          typeof write.data === "string" &&
+          Buffer.byteLength(write.data, "utf8") <= 300,
+      ),
+    ).toBe(true);
+    expect(await baseKv.get(KV.retrievalBlockIndex, "data")).toBeNull();
+    expect(persistence.getStatus()).toMatchObject({
+      status: "ok",
+      manifest: {
+        documentCount: 40,
+        vectorCount: 12,
+      },
+    });
+  });
+
+  it("loads sharded indexes from a complete manifest", async () => {
+    const bm25 = new SearchIndex();
+    bm25.addDocument("doc_1", "session_1", "auth middleware token validation");
+    const vector = new VectorIndex();
+    vector.add("doc_1", "session_1", new Float32Array([0.1, 0.2, 0.3]));
+
+    const persistence = new IndexPersistence(
+      kv as never,
+      bm25,
+      vector,
+      KV.retrievalBlockIndex,
+      { mode: "sharded", shardSizeBytes: 80 },
+    );
+    await persistence.save();
+
+    const loader = new IndexPersistence(
+      kv as never,
+      new SearchIndex(),
+      new VectorIndex(),
+      KV.retrievalBlockIndex,
+      { mode: "sharded", shardSizeBytes: 80 },
+    );
+    const loaded = await loader.load();
+
+    expect(loaded.bm25?.size).toBe(1);
+    expect(loaded.bm25?.searchDocuments("auth")).toHaveLength(1);
+    expect(loaded.vector?.size).toBe(1);
+    expect(loader.getStatus()).toMatchObject({
+      status: "ok",
+      manifest: {
+        documentCount: 1,
+        vectorCount: 1,
+      },
+    });
+  });
+
+  it("marks sharded loads incomplete when a shard is missing", async () => {
+    const bm25 = new SearchIndex();
+    bm25.addDocument(
+      "doc_1",
+      "session_1",
+      "auth middleware token validation ".repeat(20),
+    );
+    const persistence = new IndexPersistence(
+      kv as never,
+      bm25,
+      null,
+      KV.retrievalBlockIndex,
+      { mode: "sharded", shardSizeBytes: 80 },
+    );
+    await persistence.save();
+    const manifest = await kv.get<any>(KV.retrievalBlockIndex, "manifest");
+    await kv.delete(KV.retrievalBlockIndex, manifest.bm25.shards[0].key);
+
+    const loader = new IndexPersistence(
+      kv as never,
+      new SearchIndex(),
+      null,
+      KV.retrievalBlockIndex,
+      { mode: "sharded", shardSizeBytes: 80 },
+    );
+    const loaded = await loader.load();
+
+    expect(loaded.bm25).toBeNull();
+    expect(loader.getStatus()).toMatchObject({
+      status: "incomplete",
+      error: "persisted index shards are missing or stale",
+      manifest: { incomplete: true },
+    });
+  });
+
+  it("does not corrupt the last complete manifest when a shard save fails", async () => {
+    const bm25 = new SearchIndex();
+    bm25.addDocument("doc_1", "session_1", "auth middleware token validation");
+    let failShardWrites = false;
+    const baseKv = mockKV();
+    const failingKv = {
+      ...baseKv,
+      set: vi.fn(async <T>(scope: string, key: string, data: T): Promise<T> => {
+        if (failShardWrites && key.includes(":shard:")) {
+          throw new Error("state unavailable");
+        }
+        return baseKv.set(scope, key, data);
+      }),
+    };
+    const persistence = new IndexPersistence(
+      failingKv as never,
+      bm25,
+      null,
+      KV.retrievalBlockIndex,
+      { mode: "sharded", shardSizeBytes: 80 },
+    );
+    await persistence.save();
+    const firstManifest = await baseKv.get<any>(
+      KV.retrievalBlockIndex,
+      "manifest",
+    );
+
+    bm25.addDocument(
+      "doc_2",
+      "session_1",
+      "new auth middleware token validation ".repeat(10),
+    );
+    failShardWrites = true;
+
+    await expect(persistence.save()).rejects.toThrow("state unavailable");
+    expect(await baseKv.get(KV.retrievalBlockIndex, "manifest")).toEqual(
+      firstManifest,
+    );
+
+    const loader = new IndexPersistence(
+      baseKv as never,
+      new SearchIndex(),
+      null,
+      KV.retrievalBlockIndex,
+      { mode: "sharded", shardSizeBytes: 80 },
+    );
+    const loaded = await loader.load();
+    expect(loaded.bm25?.size).toBe(1);
+    expect(persistence.getStatus()).toMatchObject({
+      status: "error",
+      error: "state unavailable",
+    });
+  });
+
+  it("skips unchanged shard writes when a previous complete manifest is available", async () => {
+    const bm25 = new SearchIndex();
+    bm25.addDocument(
+      "doc_1",
+      "session_1",
+      "auth middleware token validation ".repeat(20),
+    );
+    const baseKv = mockKV();
+    const recordingKv = {
+      ...baseKv,
+      set: vi.fn(baseKv.set),
+    };
+    const persistence = new IndexPersistence(
+      recordingKv as never,
+      bm25,
+      null,
+      KV.retrievalBlockIndex,
+      { mode: "sharded", shardSizeBytes: 80 },
+    );
+    await persistence.save();
+    vi.mocked(recordingKv.set).mockClear();
+
+    await persistence.save();
+
+    const shardWrites = vi
+      .mocked(recordingKv.set)
+      .mock.calls.filter(([, key]) => key.includes(":shard:"));
+    expect(shardWrites).toHaveLength(0);
+    expect(recordingKv.set).toHaveBeenCalledWith(
+      KV.retrievalBlockIndex,
+      "manifest",
+      expect.any(Object),
+    );
   });
 });
