@@ -30,6 +30,11 @@ import { getXmlTag, getXmlChildren } from "../prompts/xml.js";
 import { logger } from "../logger.js";
 import { Semaphore } from "../state/semaphore.js";
 import { upsertMemoryRetrievalBlock } from "./retrieval-blocks.js";
+import {
+  persistConsolidationBatchCursor,
+  recentRetrievalIndexPersistenceFailure,
+  selectConsolidationBatch,
+} from "./consolidation-budget.js";
 
 const consolidateLock = new Semaphore(1);
 const DEFAULT_MAX_SESSION_SCANS = 25;
@@ -111,6 +116,7 @@ export function registerConsolidateFunction(
       llmTimeoutMs?: number;
       timeBudgetMs?: number;
       skipIfBusy?: boolean;
+      force?: boolean;
     } | undefined) => {
       const args =
         data && typeof data === "object"
@@ -121,6 +127,17 @@ export function registerConsolidateFunction(
         return {
           consolidated: 0,
           reason: "busy",
+          scannedSessions: 0,
+          totalObservations: 0,
+        };
+      }
+
+      const deferral = recentRetrievalIndexPersistenceFailure(args.force);
+      if (deferral) {
+        return {
+          consolidated: 0,
+          reason: deferral.reason,
+          deferral,
           scannedSessions: 0,
           totalObservations: 0,
         };
@@ -158,9 +175,18 @@ export function registerConsolidateFunction(
         const filteredSessions = args.project
           ? sessions.filter((s) => s.project === args.project)
           : sessions;
-        const sessionsToScan = prioritizeSessionsForConsolidation(
+        const prioritizedSessions = prioritizeSessionsForConsolidation(
           filteredSessions.filter((s) => s.observationCount > 0),
-        ).slice(0, maxSessionsScanned);
+        );
+        const sessionBatch = await selectConsolidationBatch(
+          kv,
+          "consolidate:sessions",
+          args.project,
+          prioritizedSessions,
+          maxSessionsScanned,
+          (session) => session.id,
+        );
+        const sessionsToScan = sessionBatch.items;
 
         const allObs: Array<CompressedObservation & { sid: string }> = [];
         let scannedSessions = 0;
@@ -184,11 +210,13 @@ export function registerConsolidateFunction(
         }
 
         if (allObs.length < minObs) {
+          await persistConsolidationBatchCursor(kv, sessionBatch);
           return {
             consolidated: 0,
             reason: "insufficient_observations",
             scannedSessions,
             totalObservations: allObs.length,
+            cursor: sessionBatch.cursor,
           };
         }
 
@@ -321,12 +349,14 @@ export function registerConsolidateFunction(
           llmAttempts: llmAttemptCount,
           timeBudgetExceeded,
         });
+        await persistConsolidationBatchCursor(kv, sessionBatch);
         return {
           consolidated,
           totalObservations: allObs.length,
           scannedSessions,
           llmAttempts: llmAttemptCount,
           timeBudgetExceeded,
+          cursor: sessionBatch.cursor,
         };
       })
       );

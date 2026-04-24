@@ -487,7 +487,7 @@ export function buildSemanticRetrievalBlock(memory: SemanticMemory): RetrievalBl
     files: [],
     concepts: [],
     entities: blockEntities([], [], canonicalText),
-    sourceObservationIds: [],
+    sourceObservationIds: memory.sourceObservationIds || [],
     hadFailure: false,
     hadDecision: false,
     hadAssistantConclusion: true,

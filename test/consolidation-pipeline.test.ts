@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 vi.mock("../src/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -14,6 +14,7 @@ vi.mock("../src/config.js", () => ({
 import { registerConsolidationPipelineFunction } from "../src/functions/consolidation-pipeline.js";
 import { isConsolidationEnabled } from "../src/config.js";
 import { KV } from "../src/state/schema.js";
+import { configureRetrievalBlockIndexingRuntime } from "../src/state/retrieval-block-indexing.js";
 import type { SessionSummary, Memory, SemanticMemory, ProceduralMemory } from "../src/types.js";
 
 function mockKV() {
@@ -93,6 +94,15 @@ describe("Consolidation Pipeline", () => {
   beforeEach(() => {
     sdk = mockSdk();
     kv = mockKV();
+  });
+
+  afterEach(() => {
+    configureRetrievalBlockIndexingRuntime({
+      embeddingProvider: null,
+      vectorIndex: null,
+      scheduleSave: undefined,
+      persistenceStatus: undefined,
+    });
   });
 
   it("pipeline skips semantic when fewer than 5 summaries", async () => {
@@ -349,6 +359,65 @@ describe("Consolidation Pipeline", () => {
     expect(result.success).toBe(true);
     expect(result.results).toBeDefined();
     vi.mocked(isConsolidationEnabled).mockReturnValue(true);
+  });
+
+  it("defers consolidation when retrieval-index persistence recently failed", async () => {
+    const provider = {
+      name: "test",
+      compress: vi.fn(),
+      summarize: vi.fn(),
+    };
+    configureRetrievalBlockIndexingRuntime({
+      embeddingProvider: null,
+      vectorIndex: null,
+      persistenceStatus: () => ({
+        scope: KV.retrievalBlockIndex,
+        mode: "sharded",
+        status: "error",
+        lastFailureAt: new Date().toISOString(),
+        error: "StateKV state::set timed out",
+      }),
+    });
+    registerConsolidationPipelineFunction(sdk as never, kv as never, provider as never);
+
+    const result = (await sdk.trigger("mem::consolidate-pipeline", {
+      tier: "semantic",
+    })) as { success: boolean; skipped: boolean; reason: string };
+
+    expect(result).toMatchObject({
+      success: false,
+      skipped: true,
+      reason: "recent_retrieval_index_persistence_failure",
+    });
+    expect(provider.summarize).not.toHaveBeenCalled();
+  });
+
+  it("honors per-run semantic summary caps and records a resumable cursor", async () => {
+    const provider = {
+      name: "test",
+      compress: vi.fn(),
+      summarize: vi.fn().mockResolvedValue(
+        `<facts><fact confidence="0.9">Capped consolidation still creates facts</fact></facts>`,
+      ),
+    };
+    registerConsolidationPipelineFunction(sdk as never, kv as never, provider as never);
+    for (let i = 0; i < 8; i++) {
+      await kv.set("mem:summaries", `ses_${i}`, makeSummary(i));
+    }
+
+    const result = (await sdk.trigger("mem::consolidate-pipeline", {
+      tier: "semantic",
+      maxSummaries: 5,
+    })) as {
+      success: boolean;
+      results: { semantic: { processedSummaries: number; cursor: { lastId?: string } } };
+    };
+
+    expect(result.success).toBe(true);
+    expect(result.results.semantic.processedSummaries).toBe(5);
+    expect(result.results.semantic.cursor.lastId).toBeTruthy();
+    const stored = await kv.list<SemanticMemory>("mem:semantic");
+    expect(stored[0].sourceSessionIds).toHaveLength(5);
   });
 
   it("decay only persists changed items within the configured batch limit", async () => {

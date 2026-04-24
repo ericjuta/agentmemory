@@ -10,6 +10,24 @@ cleanup, bounded retry, and drift verification real. The remaining work is
 operational: reduce live KV pressure, make repair provable on demand, and
 recover useful legacy memories without reintroducing cross-project leakage.
 
+## Implementation Status
+
+- P0 sharded retrieval-index persistence and manual/startup verification are
+  implemented.
+- P1 legacy consolidated-memory backfill is implemented as
+  `mem::consolidated-memory-backfill` and
+  `POST /agentmemory/consolidated-memory/backfill`.
+- P1 live-safe retrieval-block diagnostics are implemented as
+  `mem::retrieval-blocks-diagnostics` and
+  `POST /agentmemory/retrieval-blocks/diagnostics`.
+- P1 consolidation throttling now uses per-run caps, persisted cursors in
+  `KV.config`, project-batched selection, and retrieval-index persistence
+  cooldown deferral.
+- P2 dependency audit remediation applied non-breaking lockfile updates for
+  `defu`, `picomatch`, `vite`, and top-level `protobufjs`. The remaining
+  `@xenova/transformers`/`onnxruntime-web` chain still requires a breaking
+  migration decision.
+
 ## Current Live Signals
 
 As of 2026-04-24, the live worker is healthy and serving `v0.8.12`, but logs

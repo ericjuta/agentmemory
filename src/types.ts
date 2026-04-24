@@ -735,6 +735,7 @@ export interface SemanticMemory {
   sourceProjects?: string[];
   sourceSessionIds: string[];
   sourceMemoryIds: string[];
+  sourceObservationIds?: string[];
   accessCount: number;
   lastAccessedAt: string;
   strength: number;

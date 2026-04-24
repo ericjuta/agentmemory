@@ -3459,6 +3459,73 @@ export function registerApiTriggers(
   });
   sdk.registerTrigger({ type: "http", function_id: "api::retrieval-index-verify", config: { api_path: "/agentmemory/retrieval-index/verify", http_method: "POST" } });
 
+  sdk.registerFunction("api::retrieval-blocks-diagnostics",  async (req: ApiRequest) => {
+    const denied = checkAuth(req, secret);
+    if (denied) return denied;
+    const body = (req.body || {}) as Record<string, unknown>;
+    const sampleLimit = parseOptionalPositiveInt(body.sampleLimit);
+    const largeScanThreshold = parseOptionalPositiveInt(body.largeScanThreshold);
+    if (sampleLimit === null || largeScanThreshold === null) {
+      return {
+        status_code: 400,
+        body: {
+          error: "sampleLimit and largeScanThreshold must be positive integers when provided",
+        },
+      };
+    }
+    const payload: Record<string, unknown> = {};
+    if (typeof body.project === "string") payload.project = body.project;
+    if (typeof body.sessionId === "string") payload.sessionId = body.sessionId;
+    if (typeof body.branch === "string") payload.branch = body.branch;
+    if (sampleLimit !== undefined) payload.sampleLimit = sampleLimit;
+    if (largeScanThreshold !== undefined) {
+      payload.largeScanThreshold = largeScanThreshold;
+    }
+    const result = await sdk.trigger({ function_id: "mem::retrieval-blocks-diagnostics", payload });
+    return { status_code: 200, body: result };
+  });
+  sdk.registerTrigger({ type: "http", function_id: "api::retrieval-blocks-diagnostics", config: { api_path: "/agentmemory/retrieval-blocks/diagnostics", http_method: "POST" } });
+
+  sdk.registerFunction("api::consolidated-memory-backfill",  async (req: ApiRequest) => {
+    const denied = checkAuth(req, secret);
+    if (denied) return denied;
+    const body = (req.body || {}) as Record<string, unknown>;
+    const limit = parseOptionalPositiveInt(body.limit);
+    if (limit === null) {
+      return {
+        status_code: 400,
+        body: { error: "limit must be a positive integer when provided" },
+      };
+    }
+    for (const field of ["dryRun", "reindex", "includeItems"] as const) {
+      if (body[field] !== undefined && typeof body[field] !== "boolean") {
+        return {
+          status_code: 400,
+          body: { error: `${field} must be a boolean when provided` },
+        };
+      }
+    }
+    if (
+      body.kinds !== undefined &&
+      (!Array.isArray(body.kinds) ||
+        !body.kinds.every((kind) => kind === "semantic" || kind === "procedural"))
+    ) {
+      return {
+        status_code: 400,
+        body: { error: "kinds must contain only semantic and procedural" },
+      };
+    }
+    const payload: Record<string, unknown> = {};
+    if (limit !== undefined) payload.limit = limit;
+    if (typeof body.dryRun === "boolean") payload.dryRun = body.dryRun;
+    if (typeof body.reindex === "boolean") payload.reindex = body.reindex;
+    if (typeof body.includeItems === "boolean") payload.includeItems = body.includeItems;
+    if (Array.isArray(body.kinds)) payload.kinds = body.kinds;
+    const result = await sdk.trigger({ function_id: "mem::consolidated-memory-backfill", payload });
+    return { status_code: 200, body: result };
+  });
+  sdk.registerTrigger({ type: "http", function_id: "api::consolidated-memory-backfill", config: { api_path: "/agentmemory/consolidated-memory/backfill", http_method: "POST" } });
+
   sdk.registerFunction("api::heal",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
     if (denied) return denied;

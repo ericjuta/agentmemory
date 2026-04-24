@@ -23,8 +23,29 @@ import {
   upsertProceduralRetrievalBlock,
   upsertSemanticRetrievalBlock,
 } from "./retrieval-blocks.js";
+import {
+  parsePositiveInt,
+  persistConsolidationBatchCursor,
+  readPositiveEnv,
+  recentRetrievalIndexPersistenceFailure,
+  selectConsolidationBatch,
+} from "./consolidation-budget.js";
 
 const consolidationSemaphore = new Semaphore(2);
+const DEFAULT_MAX_SEMANTIC_SUMMARIES = 20;
+const DEFAULT_MAX_PROCEDURAL_PATTERNS = 25;
+const DEFAULT_MAX_PROVIDER_CALLS = 2;
+const DEFAULT_PIPELINE_TIME_BUDGET_MS = 30_000;
+
+type ConsolidationPipelinePayload = {
+  tier?: string;
+  force?: boolean;
+  project?: string;
+  maxSummaries?: number;
+  maxPatterns?: number;
+  maxProviderCalls?: number;
+  timeBudgetMs?: number;
+};
 
 function applyDecay(
   items: Array<{
@@ -85,34 +106,120 @@ function singleProject(values: Array<string | undefined>): string | undefined {
   return projects.length === 1 ? projects[0] : undefined;
 }
 
+async function selectProjectSlice<T extends { project?: string }>(
+  kv: StateKV,
+  tier: string,
+  requestedProject: string | undefined,
+  items: T[],
+  minItems: number,
+): Promise<{ items: T[]; project?: string }> {
+  if (requestedProject) {
+    return {
+      project: requestedProject,
+      items: items.filter((item) => item.project === requestedProject),
+    };
+  }
+
+  const grouped = new Map<string, T[]>();
+  for (const item of items) {
+    const key = item.project || "";
+    grouped.set(key, [...(grouped.get(key) || []), item]);
+  }
+  const eligibleProjects = [...grouped.entries()]
+    .filter(([, group]) => group.length >= minItems)
+    .map(([project]) => project)
+    .sort();
+  if (eligibleProjects.length === 0) return { items };
+
+  const batch = await selectConsolidationBatch(
+    kv,
+    `${tier}:projects`,
+    undefined,
+    eligibleProjects,
+    1,
+    (project) => project || "global",
+  );
+  await persistConsolidationBatchCursor(kv, batch);
+  const selectedProject = batch.items[0] || "";
+  return {
+    project: selectedProject || undefined,
+    items: grouped.get(selectedProject) || [],
+  };
+}
+
 export function registerConsolidationPipelineFunction(
   sdk: ISdk,
   kv: StateKV,
   provider: MemoryProvider,
 ): void {
   sdk.registerFunction("mem::consolidate-pipeline", 
-    async (data?: { tier?: string; force?: boolean; project?: string }) => {
+    async (data?: ConsolidationPipelinePayload) => {
       if (!data?.force && !isConsolidationEnabled()) {
         return { success: false, skipped: true, reason: "CONSOLIDATION_ENABLED is not set to true" };
+      }
+      const deferral = recentRetrievalIndexPersistenceFailure(data?.force);
+      if (deferral) {
+        return {
+          success: false,
+          skipped: true,
+          reason: deferral.reason,
+          deferral,
+        };
       }
       const tier = data?.tier || "all";
       const decayDays = getConsolidationDecayDays();
       const decayMaxItems = getDecayMaxItemsPerRun();
+      const maxSummaries = parsePositiveInt(
+        data?.maxSummaries,
+        readPositiveEnv("CONSOLIDATION_MAX_SUMMARIES_PER_RUN", DEFAULT_MAX_SEMANTIC_SUMMARIES),
+      );
+      const maxPatterns = parsePositiveInt(
+        data?.maxPatterns,
+        readPositiveEnv("CONSOLIDATION_MAX_PATTERNS_PER_RUN", DEFAULT_MAX_PROCEDURAL_PATTERNS),
+      );
+      let providerCallsRemaining = parsePositiveInt(
+        data?.maxProviderCalls,
+        readPositiveEnv("CONSOLIDATION_MAX_PROVIDER_CALLS_PER_RUN", DEFAULT_MAX_PROVIDER_CALLS),
+      );
+      const timeBudgetMs = parsePositiveInt(
+        data?.timeBudgetMs,
+        readPositiveEnv("CONSOLIDATION_PIPELINE_TIME_BUDGET_MS", DEFAULT_PIPELINE_TIME_BUDGET_MS),
+      );
+      const startedAt = Date.now();
       const results: Record<string, unknown> = {};
+      const hasBudget = () => Date.now() - startedAt < timeBudgetMs;
 
       if (tier === "all" || tier === "semantic") {
-        const summaries = (await kv.list<SessionSummary>(KV.summaries))
-          .filter((summary) => !data?.project || summary.project === data.project);
+        const allSummaries = await kv.list<SessionSummary>(KV.summaries);
+        const projectSlice = await selectProjectSlice(
+          kv,
+          "semantic",
+          data?.project,
+          allSummaries,
+          5,
+        );
+        const summaries = projectSlice.items;
         const existingSemantic = await kv.list<SemanticMemory>(KV.semantic);
 
-        if (summaries.length >= 5) {
-          const recentSummaries = summaries
+        if (!hasBudget()) {
+          results.semantic = { skipped: true, reason: "time budget exceeded" };
+        } else if (providerCallsRemaining <= 0) {
+          results.semantic = { skipped: true, reason: "provider call budget exhausted" };
+        } else if (summaries.length >= 5) {
+          const summaryBatch = await selectConsolidationBatch(
+            kv,
+            "semantic:summaries",
+            projectSlice.project,
+            summaries
             .sort(
               (a, b) =>
                 new Date(b.createdAt).getTime() -
                 new Date(a.createdAt).getTime(),
-            )
-            .slice(0, 20);
+            ),
+            maxSummaries,
+            (summary) => summary.sessionId,
+          );
+          const recentSummaries = summaryBatch.items;
 
           const prompt = buildSemanticMergePrompt(
             recentSummaries.map((s) => ({
@@ -123,6 +230,7 @@ export function registerConsolidationPipelineFunction(
           );
 
           try {
+            providerCallsRemaining--;
             const response = await consolidationSemaphore.run(() =>
               provider.summarize(SEMANTIC_MERGE_SYSTEM, prompt),
             );
@@ -179,7 +287,14 @@ export function registerConsolidationPipelineFunction(
                 newFacts++;
               }
             }
-            results.semantic = { newFacts, totalSummaries: summaries.length };
+            await persistConsolidationBatchCursor(kv, summaryBatch);
+            results.semantic = {
+              newFacts,
+              totalSummaries: summaries.length,
+              processedSummaries: recentSummaries.length,
+              project: projectSlice.project,
+              cursor: summaryBatch.cursor,
+            };
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             logger.error("Semantic consolidation failed", { error: msg });
@@ -208,9 +323,8 @@ export function registerConsolidationPipelineFunction(
       }
 
       if (tier === "all" || tier === "procedural") {
-        const memories = (await kv.list<Memory>(KV.memories))
-          .filter((memory) => !data?.project || memory.project === data.project);
-        const patterns = memories
+        const allMemories = await kv.list<Memory>(KV.memories);
+        const allPatterns = allMemories
           .filter((m) => m.isLatest && m.type === "pattern")
           .map((m) => ({
             id: m.id,
@@ -218,12 +332,35 @@ export function registerConsolidationPipelineFunction(
             content: m.content,
             frequency: m.sessionIds.length || 1,
           }))
-          .filter((p) => p.frequency >= 2);
+          .filter((p) => p.frequency >= 2)
+          .sort((a, b) => b.frequency - a.frequency);
+        const patternSlice = await selectProjectSlice(
+          kv,
+          "procedural",
+          data?.project,
+          allPatterns,
+          2,
+        );
+        const patterns = patternSlice.items;
 
-        if (patterns.length >= 2) {
-          const prompt = buildProceduralExtractionPrompt(patterns);
+        if (!hasBudget()) {
+          results.procedural = { skipped: true, reason: "time budget exceeded" };
+        } else if (providerCallsRemaining <= 0) {
+          results.procedural = { skipped: true, reason: "provider call budget exhausted" };
+        } else if (patterns.length >= 2) {
+          const patternBatch = await selectConsolidationBatch(
+            kv,
+            "procedural:patterns",
+            patternSlice.project,
+            patterns,
+            maxPatterns,
+            (pattern) => pattern.id,
+          );
+          const selectedPatterns = patternBatch.items;
+          const prompt = buildProceduralExtractionPrompt(selectedPatterns);
 
           try {
+            providerCallsRemaining--;
             const response = await consolidationSemaphore.run(() =>
               provider.summarize(PROCEDURAL_EXTRACTION_SYSTEM, prompt),
             );
@@ -242,9 +379,9 @@ export function registerConsolidationPipelineFunction(
               const trigger = match[2];
               const stepsBlock = match[3];
               const steps: string[] = [];
-              const sourceProjects = uniqueStrings(patterns.map((p) => p.project));
+              const sourceProjects = uniqueStrings(selectedPatterns.map((p) => p.project));
               const project = data?.project || singleProject(sourceProjects);
-              const sourceMemoryIds = patterns.map((p) => p.id);
+              const sourceMemoryIds = selectedPatterns.map((p) => p.id);
 
               const stepRegex = /<step>([^<]+)<\/step>/g;
               let stepMatch;
@@ -291,9 +428,13 @@ export function registerConsolidationPipelineFunction(
                 newProcs++;
               }
             }
+            await persistConsolidationBatchCursor(kv, patternBatch);
             results.procedural = {
               newProcedures: newProcs,
               patternsAnalyzed: patterns.length,
+              processedPatterns: selectedPatterns.length,
+              project: patternSlice.project,
+              cursor: patternBatch.cursor,
             };
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
@@ -309,10 +450,20 @@ export function registerConsolidationPipelineFunction(
       }
 
       if (tier === "all" || tier === "decay") {
-        const semantic = selectDecayBatch(
-          await kv.list<SemanticMemory>(KV.semantic),
+        const semanticBatch = await selectConsolidationBatch(
+          kv,
+          "decay:semantic",
+          data?.project,
+          selectDecayBatch(
+            (await kv.list<SemanticMemory>(KV.semantic)).filter(
+              (item) => !data?.project || item.project === data.project,
+            ),
+            decayMaxItems,
+          ),
           decayMaxItems,
+          (item) => item.id,
         );
+        const semantic = semanticBatch.items;
         const changedSemanticIds = new Set(applyDecay(semantic, decayDays));
         for (const s of semantic) {
           if (!changedSemanticIds.has(s.id)) continue;
@@ -320,10 +471,20 @@ export function registerConsolidationPipelineFunction(
           await upsertSemanticRetrievalBlock(kv, s);
         }
 
-        const procedural = selectDecayBatch(
-          await kv.list<ProceduralMemory>(KV.procedural),
+        const proceduralBatch = await selectConsolidationBatch(
+          kv,
+          "decay:procedural",
+          data?.project,
+          selectDecayBatch(
+            (await kv.list<ProceduralMemory>(KV.procedural)).filter(
+              (item) => !data?.project || item.project === data.project,
+            ),
+            decayMaxItems,
+          ),
           decayMaxItems,
+          (item) => item.id,
         );
+        const procedural = proceduralBatch.items;
         const changedProceduralIds = new Set(
           applyDecay(procedural, decayDays),
         );
@@ -339,7 +500,13 @@ export function registerConsolidationPipelineFunction(
           proceduralProcessed: procedural.length,
           proceduralUpdated: changedProceduralIds.size,
           maxItemsPerRun: decayMaxItems,
+          semanticCursor: semanticBatch.cursor,
+          proceduralCursor: proceduralBatch.cursor,
         };
+        await Promise.all([
+          persistConsolidationBatchCursor(kv, semanticBatch),
+          persistConsolidationBatchCursor(kv, proceduralBatch),
+        ]);
       }
 
       if (process.env["OBSIDIAN_AUTO_EXPORT"] === "true") {

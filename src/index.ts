@@ -96,6 +96,8 @@ import {
 } from "./functions/retrieval-blocks.js";
 import { registerRetrievalBlockRetryFunction } from "./functions/retrieval-block-retry.js";
 import { registerRetrievalIndexVerifyFunction } from "./functions/retrieval-index-verify.js";
+import { registerRetrievalBlockDiagnosticsFunction } from "./functions/retrieval-block-diagnostics.js";
+import { registerConsolidatedMemoryBackfillFunction } from "./functions/consolidated-memory-backfill.js";
 import { registerApiTriggers } from "./triggers/api.js";
 import { registerEventTriggers } from "./triggers/events.js";
 import { registerMcpEndpoints } from "./mcp/server.js";
@@ -228,6 +230,8 @@ async function main() {
   registerEnrichFunction(sdk, kv);
   registerRetrievalBlockRetryFunction(sdk, kv);
   registerRetrievalIndexVerifyFunction(sdk, persistenceKv);
+  registerRetrievalBlockDiagnosticsFunction(sdk, kv);
+  registerConsolidatedMemoryBackfillFunction(sdk, kv);
 
   const claudeBridgeConfig = loadClaudeBridgeConfig();
   if (claudeBridgeConfig.enabled) {
@@ -426,7 +430,7 @@ async function main() {
     `[agentmemory] Ready. ${embeddingProvider ? "Triple-stream (BM25+Vector+Graph)" : "BM25+Graph"} search active.`,
   );
   console.log(
-    `[agentmemory] Endpoints: 130 REST + 44 MCP tools + 6 MCP resources + 3 MCP prompts`,
+    `[agentmemory] Endpoints: 132 REST + 44 MCP tools + 6 MCP resources + 3 MCP prompts`,
   );
 
   const viewerPort = config.restPort + 2;
