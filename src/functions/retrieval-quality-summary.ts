@@ -20,6 +20,8 @@ export type RetrievalQualitySummary = {
   passed: boolean;
 };
 
+let cachedRetrievalQualitySummary: RetrievalQualitySummary | null = null;
+
 function isGrade(value: unknown): value is RetrievalQualitySummary["grade"] {
   return value === "A+" || value === "A" || value === "B" || value === "C";
 }
@@ -95,6 +97,90 @@ export function parseRetrievalQualitySummary(
   };
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function parseStoredRetrievalQualitySummary(
+  payload: unknown,
+): { summary?: RetrievalQualitySummary; error?: string } {
+  const parsed = parseRetrievalQualitySummary(payload);
+  if (parsed.summary) return parsed;
+  const data =
+    payload && typeof payload === "object" && !Array.isArray(payload)
+      ? (payload as Record<string, unknown>)
+      : null;
+  if (!data) return parsed;
+  const grade = data.grade;
+  const evaluatedAt = validIso(data.evaluatedAt);
+  const duplicateRate = ratio(data.duplicateRate);
+  const recallAt3 = ratio(data.recallAt3);
+  const leakageCount = finiteNumber(data.leakageCount);
+  if (
+    !isGrade(grade) ||
+    !evaluatedAt ||
+    duplicateRate === undefined ||
+    recallAt3 === undefined ||
+    leakageCount === undefined ||
+    leakageCount < 0
+  ) {
+    return parsed;
+  }
+  return {
+    summary: {
+      grade,
+      evaluatedAt,
+      top1Precision: ratio(data.top1Precision) ?? 0,
+      recallAt3,
+      mrr: ratio(data.mrr) ?? 0,
+      duplicateRate,
+      leakageCount,
+      p95LatencyMs: finiteNumber(data.p95LatencyMs) ?? 0,
+      passed: data.passed === true,
+    },
+  };
+}
+
+export function getCachedRetrievalQualitySummary(): RetrievalQualitySummary | null {
+  return cachedRetrievalQualitySummary;
+}
+
+export function resetRetrievalQualitySummaryCacheForTests(): void {
+  cachedRetrievalQualitySummary = null;
+}
+
+export async function loadRetrievalQualitySummary(
+  kv: StateKV,
+): Promise<{
+  summary: RetrievalQualitySummary | null;
+  source: "kv" | "cache" | "none";
+  error?: string;
+}> {
+  try {
+    const stored = await kv.get<RetrievalQualitySummary>(
+      KV.config,
+      RETRIEVAL_QUALITY_SUMMARY_KEY,
+    );
+    if (!stored) {
+      return cachedRetrievalQualitySummary
+        ? { summary: cachedRetrievalQualitySummary, source: "cache" }
+        : { summary: null, source: "none" };
+    }
+    const parsed = parseStoredRetrievalQualitySummary(stored);
+    if (parsed.summary) {
+      cachedRetrievalQualitySummary = parsed.summary;
+      return { summary: parsed.summary, source: "kv" };
+    }
+    return cachedRetrievalQualitySummary
+      ? { summary: cachedRetrievalQualitySummary, source: "cache", error: parsed.error }
+      : { summary: null, source: "none", error: parsed.error };
+  } catch (error) {
+    return cachedRetrievalQualitySummary
+      ? { summary: cachedRetrievalQualitySummary, source: "cache", error: errorMessage(error) }
+      : { summary: null, source: "none", error: errorMessage(error) };
+  }
+}
+
 export function registerRetrievalQualitySummaryFunction(
   sdk: ISdk,
   kv: StateKV,
@@ -109,6 +195,7 @@ export function registerRetrievalQualitySummaryFunction(
       RETRIEVAL_QUALITY_SUMMARY_KEY,
       parsed.summary!,
     );
+    cachedRetrievalQualitySummary = parsed.summary!;
     await recordAudit(
       kv,
       "retrieval_quality_summary",

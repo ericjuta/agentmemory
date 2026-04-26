@@ -1,8 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  loadRetrievalQualitySummary,
   registerRetrievalQualitySummaryFunction,
   RETRIEVAL_QUALITY_SUMMARY_KEY,
+  resetRetrievalQualitySummaryCacheForTests,
 } from "../src/functions/retrieval-quality-summary.js";
 import { registerRetrievalBlockDiagnosticsFunction } from "../src/functions/retrieval-block-diagnostics.js";
 import { registerApiTriggers } from "../src/triggers/api.js";
@@ -22,6 +24,14 @@ const summary = {
 };
 
 describe("retrieval quality summary persistence", () => {
+  beforeEach(() => {
+    resetRetrievalQualitySummaryCacheForTests();
+  });
+
+  afterEach(() => {
+    resetRetrievalQualitySummaryCacheForTests();
+  });
+
   it("stores only the compact summary used by diagnostics", async () => {
     const sdk = mockSdk();
     const kv = mockKV();
@@ -41,6 +51,7 @@ describe("retrieval quality summary persistence", () => {
         lastEvalGrade: string | null;
         lastEvalRecallAt3: number | null;
         lastEvalLeakageCount: number | null;
+        lastEvalSummarySource: string;
       };
     };
 
@@ -51,6 +62,30 @@ describe("retrieval quality summary persistence", () => {
       lastEvalGrade: "A+",
       lastEvalRecallAt3: 1,
       lastEvalLeakageCount: 0,
+      lastEvalSummarySource: "kv",
+    });
+  });
+
+  it("uses the cached summary when StateKV summary read fails", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerRetrievalQualitySummaryFunction(sdk as never, kv as never);
+    await sdk.trigger("mem::retrieval-quality-summary", summary);
+
+    const failingKv = {
+      ...kv,
+      get: async <T>(scope: string, key: string): Promise<T | null> => {
+        if (scope === KV.config && key === RETRIEVAL_QUALITY_SUMMARY_KEY) {
+          throw new Error("StateKV cooldown");
+        }
+        return kv.get<T>(scope, key);
+      },
+    };
+
+    await expect(loadRetrievalQualitySummary(failingKv as never)).resolves.toEqual({
+      summary,
+      source: "cache",
+      error: "StateKV cooldown",
     });
   });
 

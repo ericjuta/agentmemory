@@ -3736,6 +3736,50 @@ export function registerApiTriggers(
   });
   sdk.registerTrigger({ type: "http", function_id: "api::retrieval-blocks-diagnostics", config: { api_path: "/agentmemory/retrieval-blocks/diagnostics", http_method: "POST" } });
 
+  sdk.registerFunction("api::retrieval-proof",  async (req: ApiRequest) => {
+    const denied = checkAuth(req, secret);
+    if (denied) return denied;
+    const body = (req.body || {}) as Record<string, unknown>;
+    const limit = parseOptionalPositiveInt(body.limit);
+    const coverageTarget = parseOptionalNonNegativeNumber(body.coverageTarget);
+    if (
+      limit === null ||
+      coverageTarget === null ||
+      (coverageTarget !== undefined &&
+        (coverageTarget <= 0 || coverageTarget > 1))
+    ) {
+      return {
+        status_code: 400,
+        body: {
+          error:
+            "limit must be a positive integer when provided; coverageTarget must be > 0 and <= 1 when provided",
+        },
+      };
+    }
+    if (
+      body.includeSearch !== undefined &&
+      typeof body.includeSearch !== "boolean"
+    ) {
+      return {
+        status_code: 400,
+        body: { error: "includeSearch must be a boolean when provided" },
+      };
+    }
+    const payload: Record<string, unknown> = {};
+    for (const field of ["project", "cwd", "branch", "query"] as const) {
+      const value = asNonEmptyString(body[field]);
+      if (value) payload[field] = value;
+    }
+    if (limit !== undefined) payload.limit = limit;
+    if (coverageTarget !== undefined) payload.coverageTarget = coverageTarget;
+    if (typeof body.includeSearch === "boolean") {
+      payload.includeSearch = body.includeSearch;
+    }
+    const result = await sdk.trigger({ function_id: "mem::retrieval-proof", payload });
+    return { status_code: 200, body: result };
+  });
+  sdk.registerTrigger({ type: "http", function_id: "api::retrieval-proof", config: { api_path: "/agentmemory/retrieval-proof", http_method: "POST" } });
+
   sdk.registerFunction("api::retrieval-blocks-retry",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
     if (denied) return denied;

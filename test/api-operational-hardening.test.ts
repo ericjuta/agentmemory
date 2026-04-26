@@ -93,6 +93,57 @@ describe("operational hardening APIs", () => {
     });
   });
 
+  it("forwards whitelisted retrieval proof options", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    let forwarded: unknown;
+    registerApiTriggers(sdk as never, kv as never, "secret");
+    sdk.registerFunction("mem::retrieval-proof", async (payload) => {
+      forwarded = payload;
+      return { success: true, pass: true };
+    });
+
+    const response = (await sdk.trigger("api::retrieval-proof", {
+      body: {
+        project: "/project",
+        cwd: "/cwd",
+        branch: "main",
+        query: "retrieval health",
+        limit: 4,
+        coverageTarget: 0.99,
+        includeSearch: true,
+        ignored: "drop",
+      },
+      headers: { authorization: "Bearer secret" },
+    })) as { status_code: number; body: { success: boolean; pass: boolean } };
+
+    expect(response.status_code).toBe(200);
+    expect(response.body).toEqual({ success: true, pass: true });
+    expect(forwarded).toEqual({
+      project: "/project",
+      cwd: "/cwd",
+      branch: "main",
+      query: "retrieval health",
+      limit: 4,
+      coverageTarget: 0.99,
+      includeSearch: true,
+    });
+  });
+
+  it("validates retrieval proof API options", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerApiTriggers(sdk as never, kv as never);
+
+    const response = (await sdk.trigger("api::retrieval-proof", {
+      body: { coverageTarget: 1.1, includeSearch: "yes" },
+      headers: {},
+    })) as { status_code: number; body: { error: string } };
+
+    expect(response.status_code).toBe(400);
+    expect(response.body.error).toContain("coverageTarget");
+  });
+
   it("validates consolidated memory backfill API options", async () => {
     const sdk = mockSdk();
     const kv = mockKV();

@@ -10,6 +10,7 @@ import {
 } from "../state/retrieval-block-indexing.js";
 import {
   RETRIEVAL_QUALITY_SUMMARY_KEY,
+  loadRetrievalQualitySummary,
   type RetrievalQualitySummary,
 } from "./retrieval-quality-summary.js";
 
@@ -126,9 +127,8 @@ export function registerRetrievalBlockDiagnosticsFunction(
       },
       undefined,
     );
-    const evalSummary = await kv
-      .get<RetrievalQualitySummary>(KV.config, RETRIEVAL_QUALITY_SUMMARY_KEY)
-      .catch(() => null);
+    const evalSummaryResult = await loadRetrievalQualitySummary(kv);
+    const evalSummary = evalSummaryResult.summary;
     const scopeEntries = await Promise.all(
       requestedScopeKeys({ project, sessionId, branch }).map((key) =>
         readScopeEntry(kv, key),
@@ -218,6 +218,8 @@ export function registerRetrievalBlockDiagnosticsFunction(
         lastEvalAt: evalSummary?.evaluatedAt ?? null,
         lastEvalRecallAt3: evalSummary?.recallAt3 ?? null,
         lastEvalLeakageCount: evalSummary?.leakageCount ?? null,
+        lastEvalSummarySource: evalSummaryResult.source,
+        lastEvalSummaryError: evalSummaryResult.error,
       },
       estimatedFullScanCount,
       scanRisk,

@@ -11,6 +11,7 @@ import {
 } from "../state/retrieval-block-indexing.js";
 import {
   RETRIEVAL_QUALITY_SUMMARY_KEY,
+  loadRetrievalQualitySummary,
   type RetrievalQualitySummary,
 } from "./retrieval-quality-summary.js";
 import type {
@@ -452,6 +453,8 @@ export function registerDiagnosticsFunction(sdk: ISdk, kv: StateKV): void {
             lastEvalAt: string | null;
             lastEvalRecallAt3: number | null;
             lastEvalLeakageCount: number | null;
+            lastEvalSummarySource?: "kv" | "cache" | "none";
+            lastEvalSummaryError?: string;
           }
         | undefined;
 
@@ -482,12 +485,8 @@ export function registerDiagnosticsFunction(sdk: ISdk, kv: StateKV): void {
         const oldestAgeMs = oldestQueuedAt
           ? Math.max(0, now - new Date(oldestQueuedAt).getTime())
           : 0;
-        const evalSummary = await kv
-          .get<RetrievalQualitySummary>(
-            KV.config,
-            RETRIEVAL_QUALITY_SUMMARY_KEY,
-          )
-          .catch(() => null);
+        const evalSummaryResult = await loadRetrievalQualitySummary(kv);
+        const evalSummary = evalSummaryResult.summary;
         retrievalQuality = {
           bm25Coverage: ratio(bm25Size, blockCount),
           vectorCoverage: ratio(vectorCount, blockCount),
@@ -501,6 +500,8 @@ export function registerDiagnosticsFunction(sdk: ISdk, kv: StateKV): void {
           lastEvalAt: evalSummary?.evaluatedAt ?? null,
           lastEvalRecallAt3: evalSummary?.recallAt3 ?? null,
           lastEvalLeakageCount: evalSummary?.leakageCount ?? null,
+          lastEvalSummarySource: evalSummaryResult.source,
+          lastEvalSummaryError: evalSummaryResult.error,
         };
 
         if (retrievalQuality.vectorCoverage < 0.95) {
