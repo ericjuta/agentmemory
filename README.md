@@ -134,7 +134,7 @@ agentmemory works with any agent that supports hooks, MCP, or REST API. All agen
 <sub>AgentSDKProvider</sub>
 </td>
 <td align="center" width="12.5%">
-<img src="https://img.shields.io/badge/135-endpoints-1f6feb?style=flat-square" alt="REST API" width="48" /><br/>
+<img src="https://img.shields.io/badge/136-endpoints-1f6feb?style=flat-square" alt="REST API" width="48" /><br/>
 <strong>Any agent</strong><br/>
 <sub>REST API</sub>
 </td>
@@ -804,7 +804,7 @@ Create `.env.local` in the repo root:
 
 <h2 id="api"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/tags/light/section-api.svg"><img src="assets/tags/section-api.svg" alt="API" height="32" /></picture></h2>
 
-135 endpoints on port `3111`. The REST API binds to `127.0.0.1` by default. Protected endpoints require `Authorization: Bearer <secret>` when `AGENTMEMORY_SECRET` is set, and mesh sync endpoints require `AGENTMEMORY_SECRET` on both peers.
+136 endpoints on port `3111`. The REST API binds to `127.0.0.1` by default. Protected endpoints require `Authorization: Bearer <secret>` when `AGENTMEMORY_SECRET` is set, and mesh sync endpoints require `AGENTMEMORY_SECRET` on both peers.
 
 <details>
 <summary>Key endpoints</summary>
@@ -816,6 +816,7 @@ Create `.env.local` in the repo root:
 | `POST` | `/agentmemory/session/end` | End session |
 | `POST` | `/agentmemory/session/closeout` | Bounded session closeout with step status |
 | `POST` | `/agentmemory/observe` | Capture observation |
+| `POST` | `/agentmemory/compress-retry` | Drain deferred observation compression work with bounded retry budgets |
 | `POST` | `/agentmemory/smart-search` | Hybrid search |
 | `POST` | `/agentmemory/retrieval-index/verify` | Verify retrieval index drift |
 | `POST` | `/agentmemory/retrieval-vector/backfill` | Backfill missing retrieval vectors within bounded health-gated budgets |

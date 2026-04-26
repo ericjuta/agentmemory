@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { registerCompressFunction } from "../src/functions/compress.js";
 import { KV } from "../src/state/schema.js";
+import { registerApiTriggers } from "../src/triggers/api.js";
 import type { RawObservation, Session } from "../src/types.js";
 import { mockKV, mockSdk } from "./helpers/mocks.js";
 
@@ -106,5 +107,142 @@ describe("compression retry catch-up", () => {
 
     expect(result).toMatchObject({ queued: 0, scanned: 0 });
     expect(provider.compress).not.toHaveBeenCalled();
+  });
+
+  it("processes no more than the configured retry batch cap", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    const provider = {
+      name: "test",
+      compress: vi.fn(async () => compressionXml),
+      summarize: vi.fn(),
+    };
+    await kv.set(KV.sessions, "ses_1", {
+      id: "ses_1",
+      project: "/project",
+      cwd: "/project",
+      startedAt: "2026-04-25T00:00:00.000Z",
+      status: "active",
+      observationCount: 3,
+    } satisfies Session);
+    for (let i = 0; i < 3; i++) {
+      const raw = rawObservation(`obs_cap_${i}`);
+      await kv.set(KV.observations("ses_1"), raw.id, raw);
+      await kv.set(KV.compressRetry, raw.id, {
+        obsId: raw.id,
+        sessionId: "ses_1",
+        retries: 0,
+        failedAt: "2026-04-25T00:00:00.000Z",
+      });
+    }
+    registerCompressFunction(sdk as never, kv as never, provider as never);
+
+    const result = await sdk.trigger("mem::compress-retry", {
+      batchSize: 2,
+      scanRaw: false,
+    });
+
+    expect(result).toMatchObject({
+      succeeded: 2,
+      deferred: 1,
+      processed: 2,
+      queued: 0,
+    });
+    expect(provider.compress).toHaveBeenCalledTimes(2);
+    expect(await kv.list(KV.compressRetry)).toHaveLength(1);
+  });
+
+  it("returns a bounded deferred result when retry work exceeds the time budget", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    const provider = {
+      name: "test",
+      compress: vi.fn(
+        () =>
+          new Promise<string>((resolve) => {
+            setTimeout(() => resolve(compressionXml), 1000);
+          }),
+      ),
+      summarize: vi.fn(),
+    };
+    await kv.set(KV.sessions, "ses_1", {
+      id: "ses_1",
+      project: "/project",
+      cwd: "/project",
+      startedAt: "2026-04-25T00:00:00.000Z",
+      status: "active",
+      observationCount: 1,
+    } satisfies Session);
+    const raw = rawObservation("obs_time_budget");
+    await kv.set(KV.observations("ses_1"), raw.id, raw);
+    await kv.set(KV.compressRetry, raw.id, {
+      obsId: raw.id,
+      sessionId: "ses_1",
+      retries: 0,
+      failedAt: "2026-04-25T00:00:00.000Z",
+    });
+    registerCompressFunction(sdk as never, kv as never, provider as never);
+
+    const startedAt = Date.now();
+    const result = await sdk.trigger("mem::compress-retry", {
+      batchSize: 1,
+      scanRaw: false,
+      timeBudgetMs: 500,
+    });
+
+    expect(Date.now() - startedAt).toBeLessThan(900);
+    expect(result).toMatchObject({
+      succeeded: 0,
+      deferred: 1,
+      processed: 1,
+      timedOut: true,
+      timeBudgetMs: 500,
+    });
+    expect(provider.compress).toHaveBeenCalledTimes(1);
+  });
+
+  it("validates and forwards compression retry REST options", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    let forwarded: unknown;
+    sdk.registerFunction("mem::compress-retry", async (payload: unknown) => {
+      forwarded = payload;
+      return { succeeded: 1 };
+    });
+    registerApiTriggers(sdk as never, kv as never);
+
+    const response = (await sdk.trigger("api::compress-retry", {
+      body: {
+        batchSize: "3",
+        scanLimit: 7,
+        timeBudgetMs: "1000",
+        scanRaw: false,
+        ignored: "drop",
+      },
+      headers: {},
+    })) as { status_code: number; body: { succeeded: number } };
+
+    expect(response.status_code).toBe(200);
+    expect(response.body.succeeded).toBe(1);
+    expect(forwarded).toEqual({
+      batchSize: 3,
+      scanLimit: 7,
+      timeBudgetMs: 1000,
+      scanRaw: false,
+    });
+  });
+
+  it("rejects invalid compression retry REST options", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerApiTriggers(sdk as never, kv as never);
+
+    const response = (await sdk.trigger("api::compress-retry", {
+      body: { batchSize: 0, scanRaw: "yes" },
+      headers: {},
+    })) as { status_code: number; body: { error: string } };
+
+    expect(response.status_code).toBe(400);
+    expect(response.body.error).toContain("batchSize");
   });
 });

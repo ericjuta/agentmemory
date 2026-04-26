@@ -832,6 +832,46 @@ export function registerApiTriggers(
     config: { api_path: "/agentmemory/compress-file", http_method: "POST" },
   });
 
+  sdk.registerFunction("api::compress-retry", 
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const batchSize = parseOptionalPositiveInt(body.batchSize);
+      const scanLimit = parseOptionalPositiveInt(body.scanLimit);
+      const timeBudgetMs = parseOptionalPositiveInt(body.timeBudgetMs);
+      if (batchSize === null || scanLimit === null || timeBudgetMs === null) {
+        return {
+          status_code: 400,
+          body: {
+            error: "batchSize, scanLimit, and timeBudgetMs must be positive integers when provided",
+          },
+        };
+      }
+      if (body.scanRaw !== undefined && typeof body.scanRaw !== "boolean") {
+        return {
+          status_code: 400,
+          body: { error: "scanRaw must be a boolean when provided" },
+        };
+      }
+      const payload: Record<string, unknown> = {};
+      if (batchSize !== undefined) payload.batchSize = batchSize;
+      if (scanLimit !== undefined) payload.scanLimit = scanLimit;
+      if (timeBudgetMs !== undefined) payload.timeBudgetMs = timeBudgetMs;
+      if (typeof body.scanRaw === "boolean") payload.scanRaw = body.scanRaw;
+      const result = await sdk.trigger({
+        function_id: "mem::compress-retry",
+        payload,
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::compress-retry",
+    config: { api_path: "/agentmemory/compress-retry", http_method: "POST" },
+  });
+
   sdk.registerFunction("api::session::start",
     async (
       req: ApiRequest<{

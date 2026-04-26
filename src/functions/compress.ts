@@ -33,6 +33,10 @@ import { isAutoCompressEnabled } from "../config.js";
 /** Cap concurrent LLM compression calls to avoid starving the engine. */
 const compressSemaphore = new Semaphore(6);
 const DEFAULT_COMPRESS_RETRY_SCAN_LIMIT = 25;
+const DEFAULT_COMPRESS_RETRY_BATCH_SIZE = 5;
+const DEFAULT_COMPRESS_RETRY_TIME_BUDGET_MS = 20_000;
+const MIN_COMPRESS_RETRY_WORK_MS = 250;
+const TIMEOUT = Symbol("timeout");
 
 export function getCompressMetrics() {
   return { active: compressSemaphore.active, pending: compressSemaphore.pending };
@@ -73,6 +77,33 @@ function positiveInteger(value: unknown, fallback: number): number {
     if (Number.isFinite(parsed) && parsed > 0) return parsed;
   }
   return fallback;
+}
+
+function remainingBudgetMs(deadlineMs: number): number {
+  return Math.max(0, deadlineMs - Date.now());
+}
+
+async function settleWithin<T>(
+  work: Promise<T>,
+  timeoutMs: number,
+  label: string,
+): Promise<{ timedOut: false; value: T } | { timedOut: true }> {
+  if (timeoutMs <= 0) return { timedOut: true };
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<typeof TIMEOUT>((resolve) => {
+    timeoutHandle = setTimeout(() => resolve(TIMEOUT), timeoutMs);
+  });
+  const result = await Promise.race([work, timeout]);
+  if (timeoutHandle) clearTimeout(timeoutHandle);
+  if (result === TIMEOUT) {
+    work.catch((error) => {
+      logger.warn(`${label} finished after retry time budget with error`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+    return { timedOut: true };
+  }
+  return { timedOut: false, value: result as T };
 }
 
 function isRawObservation(value: unknown): value is RawObservation {
@@ -418,6 +449,15 @@ export function registerCompressFunction(
         data.scanLimit ?? process.env.COMPRESS_RETRY_SCAN_LIMIT,
         DEFAULT_COMPRESS_RETRY_SCAN_LIMIT,
       );
+      const batchSize = positiveInteger(
+        data.batchSize ?? process.env.COMPRESS_RETRY_BATCH_SIZE,
+        DEFAULT_COMPRESS_RETRY_BATCH_SIZE,
+      );
+      const timeBudgetMs = positiveInteger(
+        data.timeBudgetMs ?? process.env.COMPRESS_RETRY_TIME_BUDGET_MS,
+        DEFAULT_COMPRESS_RETRY_TIME_BUDGET_MS,
+      );
+      const deadlineMs = Date.now() + timeBudgetMs;
       const scan =
         typeof data.scanRaw === "boolean" ? data.scanRaw : isAutoCompressEnabled();
       const backlog = scan
@@ -427,8 +467,21 @@ export function registerCompressFunction(
       let retried = 0;
       let removed = 0;
       let succeeded = 0;
+      let deferred = 0;
+      let processed = 0;
+      let timedOut = false;
 
       for (const entry of retryEntries) {
+        if (processed >= batchSize) {
+          deferred++;
+          continue;
+        }
+        if (remainingBudgetMs(deadlineMs) <= MIN_COMPRESS_RETRY_WORK_MS) {
+          timedOut = true;
+          deferred++;
+          continue;
+        }
+        processed++;
         if (entry.retries >= 3) {
           await kv.delete(KV.compressRetry, entry.obsId).catch(() => {});
           removed++;
@@ -445,19 +498,27 @@ export function registerCompressFunction(
           continue;
         }
 
-        const result = await sdk
-          .trigger({
+        const compressed = await settleWithin(
+          sdk.trigger({
             function_id: "mem::compress",
             payload: {
               observationId: entry.obsId,
               sessionId: entry.sessionId,
               raw,
             },
-          })
-          .catch((err) => ({
+          }).catch((err) => ({
             success: false,
             error: err instanceof Error ? err.message : String(err),
-          }));
+          })),
+          remainingBudgetMs(deadlineMs),
+          "Compression retry",
+        );
+        if (compressed.timedOut) {
+          timedOut = true;
+          deferred++;
+          continue;
+        }
+        const result = compressed.value;
         if ((result as { success?: boolean })?.success) {
           await kv.delete(KV.compressRetry, entry.obsId).catch(() => {});
           succeeded++;
@@ -479,16 +540,22 @@ export function registerCompressFunction(
           retried,
           removed,
           succeeded,
+          deferred,
+          processed,
           queued: backlog.queued,
           scanned: backlog.scanned,
+          timedOut,
         });
       }
       return {
         retried,
         removed,
         succeeded,
+        deferred,
+        processed,
         queued: backlog.queued,
         scanned: backlog.scanned,
+        ...(timedOut ? { timedOut: true, timeBudgetMs } : {}),
       };
     },
   );
