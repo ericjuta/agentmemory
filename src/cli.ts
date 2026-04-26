@@ -17,7 +17,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 const IS_WINDOWS = platform() === "win32";
 const IS_VERBOSE = args.includes("--verbose") || args.includes("-v");
-const DEFAULT_III_DOCKER_IMAGE = "docker.io/iiidev/iii:0.11.0";
+const DEFAULT_III_DOCKER_IMAGE = "docker.io/iiidev/iii:0.11.3";
 
 function vlog(msg: string): void {
   if (IS_VERBOSE) p.log.info(`[verbose] ${msg}`);

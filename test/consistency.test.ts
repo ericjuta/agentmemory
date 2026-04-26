@@ -98,12 +98,12 @@ describe("Consistency checks", () => {
     const dockerConfig = readText("iii-config.docker.yaml");
 
     expect(compose).toContain(
-      "${AGENTMEMORY_III_DOCKER_IMAGE:-docker.io/iiidev/iii:0.11.0}",
+      "${AGENTMEMORY_III_DOCKER_IMAGE:-docker.io/iiidev/iii:0.11.3}",
     );
     expect(compose).not.toContain("iiidev/iii:latest");
-    expect(cli).toContain('const DEFAULT_III_DOCKER_IMAGE = "docker.io/iiidev/iii:0.11.0"');
+    expect(cli).toContain('const DEFAULT_III_DOCKER_IMAGE = "docker.io/iiidev/iii:0.11.3"');
     expect(cli).toContain('process.env["AGENTMEMORY_III_DOCKER_IMAGE"]');
-    expect(readme).toContain("iiidev/iii:0.11.0");
+    expect(readme).toContain("iiidev/iii:0.11.3");
     expect(dockerConfig).toContain("workers:");
     expect(dockerConfig).toContain("- name: iii-http");
     expect(dockerConfig).not.toContain("modules:");
