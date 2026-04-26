@@ -265,7 +265,10 @@ describe("retrieval block indexing", () => {
     });
     await storeBlocks(kv, 60);
 
-    const result = await verifyRetrievalBlockIndex(kv as never, { rebuild });
+    const result = await verifyRetrievalBlockIndex(kv as never, {
+      rebuild,
+      scheduleSave: true,
+    });
 
     expect(result).toMatchObject({
       blockCount: 60,
@@ -303,7 +306,10 @@ describe("retrieval block indexing", () => {
       );
     }
 
-    const result = await verifyRetrievalBlockIndex(kv as never, { rebuild });
+    const result = await verifyRetrievalBlockIndex(kv as never, {
+      rebuild,
+      scheduleSave: true,
+    });
 
     expect(result).toMatchObject({
       blockCount: 2,
@@ -352,6 +358,7 @@ describe("retrieval block indexing", () => {
     vectorIndex.add(blocks[0].id, blocks[0].project, new Float32Array([1, 0, 0]));
 
     const result = await verifyRetrievalBlockIndex(kv as never, {
+      scheduleSave: true,
       vectorBackfillLimit: 1,
     });
 

@@ -559,7 +559,7 @@ export async function verifyRetrievalBlockIndex(
             vectorBackfillFailures += 1;
           }
         }
-        if (vectorBackfilled > 0 && options.scheduleSave !== false) {
+        if (vectorBackfilled > 0 && options.scheduleSave === true) {
           runtime.scheduleSave?.();
         }
       }
