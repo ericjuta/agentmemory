@@ -820,7 +820,7 @@ Create `.env.local` in the repo root:
 | `POST` | `/agentmemory/retrieval-index/verify` | Verify retrieval index drift |
 | `POST` | `/agentmemory/retrieval-vector/backfill` | Backfill missing retrieval vectors within bounded health-gated budgets |
 | `POST` | `/agentmemory/retrieval-blocks/diagnostics` | Inspect retrieval block scope/index state without full scans |
-| `POST` | `/agentmemory/retrieval-blocks/retry` | Drain deferred retrieval-block indexing work |
+| `POST` | `/agentmemory/retrieval-blocks/retry` | Drain deferred retrieval-block indexing work with bounded retry budgets |
 | `POST` | `/agentmemory/retrieval-quality/summary` | Store compact retrieval eval summary |
 | `POST` | `/agentmemory/consolidated-memory/backfill` | Backfill legacy semantic/procedural project scope |
 | `POST` | `/agentmemory/context` | Generate context |

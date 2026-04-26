@@ -447,6 +447,7 @@ describe("api::retrieval-index-verify", () => {
         fullRefresh: false,
         refreshSessionLimit: 3,
         ignoreBackoff: true,
+        timeBudgetMs: "1000",
         ignored: "drop",
       },
       headers: {},
@@ -457,6 +458,7 @@ describe("api::retrieval-index-verify", () => {
     expect(forwarded).toEqual({
       batchSize: 5,
       refreshSessionLimit: 3,
+      timeBudgetMs: 1000,
       refreshFromState: true,
       fullRefresh: false,
       ignoreBackoff: true,

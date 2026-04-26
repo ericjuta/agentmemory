@@ -14,6 +14,9 @@ import { upsertRetrievalBlockScopeMembership } from "./retrieval-block-scope-ind
 const MAX_RETRIES = 3;
 const DEFAULT_BATCH_SIZE = 25;
 const DEFAULT_REFRESH_SESSION_LIMIT = 4;
+const DEFAULT_TIME_BUDGET_MS = 20_000;
+const MIN_RETRY_WORK_MS = 250;
+const TIMEOUT = Symbol("timeout");
 
 type RetrievalBlockRetryPayload = {
   batchSize?: number;
@@ -21,6 +24,7 @@ type RetrievalBlockRetryPayload = {
   fullRefresh?: boolean;
   refreshSessionLimit?: number;
   ignoreBackoff?: boolean;
+  timeBudgetMs?: number;
 };
 
 function positiveInteger(value: unknown, fallback: number): number {
@@ -40,6 +44,33 @@ function isDue(entry: RetrievalBlockRetryEntry, nowMs: number): boolean {
   return Number.isNaN(nextAttemptMs) || nextAttemptMs <= nowMs;
 }
 
+function remainingBudgetMs(deadlineMs: number): number {
+  return Math.max(0, deadlineMs - Date.now());
+}
+
+async function settleWithin<T>(
+  work: Promise<T>,
+  timeoutMs: number,
+  label: string,
+): Promise<{ timedOut: false; value: T } | { timedOut: true }> {
+  if (timeoutMs <= 0) return { timedOut: true };
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<typeof TIMEOUT>((resolve) => {
+    timeoutHandle = setTimeout(() => resolve(TIMEOUT), timeoutMs);
+  });
+  const result = await Promise.race([work, timeout]);
+  if (timeoutHandle) clearTimeout(timeoutHandle);
+  if (result === TIMEOUT) {
+    work.catch((error) => {
+      logger.warn(`${label} finished after retry time budget with error`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+    return { timedOut: true };
+  }
+  return { timedOut: false, value: result as T };
+}
+
 export function registerRetrievalBlockRetryFunction(
   sdk: ISdk,
   kv: StateKV,
@@ -49,26 +80,44 @@ export function registerRetrievalBlockRetryFunction(
       payload && typeof payload === "object"
         ? (payload as RetrievalBlockRetryPayload)
         : {};
-    const entries = await kv.list<RetrievalBlockRetryEntry>(
-      KV.retrievalBlockRetry,
-    );
     const batchSize = positiveInteger(
       data.batchSize ?? process.env.RETRIEVAL_BLOCK_RETRY_BATCH_SIZE,
       DEFAULT_BATCH_SIZE,
     );
-    const refreshReport =
-      data.refreshFromState === true
-        ? await reconcileRetrievalBlocksFromState(kv, {
-            indexChanged: true,
-            maxChanged: batchSize,
-            partial: data.fullRefresh !== true,
-            sessionLimit: positiveInteger(
-              data.refreshSessionLimit ??
-                process.env.RETRIEVAL_BLOCK_RETRY_REFRESH_SESSION_LIMIT,
-              DEFAULT_REFRESH_SESSION_LIMIT,
-            ),
-          })
-        : null;
+    const timeBudgetMs = positiveInteger(
+      data.timeBudgetMs ?? process.env.RETRIEVAL_BLOCK_RETRY_TIME_BUDGET_MS,
+      DEFAULT_TIME_BUDGET_MS,
+    );
+    const deadlineMs = Date.now() + timeBudgetMs;
+    let timedOut = false;
+    let refreshTimedOut = false;
+    let refreshReport: Awaited<ReturnType<typeof reconcileRetrievalBlocksFromState>> | null =
+      null;
+    if (data.refreshFromState === true) {
+      const refresh = await settleWithin(
+        reconcileRetrievalBlocksFromState(kv, {
+          indexChanged: true,
+          maxChanged: batchSize,
+          partial: data.fullRefresh !== true,
+          sessionLimit: positiveInteger(
+            data.refreshSessionLimit ??
+              process.env.RETRIEVAL_BLOCK_RETRY_REFRESH_SESSION_LIMIT,
+            DEFAULT_REFRESH_SESSION_LIMIT,
+          ),
+        }),
+        Math.max(0, remainingBudgetMs(deadlineMs) - MIN_RETRY_WORK_MS),
+        "Retrieval block source refresh",
+      );
+      if (refresh.timedOut) {
+        timedOut = true;
+        refreshTimedOut = true;
+      } else {
+        refreshReport = refresh.value;
+      }
+    }
+    const entries = await kv.list<RetrievalBlockRetryEntry>(
+      KV.retrievalBlockRetry,
+    );
     const nowMs = Date.now();
     let retried = 0;
     let removed = 0;
@@ -83,6 +132,11 @@ export function registerRetrievalBlockRetryFunction(
         continue;
       }
       if (processed >= batchSize) {
+        deferred++;
+        continue;
+      }
+      if (remainingBudgetMs(deadlineMs) <= MIN_RETRY_WORK_MS) {
+        timedOut = true;
         deferred++;
         continue;
       }
@@ -108,7 +162,17 @@ export function registerRetrievalBlockRetryFunction(
         continue;
       }
 
-      const result = await indexRetrievalBlock(kv, block, { queueRetry: false });
+      const indexed = await settleWithin(
+        indexRetrievalBlock(kv, block, { queueRetry: false }),
+        remainingBudgetMs(deadlineMs),
+        "Retrieval block retry indexing",
+      );
+      if (indexed.timedOut) {
+        timedOut = true;
+        deferred++;
+        continue;
+      }
+      const result = indexed.value;
       if (result.success) {
         succeeded++;
         continue;
@@ -154,8 +218,17 @@ export function registerRetrievalBlockRetryFunction(
         deferred,
         processed,
         refreshed: refreshReport?.changed ?? 0,
+        timedOut,
       });
     }
+
+    const timeoutFields = timedOut
+      ? {
+          timedOut: true,
+          timeBudgetMs,
+          refreshTimedOut,
+        }
+      : {};
 
     return refreshReport
       ? {
@@ -169,7 +242,16 @@ export function registerRetrievalBlockRetryFunction(
           refreshIndexed: refreshReport.indexed,
           refreshIndexFailures: refreshReport.indexFailures,
           refreshLimited: refreshReport.limited,
+          ...timeoutFields,
         }
-      : { retried, removed, succeeded, skipped, deferred, processed };
-  });
+      : {
+          retried,
+          removed,
+          succeeded,
+          skipped,
+          deferred,
+          processed,
+          ...timeoutFields,
+        };
+ });
 }

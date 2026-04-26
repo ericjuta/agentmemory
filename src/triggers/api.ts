@@ -3699,11 +3699,12 @@ export function registerApiTriggers(
     const body = (req.body || {}) as Record<string, unknown>;
     const batchSize = parseOptionalPositiveInt(body.batchSize);
     const refreshSessionLimit = parseOptionalPositiveInt(body.refreshSessionLimit);
-    if (batchSize === null || refreshSessionLimit === null) {
+    const timeBudgetMs = parseOptionalPositiveInt(body.timeBudgetMs);
+    if (batchSize === null || refreshSessionLimit === null || timeBudgetMs === null) {
       return {
         status_code: 400,
         body: {
-          error: "batchSize and refreshSessionLimit must be positive integers when provided",
+          error: "batchSize, refreshSessionLimit, and timeBudgetMs must be positive integers when provided",
         },
       };
     }
@@ -3720,6 +3721,7 @@ export function registerApiTriggers(
     if (refreshSessionLimit !== undefined) {
       payload.refreshSessionLimit = refreshSessionLimit;
     }
+    if (timeBudgetMs !== undefined) payload.timeBudgetMs = timeBudgetMs;
     for (const field of ["refreshFromState", "fullRefresh", "ignoreBackoff"] as const) {
       if (typeof body[field] === "boolean") payload[field] = body[field];
     }

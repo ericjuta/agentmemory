@@ -315,6 +315,61 @@ describe("retrieval block retry", () => {
     expect(await kv.list(KV.retrievalBlockRetry)).toHaveLength(1);
   });
 
+  it("returns a bounded deferred result when retry work exceeds the time budget", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    const provider: EmbeddingProvider = {
+      name: "test-embeddings",
+      dimensions: 3,
+      embed: vi.fn(
+        () =>
+          new Promise<Float32Array>((resolve) => {
+            setTimeout(() => resolve(new Float32Array([0.1, 0.2, 0.3])), 1000);
+          }),
+      ),
+      embedBatch: vi.fn(async () => []),
+    };
+
+    configureRetrievalBlockIndexingRuntime({
+      embeddingProvider: provider,
+      vectorIndex: new VectorIndex(),
+      scheduleSave: vi.fn(),
+    });
+    registerRetrievalBlockRetryFunction(sdk as never, kv as never);
+
+    const block = makeBlock("rblk-time-budget");
+    await kv.set(KV.retrievalBlocks, block.id, block);
+    await kv.set(KV.retrievalBlockRetry, block.id, {
+      blockId: block.id,
+      sourceType: block.sourceType,
+      retries: 0,
+      firstFailedAt: "2026-04-23T14:55:48.000Z",
+      lastFailedAt: "2026-04-23T14:55:48.000Z",
+      lastError: "StateKV state::set timed out after 5000ms",
+    } satisfies RetrievalBlockRetryEntry);
+
+    const startedAt = Date.now();
+    const result = await sdk.trigger("mem::retrieval-block-retry", {
+      batchSize: 1,
+      timeBudgetMs: 500,
+    });
+
+    expect(Date.now() - startedAt).toBeLessThan(900);
+    expect(result).toMatchObject({
+      retried: 0,
+      removed: 0,
+      succeeded: 0,
+      skipped: 0,
+      deferred: 1,
+      processed: 1,
+      timedOut: true,
+      timeBudgetMs: 500,
+      refreshTimedOut: false,
+    });
+    expect(provider.embed).toHaveBeenCalledTimes(1);
+    expect(await kv.get(KV.retrievalBlockRetry, block.id)).toBeTruthy();
+  });
+
   it("refreshes missing source-derived retrieval blocks during catch-up", async () => {
     const sdk = mockSdk();
     const kv = mockKV();

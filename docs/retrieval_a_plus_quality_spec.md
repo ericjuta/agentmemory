@@ -38,6 +38,7 @@ The A+ path now has:
 - intent/source-prior/exact-boost/vector-coverage/graph-expansion score traces
 - near-duplicate suppression with duplicate trace metadata
 - freshness diagnostics for deferred retrieval-block work
+- bounded operator retry catch-up for deferred retrieval-block work, including `timeBudgetMs` to return deferred work cleanly before iii-engine invocation timeout
 - optional reranking behind `RERANKER_ENABLED=true` or legacy `RERANK_ENABLED=true`
 - operator diagnostics for BM25/vector coverage, freshness lag, duplicate rate, eval grade, recall, and leakage
 
@@ -51,7 +52,7 @@ Required proof bundle:
 - live `POST /agentmemory/smart-search` without scope returns a scope-required error
 - live `POST /agentmemory/smart-search` with `project` or `cwd` returns scoped results
 - live diagnostics show `lastEvalGrade`, `duplicateRate`, `lastEvalRecallAt3`, and zero leakage after the eval summary is published
-- deferred retrieval-block work drains after health gates are clear; operators can force due catch-up with `POST /agentmemory/retrieval-blocks/retry` when proving recovery
+- deferred retrieval-block work drains after health gates are clear; operators can force due catch-up with `POST /agentmemory/retrieval-blocks/retry` and a bounded `timeBudgetMs` when proving recovery
 
 ## A+ Acceptance Gates
 
