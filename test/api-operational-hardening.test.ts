@@ -1,9 +1,65 @@
 import { describe, expect, it } from "vitest";
 
 import { registerApiTriggers } from "../src/triggers/api.js";
+import { KV } from "../src/state/schema.js";
 import { mockKV, mockSdk } from "./helpers/mocks.js";
 
 describe("operational hardening APIs", () => {
+  it("exposes deferred work and write gates on health", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    await kv.set(KV.compressRetry, "obs_1", {
+      obsId: "obs_1",
+      sessionId: "ses_1",
+      retries: 0,
+      failedAt: "2026-04-25T00:00:00.000Z",
+    });
+    await kv.set(KV.retrievalBlockRetry, "rblk_1", {
+      blockId: "rblk_1",
+      sourceType: "memory",
+      retries: 0,
+      firstFailedAt: "2026-04-25T00:00:00.000Z",
+      lastFailedAt: "2026-04-25T00:00:00.000Z",
+      lastError: "timeout",
+    });
+    await kv.set(KV.graphExtractionRetry, "obs_2", {
+      observationId: "obs_2",
+      sessionId: "ses_1",
+      retries: 0,
+      firstDeferredAt: "2026-04-25T00:00:00.000Z",
+      lastDeferredAt: "2026-04-25T00:00:00.000Z",
+      lastError: "health_unhealthy",
+    });
+    registerApiTriggers(sdk as never, kv as never);
+
+    const response = (await sdk.trigger("api::health", {
+      headers: {},
+    })) as {
+      status_code: number;
+      body: {
+        deferredWork: {
+          compression: { queued: number };
+          retrievalBlocks: { queued: number };
+          graphExtraction: { queued: number };
+        };
+        writeGates: Record<string, null>;
+      };
+    };
+
+    expect(response.status_code).toBe(200);
+    expect(response.body.deferredWork).toMatchObject({
+      compression: { queued: 1 },
+      retrievalBlocks: { queued: 1 },
+      graphExtraction: { queued: 1 },
+    });
+    expect(response.body.writeGates).toMatchObject({
+      llmWork: null,
+      derivedKvWrites: null,
+      graphExtraction: null,
+      indexPersistence: null,
+    });
+  });
+
   it("forwards whitelisted retrieval block diagnostic options", async () => {
     const sdk = mockSdk();
     const kv = mockKV();

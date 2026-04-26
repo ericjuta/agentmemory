@@ -60,6 +60,7 @@ export const KV = {
   accessLog: "mem:access",
   compressRetry: "mem:compress-retry",
   retrievalBlockRetry: "mem:retrieval-block-retry",
+  graphExtractionRetry: "mem:graph-extraction-retry",
   contextInjections: "mem:context-injections",
 } as const;
 

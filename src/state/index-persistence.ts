@@ -19,7 +19,7 @@ export interface IndexPersistenceOptions {
   mode?: IndexPersistenceMode;
   shardSizeBytes?: number;
   now?: () => string;
-  shouldDeferSave?: (() => boolean | Promise<boolean>) | undefined;
+  shouldDeferSave?: (() => boolean | string | null | Promise<boolean | string | null>) | undefined;
 }
 
 export interface IndexPersistenceStatus {
@@ -29,6 +29,12 @@ export interface IndexPersistenceStatus {
   lastSuccessfulSaveAt?: string;
   lastFailureAt?: string;
   error?: string;
+  pendingSave?: boolean;
+  inFlight?: boolean;
+  nextDelayMs?: number;
+  deferredCount?: number;
+  lastDeferredAt?: string;
+  deferReason?: string;
   manifest?: {
     savedAt: string;
     bm25Shards: number;
@@ -145,7 +151,10 @@ export class IndexPersistence {
   private readonly mode: IndexPersistenceMode;
   private readonly shardSizeBytes: number;
   private readonly now: () => string;
-  private readonly shouldDeferSave: () => boolean | Promise<boolean>;
+  private readonly shouldDeferSave: () => boolean | string | null | Promise<boolean | string | null>;
+  private deferredCount = 0;
+  private lastDeferredAt: string | undefined;
+  private deferReason: string | undefined;
   private completeManifest: ShardedIndexManifest | null = null;
   private status: IndexPersistenceStatus;
 
@@ -224,7 +233,12 @@ export class IndexPersistence {
   }
 
   private async saveDeferred(): Promise<"saved" | "deferred"> {
-    if (await this.shouldDeferSave()) {
+    const deferResult = await this.shouldDeferSave();
+    if (deferResult) {
+      this.deferredCount++;
+      this.lastDeferredAt = this.now();
+      this.deferReason =
+        typeof deferResult === "string" ? deferResult : "health_unhealthy";
       this.dirty = true;
       this.nextDelayMs = Math.min(
         MAX_RETRY_BACKOFF_MS,
@@ -232,6 +246,7 @@ export class IndexPersistence {
       );
       logger.warn("Index persistence deferred while health is unhealthy", {
         scope: this.scope,
+        reason: this.deferReason,
       });
       return "deferred";
     }
@@ -267,6 +282,12 @@ export class IndexPersistence {
   getStatus(): IndexPersistenceStatus {
     return {
       ...this.status,
+      pendingSave: this.dirty,
+      inFlight: Boolean(this.inFlight),
+      nextDelayMs: this.nextDelayMs,
+      deferredCount: this.deferredCount,
+      lastDeferredAt: this.lastDeferredAt,
+      deferReason: this.deferReason,
       manifest: this.status.manifest ? { ...this.status.manifest } : undefined,
     };
   }

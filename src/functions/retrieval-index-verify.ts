@@ -1,6 +1,7 @@
 import type { ISdk } from "iii-sdk";
 
 import type { StateKV } from "../state/kv.js";
+import { getIndexPersistencePauseReason } from "../health/write-gate.js";
 import {
   verifyRetrievalBlockIndex,
   type VerifyRetrievalBlockIndexOptions,
@@ -62,14 +63,23 @@ export function registerRetrievalIndexVerifyFunction(
     const result = await verifyRetrievalBlockIndex(kv, options);
     const observationPersistence =
       functionOptions.observationPersistenceStatus?.();
+    const indexPersistencePauseReason = await getIndexPersistencePauseReason(kv);
     if (!observationPersistence && !result.persistence) {
-      return result;
+      return {
+        ...result,
+        writeGates: {
+          indexPersistence: indexPersistencePauseReason,
+        },
+      };
     }
     return {
       ...result,
       persistenceScopes: {
         observation: observationPersistence,
         retrieval: result.persistence,
+      },
+      writeGates: {
+        indexPersistence: indexPersistencePauseReason,
       },
     };
   });

@@ -4,6 +4,7 @@ import {
   getMaintenancePauseReason,
   shouldPauseMaintenance,
 } from "../src/health/maintenance-gate.js";
+import { getWriteGatePauseReason } from "../src/health/write-gate.js";
 import type { HealthSnapshot } from "../src/types.js";
 
 function makeSnapshot(
@@ -54,5 +55,37 @@ describe("maintenance gate", () => {
 
     expect(shouldPauseMaintenance(snapshot)).toBe(true);
     expect(getMaintenancePauseReason(snapshot)).toContain("state::set");
+  });
+
+  it("uses narrower gates for derived writes and index persistence", () => {
+    const degradedCpu = makeSnapshot({
+      status: "degraded",
+      alerts: ["cpu_warn_85%"],
+    });
+    expect(getWriteGatePauseReason(degradedCpu, "llm_work")).toBe("cpu_warn_85%");
+    expect(getWriteGatePauseReason(degradedCpu, "graph_extraction")).toBe(
+      "cpu_warn_85%",
+    );
+    expect(getWriteGatePauseReason(degradedCpu, "derived_kv_write")).toBeNull();
+    expect(getWriteGatePauseReason(degradedCpu, "index_persistence")).toBe(
+      "cpu_warn_85%",
+    );
+  });
+
+  it("pauses all write gates when kv connectivity is failing", () => {
+    const snapshot = makeSnapshot({
+      kvConnectivity: {
+        status: "error",
+        error: "StateKV state::set timed out after 5000ms",
+      },
+    });
+
+    expect(getWriteGatePauseReason(snapshot, "llm_work")).toContain("StateKV");
+    expect(getWriteGatePauseReason(snapshot, "derived_kv_write")).toContain(
+      "StateKV",
+    );
+    expect(getWriteGatePauseReason(snapshot, "index_persistence")).toContain(
+      "StateKV",
+    );
   });
 });

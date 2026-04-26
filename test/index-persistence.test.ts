@@ -207,8 +207,8 @@ describe("IndexPersistence", () => {
       set: vi.fn(kv.set),
     };
     const shouldDeferSave = vi
-      .fn<() => boolean>()
-      .mockReturnValueOnce(true)
+      .fn<() => boolean | string | null>()
+      .mockReturnValueOnce("kv_unhealthy")
       .mockReturnValue(false);
     const persistence = new IndexPersistence(
       recordingKv as never,
@@ -224,8 +224,13 @@ describe("IndexPersistence", () => {
     expect(recordingKv.set).not.toHaveBeenCalled();
     expect(logger.warn).toHaveBeenCalledWith(
       "Index persistence deferred while health is unhealthy",
-      { scope: KV.bm25Index },
+      { scope: KV.bm25Index, reason: "kv_unhealthy" },
     );
+    expect(persistence.getStatus()).toMatchObject({
+      pendingSave: true,
+      deferredCount: 1,
+      deferReason: "kv_unhealthy",
+    });
 
     await vi.advanceTimersByTimeAsync(14999);
     expect(recordingKv.set).not.toHaveBeenCalled();

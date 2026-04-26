@@ -5,7 +5,9 @@ import type {
   GraphEdge,
   GraphQueryResult,
   CompressedObservation,
+  GraphExtractionRetryEntry,
   MemoryProvider,
+  Session,
 } from "../types.js";
 import { KV, generateId } from "../state/schema.js";
 import type { StateKV } from "../state/kv.js";
@@ -16,9 +18,72 @@ import {
 import { recordAudit } from "./audit.js";
 import { logger } from "../logger.js";
 import { Semaphore } from "../state/semaphore.js";
-import { getUnhealthyPauseReason } from "../health/write-gate.js";
+import { getGraphExtractionPauseReason } from "../health/write-gate.js";
 
 const graphSemaphore = new Semaphore(2);
+const DEFAULT_GRAPH_CATCH_UP_BATCH_SIZE = 10;
+
+function positiveInteger(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return Math.floor(value);
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return fallback;
+}
+
+function isCompressedObservation(value: unknown): value is CompressedObservation {
+  const row = value as Partial<CompressedObservation>;
+  return (
+    !!row &&
+    typeof row.id === "string" &&
+    typeof row.sessionId === "string" &&
+    typeof row.title === "string" &&
+    Array.isArray(row.facts) &&
+    Array.isArray(row.concepts) &&
+    Array.isArray(row.files)
+  );
+}
+
+async function queueGraphExtractionRetry(
+  kv: StateKV,
+  observation: CompressedObservation,
+  error: string,
+): Promise<void> {
+  const existing = await kv
+    .get<GraphExtractionRetryEntry>(KV.graphExtractionRetry, observation.id)
+    .catch(() => null);
+  const now = new Date().toISOString();
+  await kv
+    .set(KV.graphExtractionRetry, observation.id, {
+      observationId: observation.id,
+      sessionId: observation.sessionId,
+      retries: existing?.retries ?? 0,
+      firstDeferredAt: existing?.firstDeferredAt ?? now,
+      lastDeferredAt: now,
+      lastError: error,
+    } satisfies GraphExtractionRetryEntry)
+    .catch((err) => {
+      logger.warn("Failed to queue graph extraction retry", {
+        observationId: observation.id,
+        sessionId: observation.sessionId,
+        error: err instanceof Error ? err.message : String(err),
+        originalError: error,
+      });
+    });
+}
+
+async function graphCoveredObservationIds(kv: StateKV): Promise<Set<string>> {
+  const [nodes, edges] = await Promise.all([
+    kv.list<GraphNode>(KV.graphNodes).catch(() => []),
+    kv.list<GraphEdge>(KV.graphEdges).catch(() => []),
+  ]);
+  return new Set(
+    [...nodes, ...edges].flatMap((item) => item.sourceObservationIds || []),
+  );
+}
 
 /**
  * Prune graph nodes and edges when a source observation is evicted.
@@ -126,8 +191,13 @@ export function registerGraphFunction(
       if (!data.observations || data.observations.length === 0) {
         return { success: false, error: "No observations provided" };
       }
-      const pauseReason = await getUnhealthyPauseReason(kv);
+      const pauseReason = await getGraphExtractionPauseReason(kv);
       if (pauseReason) {
+        await Promise.all(
+          data.observations.map((observation) =>
+            queueGraphExtractionRetry(kv, observation, pauseReason),
+          ),
+        );
         logger.warn("Graph extraction deferred while health is unhealthy", {
           reason: pauseReason,
           observations: data.observations.length,
@@ -155,12 +225,14 @@ export function registerGraphFunction(
 
         const existingNodes = await kv.list<GraphNode>(KV.graphNodes);
         const existingEdges = await kv.list<GraphEdge>(KV.graphEdges);
+        const nodeIdByParsedId = new Map<string, string>();
 
         for (const node of nodes) {
           const existing = existingNodes.find(
             (n) => n.name === node.name && n.type === node.type,
           );
           if (existing) {
+            nodeIdByParsedId.set(node.id, existing.id);
             const merged = {
               ...existing,
               sourceObservationIds: [
@@ -172,13 +244,16 @@ export function registerGraphFunction(
             const idx = existingNodes.findIndex((n) => n.id === existing.id);
             if (idx !== -1) existingNodes[idx] = merged;
           } else {
+            nodeIdByParsedId.set(node.id, node.id);
             await kv.set(KV.graphNodes, node.id, node);
             existingNodes.push(node);
           }
         }
 
         for (const edge of edges) {
-          const edgeKey = `${edge.sourceNodeId}|${edge.targetNodeId}|${edge.type}`;
+          const sourceNodeId = nodeIdByParsedId.get(edge.sourceNodeId) || edge.sourceNodeId;
+          const targetNodeId = nodeIdByParsedId.get(edge.targetNodeId) || edge.targetNodeId;
+          const edgeKey = `${sourceNodeId}|${targetNodeId}|${edge.type}`;
           const existingEdge = existingEdges.find(
             (e) => `${e.sourceNodeId}|${e.targetNodeId}|${e.type}` === edgeKey,
           );
@@ -188,8 +263,9 @@ export function registerGraphFunction(
             ];
             await kv.set(KV.graphEdges, existingEdge.id, existingEdge);
           } else {
-            await kv.set(KV.graphEdges, edge.id, edge);
-            existingEdges.push(edge);
+            const resolvedEdge = { ...edge, sourceNodeId, targetNodeId };
+            await kv.set(KV.graphEdges, resolvedEdge.id, resolvedEdge);
+            existingEdges.push(resolvedEdge);
           }
         }
 
@@ -209,11 +285,138 @@ export function registerGraphFunction(
         };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+        await Promise.all(
+          data.observations.map((observation) =>
+            queueGraphExtractionRetry(kv, observation, msg),
+          ),
+        );
         logger.error("Graph extraction failed", { error: msg });
         return { success: false, error: msg };
       }
     },
   );
+
+  sdk.registerFunction("mem::graph-catch-up", async (payload: unknown) => {
+    const data = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
+    const pauseReason = await getGraphExtractionPauseReason(kv);
+    if (pauseReason) {
+      return { success: false, skipped: true, reason: pauseReason };
+    }
+
+    const batchSize = positiveInteger(
+      data.batchSize ?? process.env.GRAPH_CATCH_UP_BATCH_SIZE,
+      DEFAULT_GRAPH_CATCH_UP_BATCH_SIZE,
+    );
+    const scanLimit = positiveInteger(
+      data.scanLimit ?? process.env.GRAPH_CATCH_UP_SCAN_LIMIT,
+      batchSize,
+    );
+    const queued = await kv
+      .list<GraphExtractionRetryEntry>(KV.graphExtractionRetry)
+      .catch(() => []);
+    const covered = await graphCoveredObservationIds(kv);
+    const selected = new Map<string, CompressedObservation>();
+    let removed = 0;
+    let scanned = 0;
+
+    for (const entry of queued) {
+      if (selected.size >= batchSize) break;
+      const observation = await kv
+        .get<unknown>(KV.observations(entry.sessionId), entry.observationId)
+        .catch(() => null);
+      if (!isCompressedObservation(observation)) {
+        await kv.delete(KV.graphExtractionRetry, entry.observationId).catch(() => {});
+        removed++;
+        continue;
+      }
+      if (covered.has(observation.id)) {
+        await kv.delete(KV.graphExtractionRetry, entry.observationId).catch(() => {});
+        removed++;
+        continue;
+      }
+      selected.set(observation.id, observation);
+    }
+
+    const scanObservations =
+      typeof data.scanObservations === "boolean" ? data.scanObservations : true;
+    if (scanObservations && selected.size < batchSize) {
+      const sessions = await kv.list<Session>(KV.sessions).catch(() => []);
+      for (const session of sessions) {
+        if (selected.size >= batchSize || scanned >= scanLimit) break;
+        const observations = await kv
+          .list<unknown>(KV.observations(session.id))
+          .catch(() => []);
+        for (const observation of observations) {
+          if (selected.size >= batchSize || scanned >= scanLimit) break;
+          scanned++;
+          if (!isCompressedObservation(observation)) continue;
+          if (covered.has(observation.id) || selected.has(observation.id)) continue;
+          selected.set(observation.id, observation);
+        }
+      }
+    }
+
+    const observations = [...selected.values()];
+    if (observations.length === 0) {
+      return {
+        success: true,
+        extracted: 0,
+        removed,
+        queued: queued.length,
+        scanned,
+      };
+    }
+
+    const result = (await sdk.trigger({
+      function_id: "mem::graph-extract",
+      payload: { observations },
+    })) as { success?: boolean; nodesAdded?: number; edgesAdded?: number; error?: string };
+
+    if (result?.success) {
+      await Promise.all(
+        observations.map((observation) =>
+          kv.delete(KV.graphExtractionRetry, observation.id).catch(() => {}),
+        ),
+      );
+      return {
+        success: true,
+        extracted: observations.length,
+        removed,
+        queued: queued.length,
+        scanned,
+        nodesAdded: result.nodesAdded || 0,
+        edgesAdded: result.edgesAdded || 0,
+      };
+    }
+
+    const now = new Date().toISOString();
+    await Promise.all(
+      observations.map(async (observation) => {
+        const existing = await kv
+          .get<GraphExtractionRetryEntry>(KV.graphExtractionRetry, observation.id)
+          .catch(() => null);
+        await kv
+          .set(KV.graphExtractionRetry, observation.id, {
+            observationId: observation.id,
+            sessionId: observation.sessionId,
+            retries: (existing?.retries ?? 0) + 1,
+            firstDeferredAt: existing?.firstDeferredAt ?? now,
+            lastDeferredAt: now,
+            lastError: result?.error || "graph_catch_up_failed",
+          } satisfies GraphExtractionRetryEntry)
+          .catch(() => {});
+      }),
+    );
+
+    return {
+      success: false,
+      extracted: 0,
+      removed,
+      queued: queued.length,
+      scanned,
+      error: result?.error || "graph_catch_up_failed",
+    };
+  });
 
   sdk.registerFunction("mem::graph-query", 
     async (data: {

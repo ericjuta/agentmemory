@@ -16,7 +16,8 @@ import { isAutoCompressEnabled } from "../config.js";
 import { buildSyntheticCompression } from "./compress-synthetic.js";
 import { getSearchIndex } from "./search.js";
 import { logger } from "../logger.js";
-import { getUnhealthyPauseReason } from "../health/write-gate.js";
+import { getLlmWorkPauseReason } from "../health/write-gate.js";
+import { enqueueCompressionRetry } from "./compress.js";
 import {
   upsertTurnCapsuleFromCompressed,
   upsertTurnCapsuleFromRaw,
@@ -517,9 +518,14 @@ export function registerObserveFunction(
         }
 
         if (isAutoCompressEnabled()) {
-          const pauseReason = await getUnhealthyPauseReason(kv);
+          const pauseReason = await getLlmWorkPauseReason(kv);
           if (pauseReason) {
             compressionMode = "deferred";
+            await enqueueCompressionRetry(kv, {
+              observationId: obsId,
+              sessionId: payload.sessionId,
+              error: pauseReason,
+            });
             logger.warn("Auto compression deferred while health is unhealthy", {
               obsId,
               sessionId: payload.sessionId,

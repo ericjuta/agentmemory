@@ -172,10 +172,24 @@ describe("mem::observe auto-compress gate (#138)", () => {
     });
     registerObserveFunction(sdk as never, kv as never);
 
-    await sdk.trigger("mem::observe", validPayload());
+    const result = (await sdk.trigger("mem::observe", validPayload())) as {
+      observationId: string;
+    };
 
     const compressCalls = sdk.triggered.filter((t) => t.id === "mem::compress");
     expect(compressCalls).toHaveLength(0);
+    const queued = await kv.get<{
+      obsId: string;
+      sessionId: string;
+      retries: number;
+      lastError?: string;
+    }>(KV.compressRetry, result.observationId);
+    expect(queued).toMatchObject({
+      obsId: result.observationId,
+      sessionId: "ses_test",
+      retries: 0,
+      lastError: "StateKV state::set timed out after 5000ms",
+    });
   });
 
   it("AGENTMEMORY_AUTO_COMPRESS=false explicitly: does NOT fire mem::compress", async () => {

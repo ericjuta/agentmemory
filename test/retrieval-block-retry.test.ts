@@ -5,6 +5,7 @@ import { KV } from "../src/state/schema.js";
 import { VectorIndex } from "../src/state/vector-index.js";
 import type {
   EmbeddingProvider,
+  Memory,
   RetrievalBlock,
   RetrievalBlockRetryEntry,
 } from "../src/types.js";
@@ -37,6 +38,24 @@ function makeBlock(id: string): RetrievalBlock {
     createdAt: "2026-03-29T12:00:00.000Z",
     updatedAt: "2026-03-29T12:00:00.000Z",
     eventAt: "2026-03-29T12:00:00.000Z",
+  };
+}
+
+function makeMemory(id: string): Memory {
+  return {
+    id,
+    createdAt: "2026-03-29T12:00:00.000Z",
+    updatedAt: "2026-03-29T12:00:00.000Z",
+    type: "architecture",
+    title: "Auth memory",
+    content: "Auth handler uses token validation.",
+    concepts: ["auth"],
+    files: ["/project/src/auth.ts"],
+    project: "/project",
+    sessionIds: ["ses_1"],
+    strength: 0.8,
+    version: 1,
+    isLatest: true,
   };
 }
 
@@ -256,5 +275,60 @@ describe("retrieval block retry", () => {
     });
     expect(provider.embed).toHaveBeenCalledTimes(2);
     expect(await kv.list(KV.retrievalBlockRetry)).toHaveLength(1);
+  });
+
+  it("refreshes missing source-derived retrieval blocks during catch-up", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    const memory = makeMemory("mem_source");
+    await kv.set(KV.memories, memory.id, memory);
+    configureRetrievalBlockIndexingRuntime({
+      embeddingProvider: null,
+      vectorIndex: null,
+      scheduleSave: vi.fn(),
+    });
+    registerRetrievalBlockRetryFunction(sdk as never, kv as never);
+
+    const result = (await sdk.trigger("mem::retrieval-block-retry", {
+      refreshFromState: true,
+      batchSize: 5,
+    })) as { refreshed: number; refreshIndexed: number };
+
+    expect(result).toMatchObject({ refreshed: 1, refreshIndexed: 1 });
+    const blocks = await kv.list<RetrievalBlock>(KV.retrievalBlocks);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({
+      sourceType: "memory",
+      sourceId: memory.id,
+      project: "/project",
+    });
+  });
+
+  it("persists queued upsert blocks before retrying their index", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    const block = makeBlock("rblk-upsert");
+    await kv.set(KV.retrievalBlockRetry, block.id, {
+      blockId: block.id,
+      sourceType: block.sourceType,
+      operation: "upsert",
+      block,
+      retries: 0,
+      firstFailedAt: "2026-04-23T14:55:48.000Z",
+      lastFailedAt: "2026-04-23T14:55:48.000Z",
+      lastError: "health_unhealthy",
+    } satisfies RetrievalBlockRetryEntry);
+    configureRetrievalBlockIndexingRuntime({
+      embeddingProvider: null,
+      vectorIndex: null,
+      scheduleSave: vi.fn(),
+    });
+    registerRetrievalBlockRetryFunction(sdk as never, kv as never);
+
+    const result = await sdk.trigger("mem::retrieval-block-retry", {});
+
+    expect(result).toMatchObject({ succeeded: 1, removed: 0 });
+    expect(await kv.get(KV.retrievalBlocks, block.id)).toEqual(block);
+    expect(await kv.get(KV.retrievalBlockRetry, block.id)).toBeNull();
   });
 });

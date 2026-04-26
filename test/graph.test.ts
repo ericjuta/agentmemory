@@ -180,4 +180,33 @@ describe("Graph Functions", () => {
     expect(mockProvider.compress).not.toHaveBeenCalled();
     expect(await kv.list<GraphNode>(KV.graphNodes)).toHaveLength(0);
   });
+
+  it("catches up deferred graph extraction after health recovers", async () => {
+    await kv.set(KV.observations(testObs.sessionId), testObs.id, testObs);
+    await kv.set(KV.health, "latest", {
+      status: "critical",
+      kvConnectivity: {
+        status: "error",
+        error: "StateKV state::set timed out after 5000ms",
+      },
+    });
+
+    await sdk.trigger("mem::graph-extract", { observations: [testObs] });
+    expect(await kv.get(KV.graphExtractionRetry, testObs.id)).toMatchObject({
+      observationId: testObs.id,
+      sessionId: testObs.sessionId,
+    });
+
+    await kv.set(KV.health, "latest", {
+      status: "healthy",
+      kvConnectivity: { status: "ok" },
+    });
+    const result = (await sdk.trigger("mem::graph-catch-up", {
+      batchSize: 5,
+    })) as { success: boolean; extracted: number };
+
+    expect(result).toMatchObject({ success: true, extracted: 1 });
+    expect(await kv.get(KV.graphExtractionRetry, testObs.id)).toBeNull();
+    expect(await kv.list<GraphNode>(KV.graphNodes)).toHaveLength(2);
+  });
 });

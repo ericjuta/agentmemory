@@ -3,8 +3,10 @@ import { TriggerAction, type ISdk } from "iii-sdk";
 import type {
   RawObservation,
   CompressedObservation,
+  CompressRetryEntry,
   ObservationType,
   MemoryProvider,
+  Session,
 } from "../types.js";
 import { KV, STREAM } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
@@ -20,15 +22,17 @@ import { scoreCompression } from "../eval/quality.js";
 import { compressWithRetry } from "../eval/self-correct.js";
 import type { MetricsStore } from "../eval/metrics-store.js";
 import { logger } from "../logger.js";
-import { getUnhealthyPauseReason } from "../health/write-gate.js";
+import { getLlmWorkPauseReason } from "../health/write-gate.js";
 import { upsertTurnCapsuleFromCompressed } from "./turn-capsules.js";
 import { Semaphore } from "../state/semaphore.js";
 import type { CompressionTracker } from "../state/compression-tracker.js";
 import { indexCompressedObservation } from "../state/observation-indexing.js";
 import { upsertObservationRetrievalBlock } from "./retrieval-blocks.js";
+import { isAutoCompressEnabled } from "../config.js";
 
 /** Cap concurrent LLM compression calls to avoid starving the engine. */
 const compressSemaphore = new Semaphore(6);
+const DEFAULT_COMPRESS_RETRY_SCAN_LIMIT = 25;
 
 export function getCompressMetrics() {
   return { active: compressSemaphore.active, pending: compressSemaphore.pending };
@@ -58,6 +62,96 @@ function isStateKvPressureError(message: string): boolean {
     (normalized.includes("timed out") ||
       normalized.includes("temporarily unavailable"))
   );
+}
+
+function positiveInteger(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return Math.floor(value);
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return fallback;
+}
+
+function isRawObservation(value: unknown): value is RawObservation {
+  const row = value as Partial<RawObservation> & { title?: unknown };
+  return (
+    !!row &&
+    typeof row.id === "string" &&
+    typeof row.sessionId === "string" &&
+    typeof row.hookType === "string" &&
+    typeof row.title !== "string"
+  );
+}
+
+export async function enqueueCompressionRetry(
+  kv: StateKV,
+  data: { observationId: string; sessionId: string; error?: string },
+): Promise<void> {
+  const existing = await kv
+    .get<CompressRetryEntry>(KV.compressRetry, data.observationId)
+    .catch(() => null);
+  const failedAt = existing?.failedAt ?? new Date().toISOString();
+  await kv
+    .set(KV.compressRetry, data.observationId, {
+      obsId: data.observationId,
+      sessionId: data.sessionId,
+      retries: existing?.retries ?? 0,
+      failedAt,
+      lastError: data.error,
+    } satisfies CompressRetryEntry)
+    .catch((err) => {
+      logger.warn("Failed to queue compression retry", {
+        obsId: data.observationId,
+        sessionId: data.sessionId,
+        error: err instanceof Error ? err.message : String(err),
+        originalError: data.error,
+      });
+    });
+}
+
+async function enqueueRawCompressionBacklog(
+  kv: StateKV,
+  existingEntries: Map<string, CompressRetryEntry>,
+  limit: number,
+): Promise<{ queued: number; scanned: number }> {
+  if (limit <= 0) return { queued: 0, scanned: 0 };
+  const sessions = await kv.list<Session>(KV.sessions).catch(() => []);
+  let queued = 0;
+  let scanned = 0;
+
+  for (const session of sessions) {
+    if (queued >= limit || scanned >= limit) break;
+    const observations = await kv
+      .list<unknown>(KV.observations(session.id))
+      .catch(() => []);
+    for (const observation of observations) {
+      if (queued >= limit || scanned >= limit) break;
+      scanned++;
+      if (!isRawObservation(observation)) continue;
+      if (existingEntries.has(observation.id)) continue;
+      const entry: CompressRetryEntry = {
+        obsId: observation.id,
+        sessionId: observation.sessionId || session.id,
+        retries: 0,
+        failedAt: new Date().toISOString(),
+        lastError: "raw_uncompressed_backlog_scan",
+      };
+      existingEntries.set(entry.obsId, entry);
+      await kv.set(KV.compressRetry, entry.obsId, entry).catch((err) => {
+        logger.warn("Failed to persist compression backlog entry", {
+          obsId: entry.obsId,
+          sessionId: entry.sessionId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+      queued++;
+    }
+  }
+
+  return { queued, scanned };
 }
 
 function parseCompressionXml(
@@ -100,12 +194,17 @@ export function registerCompressFunction(
       try {
         return await compressSemaphore.run(async () => {
           const startMs = Date.now();
-          const initialPauseReason = await getUnhealthyPauseReason(kv);
+          const initialPauseReason = await getLlmWorkPauseReason(kv);
           if (initialPauseReason) {
             logger.warn("Compression deferred while health is unhealthy", {
               obsId: data.observationId,
               sessionId: data.sessionId,
               reason: initialPauseReason,
+            });
+            await enqueueCompressionRetry(kv, {
+              observationId: data.observationId,
+              sessionId: data.sessionId,
+              error: initialPauseReason,
             });
             return {
               success: false,
@@ -243,6 +342,7 @@ export function registerCompressFunction(
                 qualityScore,
               );
             }
+            await kv.delete(KV.compressRetry, data.observationId).catch(() => {});
 
             if (graphEnabled) {
               void sdk.trigger({
@@ -273,20 +373,19 @@ export function registerCompressFunction(
               error: msg,
             });
 
-            const pauseReason = await getUnhealthyPauseReason(kv);
+            const pauseReason = await getLlmWorkPauseReason(kv);
             if (pauseReason || isStateKvPressureError(msg)) {
-              logger.warn("Compression retry enqueue skipped under StateKV pressure", {
-                obsId: data.observationId,
+              await enqueueCompressionRetry(kv, {
+                observationId: data.observationId,
                 sessionId: data.sessionId,
-                reason: pauseReason || msg,
+                error: pauseReason || msg,
               });
             } else {
-              await kv.set(KV.compressRetry, data.observationId, {
-                obsId: data.observationId,
+              await enqueueCompressionRetry(kv, {
+                observationId: data.observationId,
                 sessionId: data.sessionId,
-                retries: 0,
-                failedAt: new Date().toISOString(),
-              }).catch(() => {});
+                error: msg,
+              });
             }
 
             return { success: false, error: "compression_failed" };
@@ -300,17 +399,36 @@ export function registerCompressFunction(
 
   sdk.registerFunction(
     "mem::compress-retry",
-    async () => {
-      const entries = await kv.list<{
-        obsId: string;
-        sessionId: string;
-        retries: number;
-        failedAt: string;
-      }>(KV.compressRetry);
+    async (payload: unknown) => {
+      const data = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
+      const pauseReason = await getLlmWorkPauseReason(kv);
+      if (pauseReason) {
+        return {
+          retried: 0,
+          removed: 0,
+          queued: 0,
+          scanned: 0,
+          skipped: true,
+          reason: pauseReason,
+        };
+      }
+      const entries = await kv.list<CompressRetryEntry>(KV.compressRetry);
+      const entriesByObs = new Map(entries.map((entry) => [entry.obsId, entry] as const));
+      const scanLimit = positiveInteger(
+        data.scanLimit ?? process.env.COMPRESS_RETRY_SCAN_LIMIT,
+        DEFAULT_COMPRESS_RETRY_SCAN_LIMIT,
+      );
+      const scan =
+        typeof data.scanRaw === "boolean" ? data.scanRaw : isAutoCompressEnabled();
+      const backlog = scan
+        ? await enqueueRawCompressionBacklog(kv, entriesByObs, scanLimit)
+        : { queued: 0, scanned: 0 };
+      const retryEntries = [...entriesByObs.values()];
       let retried = 0;
       let removed = 0;
+      let succeeded = 0;
 
-      for (const entry of entries) {
+      for (const entry of retryEntries) {
         if (entry.retries >= 3) {
           await kv.delete(KV.compressRetry, entry.obsId).catch(() => {});
           removed++;
@@ -327,30 +445,51 @@ export function registerCompressFunction(
           continue;
         }
 
-        // Re-trigger compression (will go through semaphore)
-        void sdk.trigger({
-          function_id: "mem::compress",
-          payload: {
-            observationId: entry.obsId,
-            sessionId: entry.sessionId,
-            raw,
-          },
-        }).catch(() => {});
-
-        // Update retry count
-        await kv
-          .set(KV.compressRetry, entry.obsId, {
-            ...entry,
-            retries: entry.retries + 1,
+        const result = await sdk
+          .trigger({
+            function_id: "mem::compress",
+            payload: {
+              observationId: entry.obsId,
+              sessionId: entry.sessionId,
+              raw,
+            },
           })
-          .catch(() => {});
-        retried++;
+          .catch((err) => ({
+            success: false,
+            error: err instanceof Error ? err.message : String(err),
+          }));
+        if ((result as { success?: boolean })?.success) {
+          await kv.delete(KV.compressRetry, entry.obsId).catch(() => {});
+          succeeded++;
+        } else {
+          await kv
+            .set(KV.compressRetry, entry.obsId, {
+              ...entry,
+              retries: entry.retries + 1,
+              lastError:
+                (result as { error?: string })?.error || entry.lastError,
+            })
+            .catch(() => {});
+          retried++;
+        }
       }
 
-      if (retried > 0 || removed > 0) {
-        logger.info("Compress retry complete", { retried, removed });
+      if (retried > 0 || removed > 0 || succeeded > 0 || backlog.queued > 0) {
+        logger.info("Compress retry complete", {
+          retried,
+          removed,
+          succeeded,
+          queued: backlog.queued,
+          scanned: backlog.scanned,
+        });
       }
-      return { retried, removed };
+      return {
+        retried,
+        removed,
+        succeeded,
+        queued: backlog.queued,
+        scanned: backlog.scanned,
+      };
     },
   );
 }

@@ -98,6 +98,7 @@ import { registerRetrievalBlockRetryFunction } from "./functions/retrieval-block
 import { registerRetrievalIndexVerifyFunction } from "./functions/retrieval-index-verify.js";
 import { registerRetrievalBlockDiagnosticsFunction } from "./functions/retrieval-block-diagnostics.js";
 import { registerConsolidatedMemoryBackfillFunction } from "./functions/consolidated-memory-backfill.js";
+import { registerDeferredWorkFunction } from "./functions/deferred-work.js";
 import { registerApiTriggers } from "./triggers/api.js";
 import { registerEventTriggers } from "./triggers/events.js";
 import { registerMcpEndpoints } from "./mcp/server.js";
@@ -112,7 +113,7 @@ import {
   getMaintenancePauseReason,
   shouldPauseMaintenance,
 } from "./health/maintenance-gate.js";
-import { getUnhealthyPauseReason } from "./health/write-gate.js";
+import { getIndexPersistencePauseReason } from "./health/write-gate.js";
 import { initMetrics, OTEL_CONFIG } from "./telemetry/setup.js";
 import { VERSION } from "./version.js";
 import { configureObservationIndexingRuntime } from "./state/observation-indexing.js";
@@ -235,6 +236,7 @@ async function main() {
   });
   registerRetrievalBlockDiagnosticsFunction(sdk, kv);
   registerConsolidatedMemoryBackfillFunction(sdk, kv);
+  registerDeferredWorkFunction(sdk, kv);
 
   const claudeBridgeConfig = loadClaudeBridgeConfig();
   if (claudeBridgeConfig.enabled) {
@@ -358,8 +360,7 @@ async function main() {
       totalInflight: compressionTracker.totalInflight(),
     };
   });
-  const shouldDeferIndexSave = async () =>
-    Boolean(await getUnhealthyPauseReason(kv));
+  const shouldDeferIndexSave = async () => getIndexPersistencePauseReason(kv);
 
   indexPersistence = new IndexPersistence(
     persistenceKv,
@@ -552,9 +553,9 @@ async function main() {
         runMaintenanceTask("Compress retry", async () => {
           const result = await sdk.trigger<
             Record<string, never>,
-            { retried?: number; removed?: number }
+            { retried?: number; removed?: number; queued?: number; succeeded?: number }
           >({ function_id: "mem::compress-retry", payload: {} });
-          return (result?.retried || 0) + (result?.removed || 0);
+          return (result?.retried || 0) + (result?.removed || 0) + (result?.queued || 0) + (result?.succeeded || 0);
         }),
       { baseMs: 300_000, minMs: 60_000, maxMs: 900_000, label: "Compress retry" },
     );
@@ -568,13 +569,29 @@ async function main() {
         runMaintenanceTask("Retrieval block retry", async () => {
           const result = await sdk.trigger<
             Record<string, never>,
-            { retried?: number; removed?: number; succeeded?: number }
-          >({ function_id: "mem::retrieval-block-retry", payload: {} });
-          return (result?.retried || 0) + (result?.removed || 0) + (result?.succeeded || 0);
+            { retried?: number; removed?: number; succeeded?: number; refreshed?: number; refreshIndexed?: number }
+          >({ function_id: "mem::retrieval-block-retry", payload: { refreshFromState: true } });
+          return (result?.retried || 0) + (result?.removed || 0) + (result?.succeeded || 0) + (result?.refreshed || 0) + (result?.refreshIndexed || 0);
         }),
       { baseMs: 300_000, minMs: 60_000, maxMs: 900_000, label: "Retrieval block retry" },
     );
     console.log(`[agentmemory] Retrieval block retry: enabled (every 5m, adaptive)`);
+  }
+
+  let graphCatchUpHandle: AdaptiveTimerHandle | undefined;
+  if (isGraphExtractionEnabled() && process.env.GRAPH_CATCH_UP_ENABLED !== "false") {
+    graphCatchUpHandle = createAdaptiveTimer(
+      async () =>
+        runMaintenanceTask("Graph catch-up", async () => {
+          const result = await sdk.trigger<
+            Record<string, never>,
+            { extracted?: number; removed?: number }
+          >({ function_id: "mem::graph-catch-up", payload: {} });
+          return (result?.extracted || 0) + (result?.removed || 0);
+        }),
+      { baseMs: 300_000, minMs: 60_000, maxMs: 900_000, label: "Graph catch-up" },
+    );
+    console.log(`[agentmemory] Graph catch-up: enabled (every 5m, adaptive)`);
   }
 
   let evictionHandle: AdaptiveTimerHandle | undefined;
@@ -737,6 +754,7 @@ async function main() {
     consolidationHandle?.stop();
     compressRetryHandle?.stop();
     retrievalBlockRetryHandle?.stop();
+    graphCatchUpHandle?.stop();
     evictionHandle?.stop();
     indexVerifyHandle?.stop();
     retrievalIndexVerifyHandle?.stop();

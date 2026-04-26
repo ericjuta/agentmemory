@@ -15,6 +15,13 @@ import type {
 import { KV } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
 import { getLatestHealth } from "../health/monitor.js";
+import { getDeferredWorkStatus } from "../functions/deferred-work.js";
+import {
+  getDerivedKvWritePauseReason,
+  getGraphExtractionPauseReason,
+  getIndexPersistencePauseReason,
+  getLlmWorkPauseReason,
+} from "../health/write-gate.js";
 import type { MetricsStore } from "../eval/metrics-store.js";
 import type { ResilientProvider } from "../providers/resilient.js";
 import { VERSION } from "../version.js";
@@ -441,6 +448,24 @@ export function registerApiTriggers(
       const functionMetrics = metricsStore ? await metricsStore.getAll() : [];
       const circuitBreaker =
         provider && "circuitState" in provider ? provider.circuitState : null;
+      const [deferredWork, writeGates] = await Promise.all([
+        getDeferredWorkStatus(kv).catch((err) => ({
+          error: err instanceof Error ? err.message : String(err),
+        })),
+        Promise.all([
+          getLlmWorkPauseReason(kv),
+          getDerivedKvWritePauseReason(kv),
+          getGraphExtractionPauseReason(kv),
+          getIndexPersistencePauseReason(kv),
+        ]).then(([llmWork, derivedKvWrites, graphExtraction, indexPersistence]) => ({
+          llmWork,
+          derivedKvWrites,
+          graphExtraction,
+          indexPersistence,
+        })).catch((err) => ({
+          error: err instanceof Error ? err.message : String(err),
+        })),
+      ]);
 
       const status = health?.status || "healthy";
       const statusCode = status === "critical" ? 503 : 200;
@@ -454,6 +479,8 @@ export function registerApiTriggers(
           health: health || null,
           functionMetrics,
           circuitBreaker,
+          deferredWork,
+          writeGates,
         },
       };
     },

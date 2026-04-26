@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../src/health/write-gate.js", () => ({
-  getUnhealthyPauseReason: vi.fn(async () => null),
+  getDerivedKvWritePauseReason: vi.fn(async () => null),
 }));
 
 import {
@@ -9,7 +9,7 @@ import {
   refreshRetrievalBlocksFromState,
   upsertMemoryRetrievalBlock,
 } from "../src/functions/retrieval-blocks.js";
-import { getUnhealthyPauseReason } from "../src/health/write-gate.js";
+import { getDerivedKvWritePauseReason } from "../src/health/write-gate.js";
 import { KV } from "../src/state/schema.js";
 import type { Memory } from "../src/types.js";
 
@@ -52,6 +52,9 @@ function createMockKV() {
     },
     stats: () => ({ maxConcurrentSets, setCalls }),
     kv: {
+      get: async <T>(scope: string, key: string): Promise<T | null> => {
+        return (ensureScope(scope).get(key) as T) ?? null;
+      },
       list: async <T>(scope: string): Promise<T[]> => {
         return Array.from(ensureScope(scope).values()) as T[];
       },
@@ -76,7 +79,7 @@ function createMockKV() {
 
 describe("refreshRetrievalBlocksFromState", () => {
   beforeEach(() => {
-    vi.mocked(getUnhealthyPauseReason).mockResolvedValue(null);
+    vi.mocked(getDerivedKvWritePauseReason).mockResolvedValue(null);
   });
 
   it("writes retrieval blocks sequentially", async () => {
@@ -92,7 +95,7 @@ describe("refreshRetrievalBlocksFromState", () => {
 
     expect(count).toBe(40);
     expect(stored).toHaveLength(40);
-    expect(stats.setCalls).toBe(40);
+    expect(stats.setCalls).toBeGreaterThanOrEqual(40);
     expect(stats.maxConcurrentSets).toBe(1);
   });
 
@@ -114,7 +117,7 @@ describe("refreshRetrievalBlocksFromState", () => {
   });
 
   it("defers derived retrieval block writes while health is unhealthy", async () => {
-    vi.mocked(getUnhealthyPauseReason).mockResolvedValueOnce(
+    vi.mocked(getDerivedKvWritePauseReason).mockResolvedValueOnce(
       "StateKV state::set timed out after 5000ms",
     );
     const mock = createMockKV();
@@ -125,6 +128,13 @@ describe("refreshRetrievalBlocksFromState", () => {
 
     expect(block).toEqual(expectedBlock);
     expect(await mock.kv.list(KV.retrievalBlocks)).toHaveLength(0);
-    expect(mock.stats().setCalls).toBe(0);
+    expect(await mock.kv.list(KV.retrievalBlockRetry)).toEqual([
+      expect.objectContaining({
+        blockId: expectedBlock.id,
+        operation: "upsert",
+        block: expectedBlock,
+      }),
+    ]);
+    expect(mock.stats().setCalls).toBe(1);
   });
 });

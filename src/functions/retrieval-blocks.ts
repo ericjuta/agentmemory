@@ -10,6 +10,7 @@ import type {
   ProceduralMemory,
   ProjectProfile,
   RetrievalBlock,
+  RetrievalBlockRetryEntry,
   RetrievalBlockSourceType,
   SemanticMemory,
   Session,
@@ -30,7 +31,7 @@ import {
   upsertRetrievalBlockScopeMembership,
 } from "./retrieval-block-scope-index.js";
 import { logger } from "../logger.js";
-import { getUnhealthyPauseReason } from "../health/write-gate.js";
+import { getDerivedKvWritePauseReason } from "../health/write-gate.js";
 
 function uniqueStrings(values: Array<string | undefined>): string[] {
   return [...new Set(values.filter((value): value is string => Boolean(value && value.trim())).map((value) => value.trim()))];
@@ -720,12 +721,44 @@ export function buildProfileRetrievalBlock(profile: ProjectProfile): RetrievalBl
   };
 }
 
+async function queueRetrievalBlockUpsert(
+  kv: StateKV,
+  block: RetrievalBlock,
+  reason: string,
+): Promise<void> {
+  const now = new Date().toISOString();
+  const existing = await kv
+    .get<RetrievalBlockRetryEntry>(KV.retrievalBlockRetry, block.id)
+    .catch(() => null);
+  await kv
+    .set(KV.retrievalBlockRetry, block.id, {
+      blockId: block.id,
+      sourceType: block.sourceType,
+      operation: "upsert",
+      block,
+      retries: existing?.retries ?? 0,
+      firstFailedAt: existing?.firstFailedAt ?? now,
+      lastFailedAt: now,
+      nextAttemptAt: existing?.nextAttemptAt,
+      lastError: reason,
+    } satisfies RetrievalBlockRetryEntry)
+    .catch((err) => {
+      logger.warn("Failed to queue retrieval block upsert", {
+        blockId: block.id,
+        sourceType: block.sourceType,
+        error: err instanceof Error ? err.message : String(err),
+        originalError: reason,
+      });
+    });
+}
+
 export async function upsertRetrievalBlock(
   kv: StateKV,
   block: RetrievalBlock,
 ): Promise<RetrievalBlock> {
-  const pauseReason = await getUnhealthyPauseReason(kv);
+  const pauseReason = await getDerivedKvWritePauseReason(kv);
   if (pauseReason) {
+    await queueRetrievalBlockUpsert(kv, block, pauseReason);
     logger.warn("Retrieval block upsert deferred while health is unhealthy", {
       blockId: block.id,
       sourceType: block.sourceType,
@@ -1141,6 +1174,23 @@ export async function collectLightweightRetrievalBlocksFromState(
 export async function refreshRetrievalBlocksFromState(
   kv: StateKV,
 ): Promise<number> {
+  const report = await reconcileRetrievalBlocksFromState(kv);
+  return report.total;
+}
+
+export interface RetrievalBlockRefreshReport {
+  total: number;
+  stale: number;
+  changed: number;
+  indexed: number;
+  indexFailures: number;
+  limited: boolean;
+}
+
+export async function reconcileRetrievalBlocksFromState(
+  kv: StateKV,
+  options: { indexChanged?: boolean; maxChanged?: number } = {},
+): Promise<RetrievalBlockRefreshReport> {
   const nextBlocks = await collectRetrievalBlocksFromState(kv);
   const blocks = new Map(nextBlocks.map((block) => [block.id, block] as const));
 
@@ -1159,14 +1209,36 @@ export async function refreshRetrievalBlocksFromState(
     const existingBlock = existingById.get(block.id);
     return !existingBlock || !retrievalBlockEquals(existingBlock, block);
   });
+  const maxChanged =
+    typeof options.maxChanged === "number" &&
+    Number.isFinite(options.maxChanged) &&
+    options.maxChanged >= 0
+      ? Math.floor(options.maxChanged)
+      : undefined;
+  const writableChangedBlocks =
+    maxChanged === undefined ? changedBlocks : changedBlocks.slice(0, maxChanged);
 
-  await runSequentially(changedBlocks, async (block) => {
+  let indexed = 0;
+  let indexFailures = 0;
+  await runSequentially(writableChangedBlocks, async (block) => {
     const previous = existingById.get(block.id);
     await kv.set(KV.retrievalBlocks, block.id, block);
     await upsertRetrievalBlockScopeMembership(kv, block, previous).catch(() => {});
+    if (options.indexChanged) {
+      const result = await indexRetrievalBlock(kv, block);
+      if (result.success) indexed++;
+      else indexFailures++;
+    }
   });
-  if (staleBlocks.length > 0 || changedBlocks.length > 0) {
+  if (staleBlocks.length > 0 || writableChangedBlocks.length > 0) {
     invalidateContextResultCache();
   }
-  return blocks.size;
+  return {
+    total: blocks.size,
+    stale: staleBlocks.length,
+    changed: writableChangedBlocks.length,
+    indexed,
+    indexFailures,
+    limited: writableChangedBlocks.length < changedBlocks.length,
+  };
 }

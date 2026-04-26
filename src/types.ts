@@ -208,10 +208,29 @@ export interface RetrievalBlock {
 export interface RetrievalBlockRetryEntry {
   blockId: string;
   sourceType: RetrievalBlockSourceType;
+  operation?: "index" | "upsert";
+  block?: RetrievalBlock;
   retries: number;
   firstFailedAt: string;
   lastFailedAt: string;
   nextAttemptAt?: string;
+  lastError: string;
+}
+
+export interface CompressRetryEntry {
+  obsId: string;
+  sessionId: string;
+  retries: number;
+  failedAt: string;
+  lastError?: string;
+}
+
+export interface GraphExtractionRetryEntry {
+  observationId: string;
+  sessionId: string;
+  retries: number;
+  firstDeferredAt: string;
+  lastDeferredAt: string;
   lastError: string;
 }
 

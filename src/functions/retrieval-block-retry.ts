@@ -8,12 +8,15 @@ import {
 import { KV } from "../state/schema.js";
 import type { StateKV } from "../state/kv.js";
 import type { RetrievalBlock, RetrievalBlockRetryEntry } from "../types.js";
+import { reconcileRetrievalBlocksFromState } from "./retrieval-blocks.js";
+import { upsertRetrievalBlockScopeMembership } from "./retrieval-block-scope-index.js";
 
 const MAX_RETRIES = 3;
 const DEFAULT_BATCH_SIZE = 25;
 
 type RetrievalBlockRetryPayload = {
   batchSize?: number;
+  refreshFromState?: boolean;
 };
 
 function positiveInteger(value: unknown, fallback: number): number {
@@ -49,6 +52,13 @@ export function registerRetrievalBlockRetryFunction(
       data.batchSize ?? process.env.RETRIEVAL_BLOCK_RETRY_BATCH_SIZE,
       DEFAULT_BATCH_SIZE,
     );
+    const refreshReport =
+      data.refreshFromState === true
+        ? await reconcileRetrievalBlocksFromState(kv, {
+            indexChanged: true,
+            maxChanged: batchSize,
+          })
+        : null;
     const nowMs = Date.now();
     let retried = 0;
     let removed = 0;
@@ -74,9 +84,14 @@ export function registerRetrievalBlockRetryFunction(
         continue;
       }
 
-      const block = await kv
+      let block = await kv
         .get<RetrievalBlock>(KV.retrievalBlocks, entry.blockId)
         .catch(() => null);
+      if (!block && entry.block) {
+        block = entry.block;
+        await kv.set(KV.retrievalBlocks, block.id, block);
+        await upsertRetrievalBlockScopeMembership(kv, block, null).catch(() => {});
+      }
       if (!block) {
         await kv.delete(KV.retrievalBlockRetry, entry.blockId).catch(() => {});
         removed++;
@@ -128,9 +143,23 @@ export function registerRetrievalBlockRetryFunction(
         skipped,
         deferred,
         processed,
+        refreshed: refreshReport?.changed ?? 0,
       });
     }
 
-    return { retried, removed, succeeded, skipped, deferred, processed };
+    return refreshReport
+      ? {
+          retried,
+          removed,
+          succeeded,
+          skipped,
+          deferred,
+          processed,
+          refreshed: refreshReport.changed,
+          refreshIndexed: refreshReport.indexed,
+          refreshIndexFailures: refreshReport.indexFailures,
+          refreshLimited: refreshReport.limited,
+        }
+      : { retried, removed, succeeded, skipped, deferred, processed };
   });
 }
