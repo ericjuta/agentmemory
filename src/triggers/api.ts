@@ -733,6 +733,8 @@ export function registerApiTriggers(
         limit?: number;
         project?: string;
         cwd?: string;
+        branch?: string;
+        global?: boolean;
         format?: string;
         token_budget?: number;
       }>,
@@ -752,6 +754,12 @@ export function registerApiTriggers(
       }
       if (body.cwd !== undefined && typeof body.cwd !== "string") {
         return { status_code: 400, body: { error: "cwd must be a string" } };
+      }
+      if (body.branch !== undefined && typeof body.branch !== "string") {
+        return { status_code: 400, body: { error: "branch must be a string" } };
+      }
+      if (body.global !== undefined && typeof body.global !== "boolean") {
+        return { status_code: 400, body: { error: "global must be a boolean" } };
       }
       if (
         body.format !== undefined &&
@@ -777,6 +785,8 @@ export function registerApiTriggers(
         limit: body.limit as number | undefined,
         project: body.project as string | undefined,
         cwd: body.cwd as string | undefined,
+        branch: body.branch as string | undefined,
+        global: body.global as boolean | undefined,
         format:
           typeof body.format === "string"
             ? body.format.trim().toLowerCase()
@@ -1390,6 +1400,7 @@ export function registerApiTriggers(
         cwd?: string;
         branch?: string;
         global?: boolean;
+        trace?: boolean;
         scope_required?: boolean;
         scopeRequired?: boolean;
       } = {};
@@ -1445,15 +1456,14 @@ export function registerApiTriggers(
         }
         payload[field] = value;
       }
-      for (const field of ["global", "scope_required", "scopeRequired"] as const) {
+      for (const field of ["global", "trace", "scope_required", "scopeRequired"] as const) {
         if (body[field] === undefined) continue;
         if (typeof body[field] !== "boolean") {
           return { status_code: 400, body: { error: `${field} must be a boolean` } };
         }
         payload[field] = body[field];
       }
-      const scopeRequired = payload.scope_required === true || payload.scopeRequired === true;
-      if (scopeRequired && !payload.project && !payload.cwd && payload.global !== true) {
+      if (!payload.project && !payload.cwd && payload.global !== true) {
         return {
           status_code: 400,
           body: { error: "scope is required: provide project, cwd, or global" },
@@ -3682,6 +3692,74 @@ export function registerApiTriggers(
     return { status_code: 200, body: result };
   });
   sdk.registerTrigger({ type: "http", function_id: "api::retrieval-blocks-diagnostics", config: { api_path: "/agentmemory/retrieval-blocks/diagnostics", http_method: "POST" } });
+
+  sdk.registerFunction("api::retrieval-quality-summary",  async (req: ApiRequest) => {
+    const denied = checkAuth(req, secret);
+    if (denied) return denied;
+    const body = (req.body || {}) as Record<string, unknown>;
+    const grade = asNonEmptyString(body.grade);
+    const evaluatedAt = asNonEmptyString(body.evaluatedAt);
+    const top1Precision = parseOptionalNonNegativeNumber(body.top1Precision);
+    const recallAt3 = parseOptionalNonNegativeNumber(body.recallAt3);
+    const mrr = parseOptionalNonNegativeNumber(body.mrr);
+    const duplicateRate = parseOptionalNonNegativeNumber(body.duplicateRate);
+    const leakageCount = parseOptionalNonNegativeNumber(body.leakageCount);
+    const p95LatencyMs = parseOptionalNonNegativeNumber(body.p95LatencyMs);
+    if (
+      !grade ||
+      !["A+", "A", "B", "C"].includes(grade) ||
+      !evaluatedAt ||
+      Number.isNaN(Date.parse(evaluatedAt)) ||
+      top1Precision === undefined ||
+      top1Precision === null ||
+      top1Precision > 1 ||
+      recallAt3 === undefined ||
+      recallAt3 === null ||
+      recallAt3 > 1 ||
+      mrr === undefined ||
+      mrr === null ||
+      mrr > 1 ||
+      duplicateRate === undefined ||
+      duplicateRate === null ||
+      duplicateRate > 1 ||
+      leakageCount === undefined ||
+      leakageCount === null ||
+      p95LatencyMs === undefined ||
+      p95LatencyMs === null ||
+      typeof body.passed !== "boolean"
+    ) {
+      return {
+        status_code: 400,
+        body: {
+          error:
+            "grade, evaluatedAt, top1Precision, recallAt3, mrr, duplicateRate, leakageCount, p95LatencyMs, and passed are required with valid retrieval quality summary values",
+        },
+      };
+    }
+    const result = await sdk.trigger({
+      function_id: "mem::retrieval-quality-summary",
+      payload: {
+        grade,
+        evaluatedAt,
+        top1Precision,
+        recallAt3,
+        mrr,
+        duplicateRate,
+        leakageCount,
+        p95LatencyMs,
+        passed: body.passed,
+      },
+    });
+    if (
+      result &&
+      typeof result === "object" &&
+      (result as { success?: unknown }).success === false
+    ) {
+      return { status_code: 400, body: result };
+    }
+    return { status_code: 200, body: result };
+  });
+  sdk.registerTrigger({ type: "http", function_id: "api::retrieval-quality-summary", config: { api_path: "/agentmemory/retrieval-quality/summary", http_method: "POST" } });
 
   sdk.registerFunction("api::consolidated-memory-backfill",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);

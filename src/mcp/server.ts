@@ -35,6 +35,18 @@ function optionalStringArg(
   return value ? { value } : {};
 }
 
+function optionalBooleanArg(
+  args: Record<string, unknown>,
+  key: string,
+): { value?: boolean; error?: string } {
+  const raw = args[key];
+  if (raw === undefined || raw === null) return {};
+  if (typeof raw !== "boolean") {
+    return { error: `${key} must be a boolean` };
+  }
+  return { value: raw };
+}
+
 function asNumber(value: unknown, fallback?: number): number | undefined {
   const n = Number(value);
   if (Number.isFinite(n)) return n;
@@ -138,7 +150,18 @@ export function registerMcpEndpoints(
             if (branchArg.error) {
               return { status_code: 400, body: { error: branchArg.error } };
             }
-            const project = projectArg.value || cwdArg.value;
+            const globalArg = optionalBooleanArg(args, "global");
+            if (globalArg.error) {
+              return { status_code: 400, body: { error: globalArg.error } };
+            }
+            const project =
+              globalArg.value === true ? "global" : projectArg.value || cwdArg.value;
+            if (!project) {
+              return {
+                status_code: 400,
+                body: { error: "scope is required: provide project, cwd, or global" },
+              };
+            }
             const result = await sdk.trigger({ function_id: "mem::search", payload: {
               query: args.query.trim(),
               limit: typeof args.limit === "number" ? args.limit : 10,
@@ -146,6 +169,7 @@ export function registerMcpEndpoints(
               token_budget: tokenBudget,
               project,
               branch: branchArg.value,
+              global: globalArg.value,
             } });
             const text =
               format === "narrative" &&
@@ -298,7 +322,22 @@ export function registerMcpEndpoints(
             if (branchArg.error) {
               return { status_code: 400, body: { error: branchArg.error } };
             }
-            const project = projectArg.value || cwdArg.value;
+            const globalArg = optionalBooleanArg(args, "global");
+            if (globalArg.error) {
+              return { status_code: 400, body: { error: globalArg.error } };
+            }
+            const traceArg = optionalBooleanArg(args, "trace");
+            if (traceArg.error) {
+              return { status_code: 400, body: { error: traceArg.error } };
+            }
+            const project =
+              globalArg.value === true ? "global" : projectArg.value || cwdArg.value;
+            if (!project) {
+              return {
+                status_code: 400,
+                body: { error: "scope is required: provide project, cwd, or global" },
+              };
+            }
             const result = await sdk.trigger({
               function_id: "mem::smart-search",
               payload: {
@@ -307,6 +346,8 @@ export function registerMcpEndpoints(
                 limit,
                 project,
                 branch: branchArg.value,
+                global: globalArg.value,
+                trace: traceArg.value,
               },
             });
             return {
@@ -1473,6 +1514,26 @@ export function registerMcpEndpoints(
           description: "What you are working on",
           required: true,
         },
+        {
+          name: "project",
+          description: "Project path to scope retrieval",
+          required: false,
+        },
+        {
+          name: "cwd",
+          description: "Current working directory used as project scope",
+          required: false,
+        },
+        {
+          name: "branch",
+          description: "Optional git branch to scope retrieval",
+          required: false,
+        },
+        {
+          name: "global",
+          description: "Set true for explicit global-scope retrieval",
+          required: false,
+        },
       ],
     },
     {
@@ -1515,7 +1576,7 @@ export function registerMcpEndpoints(
 
   sdk.registerFunction("mcp::prompts::get", 
     async (
-      req: ApiRequest<{ name: string; arguments?: Record<string, string> }>,
+      req: ApiRequest<{ name: string; arguments?: Record<string, unknown> }>,
     ): Promise<McpResponse> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
@@ -1540,10 +1601,40 @@ export function registerMcpEndpoints(
                 },
               };
             }
+            const projectArg = optionalStringArg(promptArgs, "project");
+            if (projectArg.error) {
+              return { status_code: 400, body: { error: projectArg.error } };
+            }
+            const cwdArg = optionalStringArg(promptArgs, "cwd");
+            if (cwdArg.error) {
+              return { status_code: 400, body: { error: cwdArg.error } };
+            }
+            const branchArg = optionalStringArg(promptArgs, "branch");
+            if (branchArg.error) {
+              return { status_code: 400, body: { error: branchArg.error } };
+            }
+            const globalArg = optionalBooleanArg(promptArgs, "global");
+            if (globalArg.error) {
+              return { status_code: 400, body: { error: globalArg.error } };
+            }
+            const project =
+              globalArg.value === true ? "global" : projectArg.value || cwdArg.value;
+            if (!project) {
+              return {
+                status_code: 400,
+                body: { error: "scope is required: provide project, cwd, or global" },
+              };
+            }
             const searchResult = await sdk
               .trigger({
                 function_id: "mem::search",
-                payload: { query: taskDesc, limit: 10 },
+                payload: {
+                  query: taskDesc,
+                  limit: 10,
+                  project,
+                  branch: branchArg.value,
+                  global: globalArg.value,
+                },
               })
               .catch(() => ({ results: [] }));
             const memories = await kv.list<Memory>(KV.memories);

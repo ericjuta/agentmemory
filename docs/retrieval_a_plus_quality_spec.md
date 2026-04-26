@@ -6,9 +6,9 @@ Move AgentMemory retrieval from operationally safe but noisy to consistently sha
 
 The previous hardening pass made deferred retrieval work durable and visible. This spec defines the relevance layer needed for A+: measurable quality, complete semantic coverage, better ranking, duplicate control, freshness under write gates, and caller contracts that do not silently return empty or generic results.
 
-## Current Baseline
+## Original Baseline
 
-Live probe on 2026-04-26:
+Live probe before this A+ implementation on 2026-04-26:
 
 - stored retrieval blocks: 4091
 - BM25 index size: 4091
@@ -23,6 +23,35 @@ Live probe on 2026-04-26:
 Current grade: B-/B.
 
 A+ means the right evidence appears near the top, is current, scoped, non-duplicative, explainable, and stable under normal maintenance churn.
+
+## Implementation Status
+
+Status: implemented on `main`.
+
+The A+ path now has:
+
+- deterministic and seeded retrieval-quality eval coverage through `npm run eval:retrieval-quality`
+- compact eval-summary persistence in `KV.config` under `retrieval-quality:last-summary`
+- active-scope vector backfill with health gates, cursor state, bounded scan/batch/concurrency, and exact active-ID coverage accounting
+- fail-closed smart-search and MCP recall/smart-search scope contracts unless `project`, `cwd`, or explicit `global: true` is supplied
+- branch-aware retrieval filtering for smart-search/context-backed retrieval
+- intent/source-prior/exact-boost/vector-coverage/graph-expansion score traces
+- near-duplicate suppression with duplicate trace metadata
+- freshness diagnostics for deferred retrieval-block work
+- optional reranking behind `RERANKER_ENABLED=true` or legacy `RERANK_ENABLED=true`
+- operator diagnostics for BM25/vector coverage, freshness lag, duplicate rate, eval grade, recall, and leakage
+
+Required proof bundle:
+
+- `npm run build`
+- `npm test`
+- `npm run eval:retrieval-quality`
+- live `POST /agentmemory/retrieval-vector/backfill` dry-run shows vector coverage at least `0.98`
+- live `POST /agentmemory/retrieval-index/verify` with `{ "scanBlocks": true, "repair": false, "vectorBackfill": false }` shows active vector coverage at least `0.98`
+- live `POST /agentmemory/smart-search` without scope returns a scope-required error
+- live `POST /agentmemory/smart-search` with `project` or `cwd` returns scoped results
+- live diagnostics show `lastEvalGrade`, `duplicateRate`, `lastEvalRecallAt3`, and zero leakage after the eval summary is published
+- deferred retrieval-block work drains after health gates are clear
 
 ## A+ Acceptance Gates
 

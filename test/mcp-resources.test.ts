@@ -358,6 +358,54 @@ describe("MCP Tool Scoping", () => {
     });
   });
 
+  it("fails closed for unscoped agent-facing retrieval tools", async () => {
+    const fn = sdk.getFunction("mcp::tools::call")!;
+
+    const recall = (await fn(
+      makeReq({
+        name: "memory_recall",
+        arguments: { query: "auth" },
+      }),
+    )) as { status_code: number; body: { error: string } };
+    const smart = (await fn(
+      makeReq({
+        name: "memory_smart_search",
+        arguments: { query: "auth" },
+      }),
+    )) as { status_code: number; body: { error: string } };
+
+    expect(recall.status_code).toBe(400);
+    expect(recall.body.error).toBe("scope is required: provide project, cwd, or global");
+    expect(smart.status_code).toBe(400);
+    expect(smart.body.error).toBe("scope is required: provide project, cwd, or global");
+  });
+
+  it("allows explicit global scope for memory_smart_search", async () => {
+    let captured: unknown;
+    sdk.overrideTrigger("mem::smart-search", async (payload: unknown) => {
+      captured = payload;
+      return { mode: "compact", results: [] };
+    });
+
+    const fn = sdk.getFunction("mcp::tools::call")!;
+    const result = (await fn(
+      makeReq({
+        name: "memory_smart_search",
+        arguments: {
+          query: "global retrieval",
+          global: true,
+        },
+      }),
+    )) as { status_code: number };
+
+    expect(result.status_code).toBe(200);
+    expect(captured).toMatchObject({
+      query: "global retrieval",
+      project: "global",
+      global: true,
+    });
+  });
+
   it("rejects non-string scope args", async () => {
     const fn = sdk.getFunction("mcp::tools::call")!;
     const result = (await fn(

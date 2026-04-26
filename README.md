@@ -134,7 +134,7 @@ agentmemory works with any agent that supports hooks, MCP, or REST API. All agen
 <sub>AgentSDKProvider</sub>
 </td>
 <td align="center" width="12.5%">
-<img src="https://img.shields.io/badge/128-endpoints-1f6feb?style=flat-square" alt="REST API" width="48" /><br/>
+<img src="https://img.shields.io/badge/134-endpoints-1f6feb?style=flat-square" alt="REST API" width="48" /><br/>
 <strong>Any agent</strong><br/>
 <sub>REST API</sub>
 </td>
@@ -379,7 +379,7 @@ Then add the MCP config for your agent:
 | **Hermes Agent** | Add to `~/.hermes/config.yaml` or use the [memory provider plugin](integrations/hermes/) |
 | **Cline / Goose / Kilo Code** | Add MCP server in settings |
 | **Claude Desktop** | Add to `claude_desktop_config.json`: `{"mcpServers": {"agentmemory": {"command": "npx", "args": ["-y", "@agentmemory/mcp"]}}}` |
-| **Aider** | REST API: `curl -X POST http://localhost:3111/agentmemory/smart-search -d '{"query": "auth"}'` |
+| **Aider** | REST API: `curl -X POST http://localhost:3111/agentmemory/smart-search -d '{"query": "auth", "cwd": "/path/to/repo"}'` |
 | **Any agent (32+)** | `npx skillkit install agentmemory` |
 
 #### Codex integration levels
@@ -804,7 +804,7 @@ Create `.env.local` in the repo root:
 
 <h2 id="api"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/tags/light/section-api.svg"><img src="assets/tags/section-api.svg" alt="API" height="32" /></picture></h2>
 
-133 endpoints on port `3111`. The REST API binds to `127.0.0.1` by default. Protected endpoints require `Authorization: Bearer <secret>` when `AGENTMEMORY_SECRET` is set, and mesh sync endpoints require `AGENTMEMORY_SECRET` on both peers.
+134 endpoints on port `3111`. The REST API binds to `127.0.0.1` by default. Protected endpoints require `Authorization: Bearer <secret>` when `AGENTMEMORY_SECRET` is set, and mesh sync endpoints require `AGENTMEMORY_SECRET` on both peers.
 
 <details>
 <summary>Key endpoints</summary>
@@ -820,6 +820,7 @@ Create `.env.local` in the repo root:
 | `POST` | `/agentmemory/retrieval-index/verify` | Verify retrieval index drift |
 | `POST` | `/agentmemory/retrieval-vector/backfill` | Backfill missing retrieval vectors within bounded health-gated budgets |
 | `POST` | `/agentmemory/retrieval-blocks/diagnostics` | Inspect retrieval block scope/index state without full scans |
+| `POST` | `/agentmemory/retrieval-quality/summary` | Store compact retrieval eval summary |
 | `POST` | `/agentmemory/consolidated-memory/backfill` | Backfill legacy semantic/procedural project scope |
 | `POST` | `/agentmemory/context` | Generate context |
 | `POST` | `/agentmemory/missions` | Create a mission |

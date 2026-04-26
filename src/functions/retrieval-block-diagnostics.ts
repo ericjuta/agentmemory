@@ -8,6 +8,10 @@ import {
   getRetrievalSearchIndex,
   getRetrievalVectorIndex,
 } from "../state/retrieval-block-indexing.js";
+import {
+  RETRIEVAL_QUALITY_SUMMARY_KEY,
+  type RetrievalQualitySummary,
+} from "./retrieval-quality-summary.js";
 
 interface DiagnosticsPayload {
   project?: unknown;
@@ -20,14 +24,6 @@ interface DiagnosticsPayload {
 interface ScopeEntry {
   ids?: unknown;
   updatedAt?: unknown;
-}
-
-interface RetrievalQualityEvalSummary {
-  grade?: string;
-  evaluatedAt?: string;
-  duplicateRate?: number;
-  recallAt3?: number;
-  leakageCount?: number;
 }
 
 function parseNonNegativeInt(value: unknown, fallback: number): number {
@@ -131,7 +127,7 @@ export function registerRetrievalBlockDiagnosticsFunction(
       undefined,
     );
     const evalSummary = await kv
-      .get<RetrievalQualityEvalSummary>(KV.config, "retrieval-quality:last-summary")
+      .get<RetrievalQualitySummary>(KV.config, RETRIEVAL_QUALITY_SUMMARY_KEY)
       .catch(() => null);
     const scopeEntries = await Promise.all(
       requestedScopeKeys({ project, sessionId, branch }).map((key) =>

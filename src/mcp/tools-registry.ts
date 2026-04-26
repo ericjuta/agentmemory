@@ -44,6 +44,10 @@ export const CORE_TOOLS: McpToolDef[] = [
           type: "string",
           description: "Optional git branch to scope retrieval",
         },
+        global: {
+          type: "boolean",
+          description: "Set true for explicit global-scope retrieval",
+        },
       },
       required: ["query"],
     },
@@ -145,6 +149,14 @@ export const CORE_TOOLS: McpToolDef[] = [
         branch: {
           type: "string",
           description: "Optional git branch to scope retrieval",
+        },
+        global: {
+          type: "boolean",
+          description: "Set true for explicit global-scope retrieval",
+        },
+        trace: {
+          type: "boolean",
+          description: "Include retrieval trace metadata",
         },
       },
       required: ["query"],

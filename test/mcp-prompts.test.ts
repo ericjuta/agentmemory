@@ -111,7 +111,7 @@ describe("MCP Prompts", () => {
     const result = (await fn(
       makeReq({
         name: "recall_context",
-        arguments: { task_description: "implement auth" },
+        arguments: { task_description: "implement auth", project: "/test" },
       }),
     )) as {
       status_code: number;

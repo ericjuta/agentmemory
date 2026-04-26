@@ -25,6 +25,7 @@ type SmartSearchInput = {
   cwd?: string;
   branch?: string;
   global?: boolean;
+  trace?: boolean;
   scope_required?: boolean;
   scopeRequired?: boolean;
 };
@@ -73,10 +74,8 @@ function normalizeScope(data: Record<string, unknown>): {
   if (scopeRequiredCamel.error) return { error: scopeRequiredCamel.error };
 
   const isGlobalScope = global.value === true;
-  const scopeRequired =
-    scopeRequiredSnake.value === true || scopeRequiredCamel.value === true;
   const scopedProject = isGlobalScope ? "global" : project.value || cwd.value;
-  if (scopeRequired && !scopedProject) {
+  if (!scopedProject) {
     return { error: "scope is required: provide project, cwd, or global" };
   }
   return {
@@ -131,6 +130,9 @@ export function registerSmartSearchFunction(
         return { mode: "compact", results: [], error: scopeResult.error };
       }
       const scope = scopeResult.scope || {};
+      if (input.trace !== undefined && typeof input.trace !== "boolean") {
+        return { mode: "compact", results: [], error: "trace must be a boolean" };
+      }
 
       if (input.expandIds !== undefined && !Array.isArray(input.expandIds)) {
         return { mode: "compact", results: [], error: "expandIds must be an array" };
@@ -240,7 +242,11 @@ export function registerSmartSearchFunction(
         query: input.query,
         results: compact.length,
       });
-      return { mode: "compact", results: compact };
+      return {
+        mode: "compact",
+        results: compact,
+        ...(input.trace === true ? { trace: retrieval.trace } : {}),
+      };
     },
   );
 }

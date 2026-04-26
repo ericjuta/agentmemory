@@ -28,7 +28,9 @@ export class HybridSearch {
     private bm25Weight = 0.4,
     private vectorWeight = 0.6,
     private graphWeight = 0.3,
-    private rerankEnabled = process.env.RERANK_ENABLED === "true",
+    private rerankEnabled =
+      process.env.RERANKER_ENABLED === "true" ||
+      process.env.RERANK_ENABLED === "true",
   ) {
     this.graphRetrieval = new GraphRetrieval(kv);
   }

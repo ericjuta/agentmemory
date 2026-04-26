@@ -62,7 +62,7 @@ describe("api::smart-search", () => {
     });
   });
 
-  it("fails closed before dispatch when required scope is missing", async () => {
+  it("fails closed before dispatch when scope is missing", async () => {
     const sdk = mockSdk();
     const kv = mockKV();
     let calls = 0;
@@ -75,7 +75,6 @@ describe("api::smart-search", () => {
     const response = (await sdk.trigger("api::smart-search", {
       body: {
         query: "auth",
-        scopeRequired: true,
       },
       headers: {},
     })) as { status_code: number; body: { error: string } };

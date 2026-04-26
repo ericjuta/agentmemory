@@ -93,6 +93,8 @@ export function registerSearchFunction(sdk: ISdk, kv: StateKV): void {
       limit?: number;
       project?: string;
       cwd?: string;
+      branch?: string;
+      global?: boolean;
       format?: string;
       token_budget?: number;
     }) => {
@@ -121,7 +123,8 @@ export function registerSearchFunction(sdk: ISdk, kv: StateKV): void {
       }
 
       const retrieval = await retrieveRelevantBlocks(kv, {
-        project: data.project || data.cwd,
+        project: data.global === true ? "global" : data.project || data.cwd,
+        branch: data.branch,
         query,
         budget: Math.max(tokenBudget || 3000, effectiveLimit * 300),
         purpose: "search",

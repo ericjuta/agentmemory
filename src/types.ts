@@ -923,7 +923,8 @@ export interface AuditEntry {
     | "guardrail_save"
     | "decision_save"
     | "dossier_refresh"
-    | "routine_compile";
+    | "routine_compile"
+    | "retrieval_quality_summary";
   userId?: string;
   functionId: string;
   targetIds: string[];

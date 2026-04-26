@@ -9,6 +9,10 @@ import {
   getRetrievalVectorIndex,
   getRetrievalBlockIndexingRuntime,
 } from "../state/retrieval-block-indexing.js";
+import {
+  RETRIEVAL_QUALITY_SUMMARY_KEY,
+  type RetrievalQualitySummary,
+} from "./retrieval-quality-summary.js";
 import type {
   Action,
   ActionEdge,
@@ -39,14 +43,6 @@ const ALL_CATEGORIES = [
 const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const TEN_MINUTES_MS = 10 * 60 * 1000;
-
-interface RetrievalQualityEvalSummary {
-  grade?: string;
-  evaluatedAt?: string;
-  duplicateRate?: number;
-  recallAt3?: number;
-  leakageCount?: number;
-}
 
 function ratio(numerator: number, denominator: number): number {
   if (denominator <= 0) return 1;
@@ -487,9 +483,9 @@ export function registerDiagnosticsFunction(sdk: ISdk, kv: StateKV): void {
           ? Math.max(0, now - new Date(oldestQueuedAt).getTime())
           : 0;
         const evalSummary = await kv
-          .get<RetrievalQualityEvalSummary>(
+          .get<RetrievalQualitySummary>(
             KV.config,
-            "retrieval-quality:last-summary",
+            RETRIEVAL_QUALITY_SUMMARY_KEY,
           )
           .catch(() => null);
         retrievalQuality = {

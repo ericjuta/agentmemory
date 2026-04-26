@@ -176,6 +176,7 @@ describe("Smart Search Function", () => {
   it("compact mode returns CompactSearchResult array", async () => {
     const result = (await sdk.trigger("mem::smart-search", {
       query: "auth",
+      project: "my-project",
     })) as { mode: string; results: CompactSearchResult[] };
 
     expect(result.mode).toBe("compact");
@@ -191,6 +192,7 @@ describe("Smart Search Function", () => {
   it("expand mode returns full observations for given IDs", async () => {
     const result = (await sdk.trigger("mem::smart-search", {
       expandIds: ["obs_1"],
+      project: "my-project",
     })) as { mode: string; results: Array<{ obsId: string; observation: CompressedObservation }> };
 
     expect(result.mode).toBe("expanded");
@@ -199,7 +201,7 @@ describe("Smart Search Function", () => {
   });
 
   it("returns error when query is missing and no expandIds", async () => {
-    const result = (await sdk.trigger("mem::smart-search", {})) as {
+    const result = (await sdk.trigger("mem::smart-search", { project: "my-project" })) as {
       mode: string;
       error: string;
     };
@@ -212,6 +214,7 @@ describe("Smart Search Function", () => {
   it("respects limit parameter in compact mode", async () => {
     const result = (await sdk.trigger("mem::smart-search", {
       query: "auth",
+      project: "my-project",
       limit: 1,
     })) as { mode: string; results: CompactSearchResult[] };
 
@@ -221,6 +224,7 @@ describe("Smart Search Function", () => {
   it("expand returns empty for nonexistent observation IDs", async () => {
     const result = (await sdk.trigger("mem::smart-search", {
       expandIds: ["obs_nonexistent_ses_xxx"],
+      project: "my-project",
     })) as { mode: string; results: unknown[] };
 
     expect(result.mode).toBe("expanded");
@@ -230,6 +234,7 @@ describe("Smart Search Function", () => {
   it("compact mode records access for every returned observation id (#119)", async () => {
     const result = (await sdk.trigger("mem::smart-search", {
       query: "auth",
+      project: "my-project",
     })) as { results: CompactSearchResult[] };
     // Access logging is deferred off the request path — allow one timer turn.
     await new Promise((r) => setTimeout(r, 0));
@@ -244,7 +249,10 @@ describe("Smart Search Function", () => {
   });
 
   it("expand mode records access for expanded observation ids (#119)", async () => {
-    await sdk.trigger("mem::smart-search", { expandIds: ["obs_1"] });
+    await sdk.trigger("mem::smart-search", {
+      expandIds: ["obs_1"],
+      project: "my-project",
+    });
     await new Promise((r) => setTimeout(r, 0));
     await new Promise((r) => setImmediate(r));
 
@@ -345,10 +353,9 @@ describe("Smart Search Function", () => {
     ]);
   });
 
-  it("fails closed when scope is required and no scope was provided", async () => {
+  it("fails closed by default when no scope was provided", async () => {
     const result = (await sdk.trigger("mem::smart-search", {
       query: "auth",
-      scope_required: true,
     })) as { mode: string; results: CompactSearchResult[]; error: string };
 
     expect(result.mode).toBe("compact");
