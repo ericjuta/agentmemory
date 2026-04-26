@@ -408,7 +408,7 @@ Install `iii-engine` manually:
 - **macOS / Linux:** `curl -fsSL https://install.iii.dev/iii/main/install.sh | sh`
 - **Windows:** download `iii-x86_64-pc-windows-msvc.zip` from [iii-hq/iii releases](https://github.com/iii-hq/iii/releases/latest), extract `iii.exe`, add to PATH
 
-Or use Docker (the bundled `docker-compose.yml` defaults to `iiidev/iii:0.11.0`; override with `AGENTMEMORY_III_DOCKER_IMAGE` if needed). Full docs: [iii.dev/docs](https://iii.dev/docs).
+Or use Docker (the bundled `docker-compose.yml` defaults to `iiidev/iii:0.11.3`; override with `AGENTMEMORY_III_DOCKER_IMAGE` if needed). Full docs: [iii.dev/docs](https://iii.dev/docs).
 
 ### Windows
 
