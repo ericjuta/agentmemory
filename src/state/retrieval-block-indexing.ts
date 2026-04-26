@@ -48,6 +48,7 @@ export interface RetrievalBlockIndexVerificationResult {
 
 export interface RebuildRetrievalBlockIndexOptions {
   embeddingBatchSize?: number;
+  skipEmbeddingBackfill?: boolean;
 }
 
 export interface VerifyRetrievalBlockIndexOptions {
@@ -398,18 +399,18 @@ export async function rebuildRetrievalBlockIndex(
   options: RebuildRetrievalBlockIndexOptions = {},
 ): Promise<number> {
   const bm25 = getRetrievalSearchIndex();
-  bm25.clear();
-  runtime.vectorIndex?.clear();
+  const nextBm25 = new SearchIndex();
+  const nextVectorIndex = runtime.vectorIndex ? new VectorIndex() : null;
   const blocks = await kv.list<RetrievalBlock>(KV.retrievalBlocks).catch(() => []);
   for (const block of blocks) {
-    bm25.addDocument(
+    nextBm25.addDocument(
       block.id,
       block.sessionId || block.project,
       buildRetrievalBlockLexicalText(block),
     );
   }
   const { embeddingProvider, vectorIndex } = runtime;
-  if (embeddingProvider && vectorIndex && blocks.length > 0) {
+  if (embeddingProvider && nextVectorIndex && blocks.length > 0) {
     const prepared = await Promise.all(
       blocks.map(async (block) => {
         const text = buildRetrievalBlockEmbeddingText(block);
@@ -441,7 +442,7 @@ export async function rebuildRetrievalBlockIndex(
         item.cached.textFingerprint === item.textFingerprint &&
         typeof item.cached.embedding === "string"
       ) {
-        vectorIndex.add(
+        nextVectorIndex.add(
           item.block.id,
           item.block.sessionId || item.block.project,
           base64ToFloat32(item.cached.embedding),
@@ -455,7 +456,7 @@ export async function rebuildRetrievalBlockIndex(
       });
     }
 
-    if (stale.length > 0) {
+    if (stale.length > 0 && options.skipEmbeddingBackfill !== true) {
       const batchSize = positiveInteger(
         options.embeddingBatchSize ??
           process.env.RETRIEVAL_BLOCK_REBUILD_EMBEDDING_BATCH_SIZE,
@@ -470,7 +471,7 @@ export async function rebuildRetrievalBlockIndex(
         await Promise.all(
           batch.map(async (item, index) => {
             const embedding = embeddings[index];
-            vectorIndex.add(
+            nextVectorIndex.add(
               item.block.id,
               item.block.sessionId || item.block.project,
               embedding,
@@ -486,6 +487,10 @@ export async function rebuildRetrievalBlockIndex(
         );
       }
     }
+  }
+  bm25.restoreFrom(nextBm25);
+  if (vectorIndex && nextVectorIndex) {
+    vectorIndex.restoreFrom(nextVectorIndex);
   }
   return blocks.length;
 }
@@ -596,7 +601,9 @@ export async function verifyRetrievalBlockIndex(
     }
 
     if (bm25NeedsRebuild) {
-      const rebuilt = await (options.rebuild ?? rebuildRetrievalBlockIndex)(kv);
+      const rebuilt = await (options.rebuild
+        ? options.rebuild(kv)
+        : rebuildRetrievalBlockIndex(kv, { skipEmbeddingBackfill: true }));
       if (rebuilt > 0 && options.scheduleSave !== false) {
         runtime.scheduleSave?.();
       }

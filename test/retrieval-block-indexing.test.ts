@@ -159,6 +159,44 @@ describe("retrieval block indexing", () => {
     expect(vectorIndex.size).toBe(5);
   });
 
+  it("keeps existing indexes when a staged retrieval rebuild fails", async () => {
+    const kv = mockKV();
+    const vectorIndex = new VectorIndex();
+    const provider: EmbeddingProvider = {
+      name: "test-embeddings",
+      dimensions: 3,
+      embed: vi.fn(async () => new Float32Array([0.1, 0.2, 0.3])),
+      embedBatch: vi.fn(async () => {
+        throw new Error("embedding batch failed");
+      }),
+    };
+
+    configureRetrievalBlockIndexingRuntime({
+      embeddingProvider: provider,
+      vectorIndex,
+      scheduleSave: undefined,
+    });
+    const existing = makeBlock("rblk-existing", "Existing auth memory");
+    getRetrievalSearchIndex().addDocument(
+      existing.id,
+      existing.project,
+      `${existing.title}\\n${existing.canonicalText}`,
+    );
+    vectorIndex.add(existing.id, existing.project, new Float32Array([1, 0, 0]));
+
+    await kv.set(
+      KV.retrievalBlocks,
+      "rblk-new",
+      makeBlock("rblk-new", "New auth memory"),
+    );
+
+    await expect(rebuildRetrievalBlockIndex(kv as never)).rejects.toThrow(
+      "embedding batch failed",
+    );
+    expect(getRetrievalSearchIndex().searchDocuments("existing auth")).toHaveLength(1);
+    expect(vectorIndex.size).toBe(1);
+  });
+
   it("queues retriable embedding failures and clears them after a later success", async () => {
     const kv = mockKV();
     const scheduleSave = vi.fn();
