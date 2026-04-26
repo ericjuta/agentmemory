@@ -5,6 +5,7 @@ import {
   configureRetrievalBlockIndexingRuntime,
   getRetrievalSearchIndex,
 } from "../src/state/retrieval-block-indexing.js";
+import { warmRetrievalBlockScopeMemberships } from "../src/functions/retrieval-block-scope-index.js";
 import { VectorIndex } from "../src/state/vector-index.js";
 import { KV } from "../src/state/schema.js";
 import type { EmbeddingProvider, RetrievalBlock } from "../src/types.js";
@@ -161,6 +162,51 @@ describe("mem::retrieval-index-verify", () => {
     });
     expect(getRetrievalSearchIndex().size).toBe(0);
     expect(scheduleSave).not.toHaveBeenCalled();
+  });
+
+  it("returns a partial exact scan when the time budget is exhausted", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    configureRetrievalBlockIndexingRuntime({
+      embeddingProvider: null,
+      vectorIndex: null,
+    });
+    const blocks = await storeBlocks(kv, 3);
+    await warmRetrievalBlockScopeMemberships(kv as never, blocks);
+    const rawList = kv.list.bind(kv);
+    const listSpy = vi.fn(rawList);
+    kv.list = (async <T>(scope: string): Promise<T[]> => {
+      return listSpy(scope);
+    }) as typeof kv.list;
+    const now = vi.spyOn(Date, "now");
+    now.mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValueOnce(2);
+    registerRetrievalIndexVerifyFunction(sdk as never, kv as never);
+
+    let result: {
+      blockCount: number;
+      partial?: boolean;
+      scanSource?: string;
+      inspectedBlockCount?: number;
+      timeBudgetMs?: number;
+    };
+    try {
+      result = (await sdk.trigger("mem::retrieval-index-verify", {
+        scanBlocks: true,
+        repair: false,
+        timeBudgetMs: 1,
+      })) as typeof result;
+    } finally {
+      now.mockRestore();
+    }
+
+    expect(result).toMatchObject({
+      blockCount: 1,
+      partial: true,
+      scanSource: "scope-index",
+      inspectedBlockCount: 1,
+      timeBudgetMs: 1,
+    });
+    expect(listSpy.mock.calls.some(([scope]) => scope === KV.retrievalBlocks)).toBe(false);
   });
 
   it("can verify from the persistence manifest without scanning retrieval blocks", async () => {
@@ -344,6 +390,7 @@ describe("api::retrieval-index-verify", () => {
         repair: false,
         vectorBackfill: false,
         vectorBackfillLimit: "7",
+        timeBudgetMs: "1000",
         ignored: "field",
       },
       headers: { authorization: "Bearer secret" },
@@ -359,6 +406,7 @@ describe("api::retrieval-index-verify", () => {
       repair: false,
       vectorBackfill: false,
       vectorBackfillLimit: 7,
+      timeBudgetMs: 1000,
       scanBlocks: false,
     });
   });

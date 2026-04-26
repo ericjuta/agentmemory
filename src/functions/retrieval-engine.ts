@@ -787,6 +787,7 @@ export async function retrieveRelevantBlocks(
   let usingStateFallbackBlocks = false;
   let storedBlockReadFailed = false;
   let scopedBlockReadIncomplete = false;
+  const requestedScopedBlocks = Boolean(query.project || query.sessionId);
   const canReadStoredBlocks = Date.now() >= retrievalBlockScopeUnavailableUntil;
   if (canReadStoredBlocks) {
     try {
@@ -799,8 +800,12 @@ export async function retrieveRelevantBlocks(
         allBlocks = scopedBlocks.blocks;
       } else {
         scopedBlockReadIncomplete = true;
-        allBlocks = await kv.list<RetrievalBlock>(KV.retrievalBlocks);
-        if (allBlocks.length > 0) {
+        if (requestedScopedBlocks) {
+          allBlocks = scopedBlocks.blocks;
+        } else {
+          allBlocks = await kv.list<RetrievalBlock>(KV.retrievalBlocks);
+        }
+        if (!requestedScopedBlocks && allBlocks.length > 0) {
           void warmRetrievalBlockScopeMemberships(kv, allBlocks).catch(() => {});
         }
       }
@@ -836,7 +841,10 @@ export async function retrieveRelevantBlocks(
       if (lightweightBlocks.length > 0) {
         allBlocks = lightweightBlocks;
         usingStateFallbackBlocks = true;
-      } else if (canFallbackFromState) {
+      } else if (
+        canFallbackFromState &&
+        !(requestedScopedBlocks && scopedBlockReadIncomplete)
+      ) {
         const stateBlocks = await collectRetrievalBlocksFromState(kv).catch(() => []);
         if (stateBlocks.length > 0) {
           allBlocks = stateBlocks;

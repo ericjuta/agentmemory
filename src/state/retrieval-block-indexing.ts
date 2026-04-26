@@ -43,6 +43,10 @@ export interface RetrievalBlockIndexVerificationResult {
   vectorBackfillFailures: number;
   repaired: boolean;
   persistence?: IndexPersistenceStatus;
+  partial?: boolean;
+  scanSource?: "scope-index" | "retrieval-block-scan" | "manifest";
+  inspectedBlockCount?: number;
+  timeBudgetMs?: number;
   error?: string;
 }
 
@@ -61,6 +65,7 @@ export interface VerifyRetrievalBlockIndexOptions {
   scanBlocks?: boolean;
   vectorBackfill?: boolean;
   vectorBackfillLimit?: number;
+  timeBudgetMs?: number;
 }
 
 type RetrievalIndexingRuntime = {
@@ -72,6 +77,13 @@ type RetrievalIndexingRuntime = {
 
 type RetrievalBlockScopeEntry = {
   ids?: unknown;
+};
+
+type ActiveRetrievalBlockLoadResult = {
+  blocks: RetrievalBlock[];
+  partial: boolean;
+  source: "scope-index" | "retrieval-block-scan" | "manifest";
+  inspectedBlockCount: number;
 };
 
 const runtime: RetrievalIndexingRuntime = {
@@ -161,6 +173,18 @@ function uniqueStrings(values: string[]): string[] {
 }
 
 async function loadActiveRetrievalBlocks(kv: StateKV): Promise<RetrievalBlock[]> {
+  return (await loadActiveRetrievalBlockSet(kv)).blocks;
+}
+
+function timeBudgetExceeded(startedAt: number, timeBudgetMs?: number): boolean {
+  return timeBudgetMs !== undefined && Date.now() - startedAt >= timeBudgetMs;
+}
+
+async function loadActiveRetrievalBlockSet(
+  kv: StateKV,
+  options: { startedAt?: number; timeBudgetMs?: number } = {},
+): Promise<ActiveRetrievalBlockLoadResult> {
+  const startedAt = options.startedAt ?? Date.now();
   const scopeEntries = await kv
     .list<RetrievalBlockScopeEntry>(KV.retrievalBlockIndex)
     .catch(() => []);
@@ -172,15 +196,46 @@ async function loadActiveRetrievalBlocks(kv: StateKV): Promise<RetrievalBlock[]>
     ),
   );
   if (activeIds.length > 0) {
-    const loaded = await Promise.all(
-      activeIds.map((id) =>
-        kv.get<RetrievalBlock>(KV.retrievalBlocks, id).catch(() => null),
-      ),
-    );
-    return loaded.filter(isRetrievalBlock);
+    const loaded: RetrievalBlock[] = [];
+    let inspectedBlockCount = 0;
+    for (const id of activeIds) {
+      if (timeBudgetExceeded(startedAt, options.timeBudgetMs)) {
+        return {
+          blocks: loaded,
+          partial: true,
+          source: "scope-index",
+          inspectedBlockCount,
+        };
+      }
+      const block = await kv
+        .get<RetrievalBlock>(KV.retrievalBlocks, id)
+        .catch(() => null);
+      inspectedBlockCount += 1;
+      if (isRetrievalBlock(block)) loaded.push(block);
+    }
+    return {
+      blocks: loaded,
+      partial: false,
+      source: "scope-index",
+      inspectedBlockCount,
+    };
+  }
+  if (options.timeBudgetMs !== undefined) {
+    return {
+      blocks: [],
+      partial: true,
+      source: "manifest",
+      inspectedBlockCount: 0,
+    };
   }
   const blocks = await kv.list<unknown>(KV.retrievalBlocks);
-  return blocks.filter(isRetrievalBlock);
+  const activeBlocks = blocks.filter(isRetrievalBlock);
+  return {
+    blocks: activeBlocks,
+    partial: false,
+    source: "retrieval-block-scan",
+    inspectedBlockCount: blocks.length,
+  };
 }
 
 export function nextRetrievalBlockRetryAttemptAt(
@@ -499,6 +554,7 @@ export async function verifyRetrievalBlockIndex(
   kv: StateKV,
   options: VerifyRetrievalBlockIndexOptions = {},
 ): Promise<RetrievalBlockIndexVerificationResult> {
+  const startedAt = Date.now();
   const bm25 = getRetrievalSearchIndex();
   const vectorIndex = runtime.vectorIndex;
   const bm25Size = bm25.size;
@@ -543,7 +599,11 @@ export async function verifyRetrievalBlockIndex(
       };
     }
 
-    const blocks = await loadActiveRetrievalBlocks(kv);
+    const blockLoad = await loadActiveRetrievalBlockSet(kv, {
+      startedAt,
+      timeBudgetMs: options.timeBudgetMs,
+    });
+    const blocks = blockLoad.blocks;
     const blockCount = blocks.length;
     const vectorEligibleBlocks =
       runtime.embeddingProvider && vectorIndex ? blocks : [];
@@ -572,12 +632,22 @@ export async function verifyRetrievalBlockIndex(
     const minAbsoluteDrift = options.minAbsoluteDrift ?? 50;
 
     const bm25NeedsRebuild =
+      !blockLoad.partial &&
       blockCount > 0 &&
       (bm25Size === 0 ||
         (bm25Drift > minAbsoluteDrift &&
           bm25DriftRatio > (options.bm25DriftRatio ?? 0.1)));
 
-    if (options.repair === false) {
+    const scanState = {
+      ...(blockLoad.partial ? { partial: true } : {}),
+      scanSource: blockLoad.source,
+      inspectedBlockCount: blockLoad.inspectedBlockCount,
+      ...(options.timeBudgetMs !== undefined
+        ? { timeBudgetMs: options.timeBudgetMs }
+        : {}),
+    };
+
+    if (blockLoad.partial || options.repair === false) {
       return {
         blockCount,
         bm25Size,
@@ -597,6 +667,7 @@ export async function verifyRetrievalBlockIndex(
         vectorBackfillFailures: 0,
         repaired: false,
         persistence,
+        ...scanState,
       };
     }
 
@@ -624,6 +695,7 @@ export async function verifyRetrievalBlockIndex(
         ...emptyVectorRepair,
         repaired: rebuilt > 0,
         persistence: runtime.persistenceStatus?.() ?? persistence,
+        ...scanState,
       };
     }
 
@@ -679,6 +751,7 @@ export async function verifyRetrievalBlockIndex(
       vectorBackfillFailures,
       repaired: vectorBackfilled > 0,
       persistence: runtime.persistenceStatus?.() ?? persistence,
+      ...scanState,
     };
   } catch (err) {
     return {

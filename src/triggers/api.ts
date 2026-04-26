@@ -3560,17 +3560,19 @@ export function registerApiTriggers(
     const vectorDriftRatio = parseOptionalNonNegativeNumber(body.vectorDriftRatio);
     const minAbsoluteDrift = parseOptionalNonNegativeNumber(body.minAbsoluteDrift);
     const vectorBackfillLimit = parseOptionalPositiveInt(body.vectorBackfillLimit);
+    const timeBudgetMs = parseOptionalPositiveInt(body.timeBudgetMs);
     if (
       bm25DriftRatio === null ||
       vectorDriftRatio === null ||
       minAbsoluteDrift === null ||
-      vectorBackfillLimit === null
+      vectorBackfillLimit === null ||
+      timeBudgetMs === null
     ) {
       return {
         status_code: 400,
         body: {
           error:
-            "bm25DriftRatio, vectorDriftRatio, and minAbsoluteDrift must be non-negative numbers when provided; vectorBackfillLimit must be a positive integer when provided",
+            "bm25DriftRatio, vectorDriftRatio, and minAbsoluteDrift must be non-negative numbers when provided; vectorBackfillLimit and timeBudgetMs must be positive integers when provided",
         },
       };
     }
@@ -3627,6 +3629,7 @@ export function registerApiTriggers(
     if (vectorBackfillLimit !== undefined) {
       payload.vectorBackfillLimit = vectorBackfillLimit;
     }
+    if (timeBudgetMs !== undefined) payload.timeBudgetMs = timeBudgetMs;
     payload.scanBlocks =
       typeof body.scanBlocks === "boolean" ? body.scanBlocks : false;
     const result = await sdk.trigger({ function_id: "mem::retrieval-index-verify", payload });

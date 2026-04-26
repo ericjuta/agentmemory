@@ -9,6 +9,7 @@ type RetrievalBlockScopeEntry = {
 
 const GLOBAL_SCOPE_KEY = "scope:global";
 const READY_SCOPE_KEY = "scope:index-ready";
+const BRANCH_SCOPE_PREFIX = "scope:branch:";
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
@@ -183,7 +184,11 @@ export async function loadScopedRetrievalBlocks(
       entry: await readScopeEntry(kv, key),
     })),
   );
-  if (scopeEntries.some(({ entry }) => !entry)) {
+  if (
+    scopeEntries.some(
+      ({ key, entry }) => !entry && !key.startsWith(BRANCH_SCOPE_PREFIX),
+    )
+  ) {
     return { blocks: [], complete: false };
   }
   const ids = uniqueStrings(

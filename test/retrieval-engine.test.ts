@@ -406,7 +406,7 @@ describe("retrieveRelevantBlocks", () => {
     expect(result.blocks.map((block) => block.id)).not.toContain(hotBlock.id);
   });
 
-  it("treats missing scope entries as incomplete and falls back to stored blocks", async () => {
+  it("treats missing scoped membership as degraded instead of scanning every stored block", async () => {
     const kv = mockKV();
     const block: RetrievalBlock = {
       id: "rblk_incomplete_scope",
@@ -459,8 +459,11 @@ describe("retrieveRelevantBlocks", () => {
       purpose: "smart-search",
     });
 
-    expect(listSpy.mock.calls.some(([scope]) => scope === KV.retrievalBlocks)).toBe(true);
-    expect(result.searchResults.map((entry) => entry.block.id)).toEqual([block.id]);
+    expect(listSpy.mock.calls.some(([scope]) => scope === KV.retrievalBlocks)).toBe(false);
+    expect(collectLightweightRetrievalBlocksFromStateMock).toHaveBeenCalled();
+    expect(collectRetrievalBlocksFromStateMock).not.toHaveBeenCalled();
+    expect(result.searchResults).toHaveLength(0);
+    expect(result.trace.degradedFreshness).toBe(true);
   });
 
   it("excludes branch-specific blocks when branch is unknown", async () => {

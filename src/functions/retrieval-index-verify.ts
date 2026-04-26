@@ -20,6 +20,7 @@ type RetrievalIndexVerifyPayload = {
   scanBlocks?: unknown;
   vectorBackfill?: unknown;
   vectorBackfillLimit?: unknown;
+  timeBudgetMs?: unknown;
 };
 
 type RetrievalIndexVerifyFunctionOptions = {
@@ -57,6 +58,7 @@ export function registerRetrievalIndexVerifyFunction(
     const vectorDriftRatio = optionalFiniteNumber(data.vectorDriftRatio);
     const minAbsoluteDrift = optionalFiniteNumber(data.minAbsoluteDrift);
     const vectorBackfillLimit = optionalPositiveInteger(data.vectorBackfillLimit);
+    const timeBudgetMs = optionalPositiveInteger(data.timeBudgetMs);
     if (bm25DriftRatio !== undefined) options.bm25DriftRatio = bm25DriftRatio;
     if (vectorDriftRatio !== undefined) {
       options.vectorDriftRatio = vectorDriftRatio;
@@ -78,6 +80,9 @@ export function registerRetrievalIndexVerifyFunction(
     }
     if (vectorBackfillLimit !== undefined) {
       options.vectorBackfillLimit = vectorBackfillLimit;
+    }
+    if (timeBudgetMs !== undefined) {
+      options.timeBudgetMs = timeBudgetMs;
     }
     let llmWorkPauseReason: string | null = null;
     if (

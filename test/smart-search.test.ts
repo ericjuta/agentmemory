@@ -168,6 +168,33 @@ describe("Smart Search Function", () => {
     await kv.set("mem:sessions", "ses_1", session);
     await kv.set("mem:obs:ses_1", "obs_1", obs1);
     await kv.set("mem:obs:ses_1", "obs_2", obs2);
+    await storeRetrievalBlocks(kv, [
+      makeRetrievalBlock({
+        id: "rblk_obs_1",
+        sourceType: "observation",
+        sourceId: "obs_1",
+        project: "my-project",
+        sessionId: "ses_1",
+        canonicalText: "Auth handler Modified auth src/auth.ts",
+        title: "Auth handler",
+        files: ["src/auth.ts"],
+        concepts: ["auth"],
+        entities: ["auth"],
+        sourceObservationIds: ["obs_1"],
+      }),
+      makeRetrievalBlock({
+        id: "rblk_obs_2",
+        sourceType: "observation",
+        sourceId: "obs_2",
+        project: "my-project",
+        sessionId: "ses_1",
+        canonicalText: "Database setup notes",
+        title: "Database setup",
+        concepts: ["database"],
+        entities: ["database"],
+        sourceObservationIds: ["obs_2"],
+      }),
+    ]);
 
     const searchFn = async (_query: string, _limit: number) => searchResults;
     registerSmartSearchFunction(sdk as never, kv as never, searchFn);
