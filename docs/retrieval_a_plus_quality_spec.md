@@ -26,7 +26,7 @@ A+ means the right evidence appears near the top, is current, scoped, non-duplic
 
 ## Implementation Status
 
-Status: implemented on `main`.
+Status: implemented on `main`; final live-proof hardening remains for bounded degraded-mode proof under worker pressure.
 
 The A+ path now has:
 
@@ -43,11 +43,20 @@ The A+ path now has:
 - optional reranking behind `RERANKER_ENABLED=true` or legacy `RERANK_ENABLED=true`
 - operator diagnostics for BM25/vector coverage, freshness lag, duplicate rate, eval grade, recall, and leakage
 
+Remaining live-proof hardening found on 2026-04-26:
+
+- exact verification and smart-search proof calls must stay bounded when the worker is under CPU, event-loop, or StateKV pressure
+- scoped retrieval must not fall back to full `KV.retrievalBlocks` scans when scope membership is incomplete
+- exact verification with `scanBlocks: true` must accept a time budget and return `partial: true` instead of causing iii-engine invocation timeout or worker OOM
+- maintenance backfill, graph catch-up, compression catch-up, and index persistence must remain paused during warning-level pressure while proof endpoints are running
+
 Required proof bundle:
 
 - `npm run build`
 - `npm test`
 - `npm run eval:retrieval-quality`
+- live proof under normal load does not OOM or invoke 30s endpoint timeouts
+- live degraded-mode proof returns bounded partial/degraded traces instead of full-scope scans
 - live `POST /agentmemory/retrieval-vector/backfill` dry-run shows vector coverage at least `0.98`
 - live `POST /agentmemory/retrieval-index/verify` with `{ "scanBlocks": true, "repair": false, "vectorBackfill": false }` shows active vector coverage at least `0.98`
 - live `POST /agentmemory/smart-search` without scope returns a scope-required error
