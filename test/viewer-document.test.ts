@@ -31,6 +31,10 @@ describe("viewer document chrome", () => {
     }
 
     expect(rendered.html).toContain('id="subtab-bar"');
+    expect(rendered.html).toContain("operator-summary");
+    expect(rendered.html).toContain("Work State");
+    expect(rendered.html).toContain("Retrieval Quality");
+    expect(rendered.html).toContain("System Snapshot");
     expect(rendered.html).not.toContain(">Dashboard<");
     expect(rendered.html).not.toContain(">Operations<");
   });
