@@ -51,7 +51,7 @@ Required proof bundle:
 - live `POST /agentmemory/smart-search` without scope returns a scope-required error
 - live `POST /agentmemory/smart-search` with `project` or `cwd` returns scoped results
 - live diagnostics show `lastEvalGrade`, `duplicateRate`, `lastEvalRecallAt3`, and zero leakage after the eval summary is published
-- deferred retrieval-block work drains after health gates are clear
+- deferred retrieval-block work drains after health gates are clear; operators can force due catch-up with `POST /agentmemory/retrieval-blocks/retry` when proving recovery
 
 ## A+ Acceptance Gates
 

@@ -3693,6 +3693,41 @@ export function registerApiTriggers(
   });
   sdk.registerTrigger({ type: "http", function_id: "api::retrieval-blocks-diagnostics", config: { api_path: "/agentmemory/retrieval-blocks/diagnostics", http_method: "POST" } });
 
+  sdk.registerFunction("api::retrieval-blocks-retry",  async (req: ApiRequest) => {
+    const denied = checkAuth(req, secret);
+    if (denied) return denied;
+    const body = (req.body || {}) as Record<string, unknown>;
+    const batchSize = parseOptionalPositiveInt(body.batchSize);
+    const refreshSessionLimit = parseOptionalPositiveInt(body.refreshSessionLimit);
+    if (batchSize === null || refreshSessionLimit === null) {
+      return {
+        status_code: 400,
+        body: {
+          error: "batchSize and refreshSessionLimit must be positive integers when provided",
+        },
+      };
+    }
+    for (const field of ["refreshFromState", "fullRefresh", "ignoreBackoff"] as const) {
+      if (body[field] !== undefined && typeof body[field] !== "boolean") {
+        return {
+          status_code: 400,
+          body: { error: `${field} must be a boolean when provided` },
+        };
+      }
+    }
+    const payload: Record<string, unknown> = {};
+    if (batchSize !== undefined) payload.batchSize = batchSize;
+    if (refreshSessionLimit !== undefined) {
+      payload.refreshSessionLimit = refreshSessionLimit;
+    }
+    for (const field of ["refreshFromState", "fullRefresh", "ignoreBackoff"] as const) {
+      if (typeof body[field] === "boolean") payload[field] = body[field];
+    }
+    const result = await sdk.trigger({ function_id: "mem::retrieval-block-retry", payload });
+    return { status_code: 200, body: result };
+  });
+  sdk.registerTrigger({ type: "http", function_id: "api::retrieval-blocks-retry", config: { api_path: "/agentmemory/retrieval-blocks/retry", http_method: "POST" } });
+
   sdk.registerFunction("api::retrieval-quality-summary",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
     if (denied) return denied;

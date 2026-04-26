@@ -20,6 +20,7 @@ type RetrievalBlockRetryPayload = {
   refreshFromState?: boolean;
   fullRefresh?: boolean;
   refreshSessionLimit?: number;
+  ignoreBackoff?: boolean;
 };
 
 function positiveInteger(value: unknown, fallback: number): number {
@@ -77,7 +78,7 @@ export function registerRetrievalBlockRetryFunction(
     let processed = 0;
 
     for (const entry of entries) {
-      if (!isDue(entry, nowMs)) {
+      if (data.ignoreBackoff !== true && !isDue(entry, nowMs)) {
         skipped++;
         continue;
       }

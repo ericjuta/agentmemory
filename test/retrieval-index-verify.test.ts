@@ -429,4 +429,37 @@ describe("api::retrieval-index-verify", () => {
     expect(response.status_code).toBe(400);
     expect(response.body.error).toContain("batchSize");
   });
+
+  it("validates and forwards retrieval block retry options", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    let forwarded: unknown;
+    registerApiTriggers(sdk as never, kv as never);
+    sdk.registerFunction("mem::retrieval-block-retry", async (payload) => {
+      forwarded = payload;
+      return { succeeded: 2 };
+    });
+
+    const response = (await sdk.trigger("api::retrieval-blocks-retry", {
+      body: {
+        batchSize: "5",
+        refreshFromState: true,
+        fullRefresh: false,
+        refreshSessionLimit: 3,
+        ignoreBackoff: true,
+        ignored: "drop",
+      },
+      headers: {},
+    })) as { status_code: number; body: { succeeded: number } };
+
+    expect(response.status_code).toBe(200);
+    expect(response.body.succeeded).toBe(2);
+    expect(forwarded).toEqual({
+      batchSize: 5,
+      refreshSessionLimit: 3,
+      refreshFromState: true,
+      fullRefresh: false,
+      ignoreBackoff: true,
+    });
+  });
 });
