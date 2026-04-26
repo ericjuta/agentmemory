@@ -401,7 +401,7 @@ export async function rebuildRetrievalBlockIndex(
   const bm25 = getRetrievalSearchIndex();
   const nextBm25 = new SearchIndex();
   const nextVectorIndex = runtime.vectorIndex ? new VectorIndex() : null;
-  const blocks = await kv.list<RetrievalBlock>(KV.retrievalBlocks).catch(() => []);
+  const blocks = await loadActiveRetrievalBlocks(kv);
   for (const block of blocks) {
     nextBm25.addDocument(
       block.id,

@@ -33,7 +33,7 @@ The A+ path now has:
 - deterministic and seeded retrieval-quality eval coverage through `npm run eval:retrieval-quality`
 - compact eval-summary persistence in `KV.config` under `retrieval-quality:last-summary`
 - active-scope vector backfill with health gates, cursor state, bounded scan/batch/concurrency, and exact active-ID coverage accounting
-- staged retrieval-index repair that swaps rebuilt BM25/vector state only after the rebuild succeeds
+- staged active-scope retrieval-index repair that swaps rebuilt BM25/vector state only after the rebuild succeeds
 - fail-closed smart-search and MCP recall/smart-search scope contracts unless `project`, `cwd`, or explicit `global: true` is supplied
 - branch-aware retrieval filtering for smart-search/context-backed retrieval
 - intent/source-prior/exact-boost/vector-coverage/graph-expansion score traces

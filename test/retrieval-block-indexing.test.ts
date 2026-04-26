@@ -197,6 +197,29 @@ describe("retrieval block indexing", () => {
     expect(vectorIndex.size).toBe(1);
   });
 
+  it("rebuilds from active retrieval block scope membership when available", async () => {
+    const kv = mockKV();
+    configureRetrievalBlockIndexingRuntime({
+      embeddingProvider: null,
+      vectorIndex: null,
+      scheduleSave: undefined,
+    });
+    const active = makeBlock("rblk-active", "Active scoped memory");
+    const stale = makeBlock("rblk-stale", "Stale historical memory");
+    await kv.set(KV.retrievalBlocks, active.id, active);
+    await kv.set(KV.retrievalBlocks, stale.id, stale);
+    await kv.set(KV.retrievalBlockIndex, "scope:project:/project", {
+      ids: [active.id],
+    });
+
+    const rebuilt = await rebuildRetrievalBlockIndex(kv as never);
+
+    expect(rebuilt).toBe(1);
+    expect(getRetrievalSearchIndex().size).toBe(1);
+    expect(getRetrievalSearchIndex().searchDocuments("active scoped")).toHaveLength(1);
+    expect(getRetrievalSearchIndex().searchDocuments("stale historical")).toHaveLength(0);
+  });
+
   it("queues retriable embedding failures and clears them after a later success", async () => {
     const kv = mockKV();
     const scheduleSave = vi.fn();
