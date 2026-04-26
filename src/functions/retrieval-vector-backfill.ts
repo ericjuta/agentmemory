@@ -37,6 +37,14 @@ interface ScopeEntry {
   ids?: unknown;
 }
 
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object" && "message" in error) {
+    return String((error as { message?: unknown }).message);
+  }
+  return String(error);
+}
+
 function positiveInteger(value: unknown, fallback: number): number {
   if (typeof value === "number" && Number.isFinite(value) && value > 0) {
     return Math.floor(value);
@@ -92,11 +100,21 @@ function countPresentVectors(
 
 async function loadCandidateIds(kv: StateKV): Promise<{
   ids: string[];
-  source: "scope-index" | "retrieval-block-scan";
+  source: "scope-index" | "retrieval-block-scan" | "scope-index-unavailable";
+  error?: string;
 }> {
-  const scopeEntries = await kv
+  const scopeEntriesResult = await kv
     .list<ScopeEntry>(KV.retrievalBlockIndex)
-    .catch(() => []);
+    .then((entries) => ({ entries }))
+    .catch((error: unknown) => ({ entries: [], error: errorMessage(error) }));
+  if (scopeEntriesResult.error) {
+    return {
+      ids: [],
+      source: "scope-index-unavailable",
+      error: scopeEntriesResult.error,
+    };
+  }
+  const scopeEntries = scopeEntriesResult.entries;
   const scopeIds = uniqueStrings(
     scopeEntries.flatMap((entry) =>
       Array.isArray(entry?.ids)
@@ -108,7 +126,12 @@ async function loadCandidateIds(kv: StateKV): Promise<{
     return { ids: scopeIds, source: "scope-index" };
   }
 
-  const blocks = await kv.list<RetrievalBlock>(KV.retrievalBlocks);
+  const blocks = await kv
+    .list<RetrievalBlock>(KV.retrievalBlocks)
+    .catch((error: unknown) => ({ error: errorMessage(error) }));
+  if (!Array.isArray(blocks)) {
+    return { ids: [], source: "retrieval-block-scan", error: blocks.error };
+  }
   return {
     ids: uniqueStrings(blocks.map((block) => block.id)).sort(),
     source: "retrieval-block-scan",
@@ -250,7 +273,32 @@ export function registerRetrievalVectorBackfillFunction(
     const cursor = await kv
       .get<RetrievalVectorBackfillCursor>(KV.config, CURSOR_KEY)
       .catch(() => null);
-    const { ids, source } = await loadCandidateIds(kv);
+    const { ids, source, error } = await loadCandidateIds(kv);
+    if (error) {
+      return {
+        success: true,
+        source,
+        eligibleCount: 0,
+        vectorPresentBefore: 0,
+        vectorMissingBefore: 0,
+        vectorCoverageRatioBefore: 1,
+        inspected: 0,
+        dryRun,
+        attempted: 0,
+        backfilled: 0,
+        failed: 0,
+        deferred: 0,
+        vectorPresentAfter: 0,
+        vectorMissingAfter: 0,
+        vectorCoverageRatioAfter: 1,
+        coverageTarget,
+        complete: false,
+        completedPass: false,
+        partial: true,
+        pauseReason: error,
+        elapsedMs: Date.now() - startedAt,
+      };
+    }
     const eligibleCount = ids.length;
     const presentBefore = countPresentVectors(ids, runtime.vectorIndex);
     const missingBefore = Math.max(0, eligibleCount - presentBefore);

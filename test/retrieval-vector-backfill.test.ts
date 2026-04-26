@@ -160,6 +160,56 @@ describe("mem::retrieval-vector-backfill", () => {
     expect(await kv.list(KV.retrievalBlockRetry)).toHaveLength(0);
   });
 
+  it("returns a bounded partial result when scope IDs cannot be listed", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    const vectorIndex = new VectorIndex();
+    const provider: EmbeddingProvider = {
+      name: "test-embeddings",
+      dimensions: 3,
+      embed: vi.fn(async () => new Float32Array([0.1, 0.2, 0.3])),
+      embedBatch: vi.fn(async () => []),
+    };
+    configureRetrievalBlockIndexingRuntime({
+      embeddingProvider: provider,
+      vectorIndex,
+      scheduleSave: vi.fn(),
+    });
+    await storeBlocks(kv, [
+      makeBlock("rblk-scope-timeout", "2026-04-24T12:00:00.000Z"),
+    ]);
+    const rawList = kv.list.bind(kv);
+    const listSpy = vi.fn(async <T>(scope: string): Promise<T[]> => {
+      if (scope === KV.retrievalBlockIndex) {
+        throw new Error("scope index timeout");
+      }
+      if (scope === KV.retrievalBlocks) {
+        throw new Error("full retrieval block scan should not run");
+      }
+      return rawList(scope);
+    });
+    kv.list = listSpy as typeof kv.list;
+    registerRetrievalVectorBackfillFunction(sdk as never, kv as never);
+
+    const result = (await sdk.trigger("mem::retrieval-vector-backfill", {
+      dryRun: true,
+    })) as {
+      attempted: number;
+      partial?: boolean;
+      pauseReason?: string;
+      source?: string;
+    };
+
+    expect(result).toMatchObject({
+      attempted: 0,
+      partial: true,
+      pauseReason: "scope index timeout",
+      source: "scope-index-unavailable",
+    });
+    expect(listSpy.mock.calls.some(([scope]) => scope === KV.retrievalBlocks)).toBe(false);
+    expect(provider.embed).not.toHaveBeenCalled();
+  });
+
   it("reports failed provider calls through the existing retry queue", async () => {
     const sdk = mockSdk();
     const kv = mockKV();
