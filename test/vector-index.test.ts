@@ -15,12 +15,15 @@ describe("VectorIndex", () => {
   it("adds and retrieves vectors", () => {
     index.add("obs_1", "ses_1", new Float32Array([0.1, 0.2, 0.3]));
     expect(index.size).toBe(1);
+    expect(index.has("obs_1")).toBe(true);
+    expect(index.has("obs_missing")).toBe(false);
   });
 
   it("removes a vector", () => {
     index.add("obs_1", "ses_1", new Float32Array([0.1, 0.2, 0.3]));
     index.remove("obs_1");
     expect(index.size).toBe(0);
+    expect(index.has("obs_1")).toBe(false);
   });
 
   it("returns empty array when searching empty index", () => {
@@ -76,6 +79,7 @@ describe("VectorIndex", () => {
     index.add("obs_2", "ses_1", new Float32Array([0.4, 0.5, 0.6]));
     index.clear();
     expect(index.size).toBe(0);
+    expect(index.has("obs_1")).toBe(false);
     expect(index.search(new Float32Array([0.1, 0.2, 0.3]))).toEqual([]);
   });
 
@@ -87,6 +91,8 @@ describe("VectorIndex", () => {
     const restored = VectorIndex.deserialize(json);
 
     expect(restored.size).toBe(2);
+    expect(restored.has("obs_1")).toBe(true);
+    expect(restored.has("obs_missing")).toBe(false);
     const results = restored.search(new Float32Array([0.1, 0.2, 0.3]), 2);
     expect(results.length).toBe(2);
     expect(results[0].obsId).toBe("obs_1");

@@ -1374,20 +1374,101 @@ export function registerApiTriggers(
 
   sdk.registerFunction("api::smart-search", 
     async (
-      req: ApiRequest<{ query?: string; expandIds?: string[]; limit?: number }>,
+      req: ApiRequest<Record<string, unknown>>,
     ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
+      const body = req.body;
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        return { status_code: 400, body: { error: "request body must be an object" } };
+      }
+      const payload: {
+        query?: string;
+        expandIds?: Array<string | { obsId?: string; blockId?: string; sessionId?: string }>;
+        limit?: number;
+        project?: string;
+        cwd?: string;
+        branch?: string;
+        global?: boolean;
+        scope_required?: boolean;
+        scopeRequired?: boolean;
+      } = {};
+
+      if (body.query !== undefined) {
+        if (typeof body.query !== "string") {
+          return { status_code: 400, body: { error: "query must be a string" } };
+        }
+        const query = asNonEmptyString(body.query);
+        if (query) payload.query = query;
+      }
+      if (body.expandIds !== undefined) {
+        if (!Array.isArray(body.expandIds)) {
+          return { status_code: 400, body: { error: "expandIds must be an array" } };
+        }
+        const expandIds = body.expandIds.map((entry) => {
+          if (typeof entry === "string") {
+            const value = entry.trim();
+            return value ? value : null;
+          }
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+          const record = entry as Record<string, unknown>;
+          const blockId = asNonEmptyString(record.blockId);
+          const obsId = asNonEmptyString(record.obsId);
+          const sessionId = asNonEmptyString(record.sessionId);
+          if (!blockId && !obsId) return null;
+          return {
+            ...(blockId ? { blockId } : {}),
+            ...(obsId ? { obsId } : {}),
+            ...(sessionId ? { sessionId } : {}),
+          };
+        });
+        if (expandIds.some((entry) => entry === null)) {
+          return { status_code: 400, body: { error: "expandIds entries must be non-empty ids" } };
+        }
+        payload.expandIds = expandIds as NonNullable<typeof payload.expandIds>;
+      }
+      if (body.limit !== undefined) {
+        if (
+          typeof body.limit !== "number" ||
+          !Number.isInteger(body.limit) ||
+          body.limit <= 0
+        ) {
+          return { status_code: 400, body: { error: "limit must be a positive integer" } };
+        }
+        payload.limit = body.limit;
+      }
+      for (const field of ["project", "cwd", "branch"] as const) {
+        if (body[field] === undefined) continue;
+        const value = asNonEmptyString(body[field]);
+        if (!value) {
+          return { status_code: 400, body: { error: `${field} must be a non-empty string` } };
+        }
+        payload[field] = value;
+      }
+      for (const field of ["global", "scope_required", "scopeRequired"] as const) {
+        if (body[field] === undefined) continue;
+        if (typeof body[field] !== "boolean") {
+          return { status_code: 400, body: { error: `${field} must be a boolean` } };
+        }
+        payload[field] = body[field];
+      }
+      const scopeRequired = payload.scope_required === true || payload.scopeRequired === true;
+      if (scopeRequired && !payload.project && !payload.cwd && payload.global !== true) {
+        return {
+          status_code: 400,
+          body: { error: "scope is required: provide project, cwd, or global" },
+        };
+      }
       if (
-        !req.body?.query &&
-        (!req.body?.expandIds || req.body.expandIds.length === 0)
+        !payload.query &&
+        (!payload.expandIds || payload.expandIds.length === 0)
       ) {
         return {
           status_code: 400,
           body: { error: "query or expandIds is required" },
         };
       }
-      const result = await sdk.trigger({ function_id: "mem::smart-search", payload: req.body });
+      const result = await sdk.trigger({ function_id: "mem::smart-search", payload });
       return { status_code: 200, body: result };
     },
   );
@@ -3428,16 +3509,18 @@ export function registerApiTriggers(
     const bm25DriftRatio = parseOptionalNonNegativeNumber(body.bm25DriftRatio);
     const vectorDriftRatio = parseOptionalNonNegativeNumber(body.vectorDriftRatio);
     const minAbsoluteDrift = parseOptionalNonNegativeNumber(body.minAbsoluteDrift);
+    const vectorBackfillLimit = parseOptionalPositiveInt(body.vectorBackfillLimit);
     if (
       bm25DriftRatio === null ||
       vectorDriftRatio === null ||
-      minAbsoluteDrift === null
+      minAbsoluteDrift === null ||
+      vectorBackfillLimit === null
     ) {
       return {
         status_code: 400,
         body: {
           error:
-            "bm25DriftRatio, vectorDriftRatio, and minAbsoluteDrift must be non-negative numbers when provided",
+            "bm25DriftRatio, vectorDriftRatio, and minAbsoluteDrift must be non-negative numbers when provided; vectorBackfillLimit must be a positive integer when provided",
         },
       };
     }
@@ -3465,6 +3548,15 @@ export function registerApiTriggers(
         body: { error: "scanBlocks must be a boolean when provided" },
       };
     }
+    if (
+      body.vectorBackfill !== undefined &&
+      typeof body.vectorBackfill !== "boolean"
+    ) {
+      return {
+        status_code: 400,
+        body: { error: "vectorBackfill must be a boolean when provided" },
+      };
+    }
     const payload: Record<string, unknown> = {};
     if (bm25DriftRatio !== undefined) payload.bm25DriftRatio = bm25DriftRatio;
     if (vectorDriftRatio !== undefined) {
@@ -3478,6 +3570,12 @@ export function registerApiTriggers(
     }
     if (typeof body.repair === "boolean") {
       payload.repair = body.repair;
+    }
+    if (typeof body.vectorBackfill === "boolean") {
+      payload.vectorBackfill = body.vectorBackfill;
+    }
+    if (vectorBackfillLimit !== undefined) {
+      payload.vectorBackfillLimit = vectorBackfillLimit;
     }
     payload.scanBlocks =
       typeof body.scanBlocks === "boolean" ? body.scanBlocks : false;

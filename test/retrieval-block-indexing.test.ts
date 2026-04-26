@@ -278,7 +278,7 @@ describe("retrieval block indexing", () => {
     expect(scheduleSave).toHaveBeenCalledTimes(1);
   });
 
-  it("verifier triggers rebuild when retrieval vector index is empty but blocks exist", async () => {
+  it("verifier backfills missing retrieval vectors without a full rebuild", async () => {
     const kv = mockKV();
     const vectorIndex = new VectorIndex();
     const scheduleSave = vi.fn();
@@ -310,12 +310,142 @@ describe("retrieval block indexing", () => {
       bm25Size: 2,
       vectorSize: 0,
       expectedVectorCount: 2,
+      vectorEligibleCount: 2,
+      vectorPresentCount: 0,
+      vectorMissingCount: 2,
       vectorDrift: 2,
-      rebuilt: 2,
+      rebuilt: 0,
+      vectorBackfilled: 2,
+      vectorBackfillDeferred: 0,
+      vectorBackfillFailures: 0,
       repaired: true,
     });
-    expect(rebuild).toHaveBeenCalledTimes(1);
+    expect(rebuild).not.toHaveBeenCalled();
+    expect(provider.embed).toHaveBeenCalledTimes(2);
+    expect(vectorIndex.size).toBe(2);
     expect(scheduleSave).toHaveBeenCalledTimes(1);
+  });
+
+  it("verifier respects the retrieval vector backfill limit", async () => {
+    const kv = mockKV();
+    const vectorIndex = new VectorIndex();
+    const scheduleSave = vi.fn();
+    const provider: EmbeddingProvider = {
+      name: "test-embeddings",
+      dimensions: 3,
+      embed: vi.fn(async () => new Float32Array([0.1, 0.2, 0.3])),
+      embedBatch: vi.fn(async () => []),
+    };
+    configureRetrievalBlockIndexingRuntime({
+      embeddingProvider: provider,
+      vectorIndex,
+      scheduleSave,
+    });
+    const blocks = await storeBlocks(kv, 3);
+    for (const block of blocks) {
+      getRetrievalSearchIndex().addDocument(
+        block.id,
+        block.project,
+        block.canonicalText,
+      );
+    }
+    vectorIndex.add(blocks[0].id, blocks[0].project, new Float32Array([1, 0, 0]));
+
+    const result = await verifyRetrievalBlockIndex(kv as never, {
+      vectorBackfillLimit: 1,
+    });
+
+    expect(result).toMatchObject({
+      blockCount: 3,
+      vectorEligibleCount: 3,
+      vectorPresentCount: 1,
+      vectorMissingCount: 2,
+      vectorBackfilled: 1,
+      vectorBackfillDeferred: 1,
+      vectorBackfillFailures: 0,
+      repaired: true,
+    });
+    expect(provider.embed).toHaveBeenCalledTimes(1);
+    expect(vectorIndex.size).toBe(2);
+    expect(scheduleSave).toHaveBeenCalledTimes(1);
+  });
+
+  it("verifier can defer missing vector backfills when disabled", async () => {
+    const kv = mockKV();
+    const vectorIndex = new VectorIndex();
+    const scheduleSave = vi.fn();
+    const provider: EmbeddingProvider = {
+      name: "test-embeddings",
+      dimensions: 3,
+      embed: vi.fn(async () => new Float32Array([0.1, 0.2, 0.3])),
+      embedBatch: vi.fn(async () => []),
+    };
+    configureRetrievalBlockIndexingRuntime({
+      embeddingProvider: provider,
+      vectorIndex,
+      scheduleSave,
+    });
+    const blocks = await storeBlocks(kv, 2);
+    for (const block of blocks) {
+      getRetrievalSearchIndex().addDocument(
+        block.id,
+        block.project,
+        block.canonicalText,
+      );
+    }
+
+    const result = await verifyRetrievalBlockIndex(kv as never, {
+      vectorBackfill: false,
+    });
+
+    expect(result).toMatchObject({
+      vectorMissingCount: 2,
+      vectorBackfilled: 0,
+      vectorBackfillDeferred: 2,
+      vectorBackfillFailures: 0,
+      repaired: false,
+    });
+    expect(provider.embed).not.toHaveBeenCalled();
+    expect(vectorIndex.size).toBe(0);
+    expect(scheduleSave).not.toHaveBeenCalled();
+  });
+
+  it("verifier reports vector backfill failures and leaves retry queue handling to block indexing", async () => {
+    const kv = mockKV();
+    const vectorIndex = new VectorIndex();
+    const provider: EmbeddingProvider = {
+      name: "test-embeddings",
+      dimensions: 3,
+      embed: vi.fn(async () => {
+        throw new Error('Gemini embedding failed (429): {"error":{"status":"RESOURCE_EXHAUSTED"}}');
+      }),
+      embedBatch: vi.fn(async () => []),
+    };
+    configureRetrievalBlockIndexingRuntime({
+      embeddingProvider: provider,
+      vectorIndex,
+      scheduleSave: vi.fn(),
+    });
+    const [block] = await storeBlocks(kv, 1);
+    getRetrievalSearchIndex().addDocument(
+      block.id,
+      block.project,
+      block.canonicalText,
+    );
+
+    const result = await verifyRetrievalBlockIndex(kv as never);
+
+    expect(result).toMatchObject({
+      vectorMissingCount: 1,
+      vectorBackfilled: 0,
+      vectorBackfillDeferred: 0,
+      vectorBackfillFailures: 1,
+      repaired: false,
+    });
+    expect(await kv.get(KV.retrievalBlockRetry, block.id)).toMatchObject({
+      blockId: block.id,
+      sourceType: block.sourceType,
+    });
   });
 
   it("verifier does not rebuild for tiny harmless retrieval index drift", async () => {

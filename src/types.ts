@@ -295,8 +295,12 @@ export interface RetrievalSearchResult {
   block: RetrievalBlock;
   score: number;
   lexicalScore: number;
+  specificityScore?: number;
   vectorScore: number;
   graphScore: number;
+  freshnessScore?: number;
+  recencyScore?: number;
+  rankingMetadata?: RetrievalTraceRankingMetadata;
   sessionId?: string;
   observation?: CompressedObservation | null;
 }
@@ -331,6 +335,46 @@ export interface RetrievalTraceScore {
   queryOverlap: number;
   lanePriority: number;
   recency: number;
+  lexical?: number;
+  specificity?: number;
+  vector?: number;
+  graph?: number;
+  file?: number;
+  concept?: number;
+  freshness?: number;
+  session?: number;
+  resume?: number;
+  combined?: number;
+}
+
+export interface RetrievalTraceSources {
+  lexical: boolean;
+  specificity: boolean;
+  vector: boolean;
+  graph: boolean;
+  file: boolean;
+  concept: boolean;
+  session: boolean;
+  resume: boolean;
+  freshness: boolean;
+}
+
+export interface RetrievalTraceFreshness {
+  lane: RetrievalTraceLane;
+  eventAt: string;
+  createdAt: string;
+  updatedAt: string;
+  ageHours: number;
+  recencyScore: number;
+}
+
+export interface RetrievalTraceRankingMetadata {
+  sources: RetrievalTraceSources;
+  freshness: RetrievalTraceFreshness;
+  factors: RetrievalTraceScore;
+  duplicateOf?: string;
+  collapsedDuplicateIds?: string[];
+  collapsedDuplicateCount?: number;
 }
 
 export interface RetrievalTraceCandidate {
@@ -341,12 +385,17 @@ export interface RetrievalTraceCandidate {
   preview: string;
   tokens: number;
   score: RetrievalTraceScore;
+  sources?: RetrievalTraceSources;
+  freshness?: RetrievalTraceFreshness;
   selected: boolean;
   decision: RetrievalTraceDecision;
   sessionId?: string;
   sourceObservationIds?: string[];
   isCapsule?: boolean;
   linkedMemoryId?: string;
+  duplicateOf?: string;
+  collapsedDuplicateIds?: string[];
+  collapsedDuplicateCount?: number;
 }
 
 export interface ContextInjection {

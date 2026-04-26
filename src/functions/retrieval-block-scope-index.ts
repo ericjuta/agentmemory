@@ -51,9 +51,11 @@ function requestedScopeKeys(options: {
 }): string[] {
   if (!options.project && !options.sessionId) return [];
   const keys = [GLOBAL_SCOPE_KEY];
-  if (options.project) keys.push(projectScopeKey(options.project));
+  if (options.project && options.project !== "global") {
+    keys.push(projectScopeKey(options.project));
+  }
   if (options.sessionId) keys.push(sessionScopeKey(options.sessionId));
-  if (options.project && options.branch) {
+  if (options.project && options.project !== "global" && options.branch) {
     keys.push(branchScopeKey(options.project, options.branch));
   }
   return uniqueStrings(keys);

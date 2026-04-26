@@ -5,8 +5,9 @@ import {
   configureRetrievalBlockIndexingRuntime,
   getRetrievalSearchIndex,
 } from "../src/state/retrieval-block-indexing.js";
+import { VectorIndex } from "../src/state/vector-index.js";
 import { KV } from "../src/state/schema.js";
-import type { RetrievalBlock } from "../src/types.js";
+import type { EmbeddingProvider, RetrievalBlock } from "../src/types.js";
 import { mockKV, mockSdk } from "./helpers/mocks.js";
 
 function makeBlock(id: string): RetrievalBlock {
@@ -256,6 +257,54 @@ describe("mem::retrieval-index-verify", () => {
     });
     expect(kv.list).not.toHaveBeenCalled();
   });
+
+  it("defers direct vector backfill while LLM work is health-gated", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    const vectorIndex = new VectorIndex();
+    const provider: EmbeddingProvider = {
+      name: "test-embeddings",
+      dimensions: 3,
+      embed: vi.fn(async () => new Float32Array([0.1, 0.2, 0.3])),
+      embedBatch: vi.fn(async () => []),
+    };
+    configureRetrievalBlockIndexingRuntime({
+      embeddingProvider: provider,
+      vectorIndex,
+      scheduleSave: vi.fn(),
+    });
+    const [block] = await storeBlocks(kv, 1);
+    getRetrievalSearchIndex().addDocument(
+      block.id,
+      block.project,
+      block.canonicalText,
+    );
+    await kv.set(KV.health, "latest", {
+      connectionState: "connected",
+      workers: [],
+      memory: { heapUsed: 1, heapTotal: 2, rss: 3, external: 0 },
+      cpu: { userMicros: 1, systemMicros: 1, percent: 99 },
+      eventLoopLagMs: 0,
+      uptimeSeconds: 1,
+      kvConnectivity: { status: "ok" },
+      snapshotPersistence: { status: "ok", consecutiveFailures: 0 },
+      status: "critical",
+      alerts: ["cpu pressure"],
+    });
+    registerRetrievalIndexVerifyFunction(sdk as never, kv as never);
+
+    const result = (await sdk.trigger("mem::retrieval-index-verify", {})) as {
+      vectorBackfilled: number;
+      vectorBackfillDeferred: number;
+      writeGates?: { llmWork?: string | null };
+    };
+
+    expect(result.vectorBackfilled).toBe(0);
+    expect(result.vectorBackfillDeferred).toBe(1);
+    expect(result.writeGates?.llmWork).toBe("cpu pressure");
+    expect(provider.embed).not.toHaveBeenCalled();
+    expect(vectorIndex.size).toBe(0);
+  });
 });
 
 describe("api::retrieval-index-verify", () => {
@@ -293,6 +342,8 @@ describe("api::retrieval-index-verify", () => {
         minAbsoluteDrift: 10,
         scheduleSave: false,
         repair: false,
+        vectorBackfill: false,
+        vectorBackfillLimit: "7",
         ignored: "field",
       },
       headers: { authorization: "Bearer secret" },
@@ -306,6 +357,8 @@ describe("api::retrieval-index-verify", () => {
       minAbsoluteDrift: 10,
       scheduleSave: false,
       repair: false,
+      vectorBackfill: false,
+      vectorBackfillLimit: 7,
       scanBlocks: false,
     });
   });

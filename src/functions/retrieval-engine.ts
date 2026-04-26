@@ -11,7 +11,11 @@ import type {
   RetrievalTrace,
   RetrievalTraceCandidate,
   RetrievalTraceDecision,
+  RetrievalTraceFreshness,
   RetrievalTraceLane,
+  RetrievalTraceRankingMetadata,
+  RetrievalTraceScore,
+  RetrievalTraceSources,
 } from "../types.js";
 import { KV } from "../state/schema.js";
 import type { StateKV } from "../state/kv.js";
@@ -43,6 +47,50 @@ const QUERY_EMBEDDING_CACHE_TTL_MS = 5 * 60_000;
 const QUERY_EMBEDDING_TIMEOUT_MS = 2500;
 const RETRIEVAL_BLOCK_SCOPE_COOLDOWN_MS = 60_000;
 const RETRIEVAL_BLOCK_VECTOR_MIN_SCORE = 0.35;
+const DUPLICATE_CLUSTER_MIN_JACCARD = 0.72;
+const DUPLICATE_CLUSTER_MIN_SHARED_TERMS = 5;
+
+const DUPLICATE_STOPWORDS = new Set([
+  "about",
+  "after",
+  "again",
+  "against",
+  "also",
+  "because",
+  "before",
+  "between",
+  "could",
+  "current",
+  "during",
+  "first",
+  "from",
+  "have",
+  "into",
+  "keep",
+  "keeps",
+  "last",
+  "latest",
+  "more",
+  "need",
+  "needs",
+  "only",
+  "other",
+  "over",
+  "same",
+  "should",
+  "state",
+  "still",
+  "than",
+  "that",
+  "then",
+  "there",
+  "this",
+  "through",
+  "turn",
+  "with",
+  "work",
+  "would",
+]);
 
 type CachedQueryEmbedding = {
   embedding: Float32Array;
@@ -129,6 +177,80 @@ function conceptOverlapScore(block: RetrievalBlock, focusConcepts: string[]): nu
 
 function normalizeFingerprint(text: string): string {
   return text.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function textHasTerm(text: string, term: string): boolean {
+  if (!text || !term) return false;
+  return text.toLowerCase().includes(term.toLowerCase());
+}
+
+function scoreSpecificity(block: RetrievalBlock, terms: string[]): number {
+  const meaningfulTerms = uniqueStrings(terms).filter((term) => term.length >= 3);
+  if (meaningfulTerms.length === 0) return 0;
+  const title = block.title;
+  const entities = block.entities.join(" ");
+  const concepts = block.concepts.join(" ");
+  const files = block.files.join(" ");
+  const text = block.canonicalText;
+
+  let score = 0;
+  let covered = 0;
+  for (const term of meaningfulTerms) {
+    const termScore =
+      textHasTerm(title, term)
+        ? 1
+        : textHasTerm(entities, term) || textHasTerm(concepts, term)
+          ? 0.9
+          : textHasTerm(files, term)
+            ? 0.75
+            : textHasTerm(text, term)
+              ? 0.55
+              : 0;
+    if (termScore > 0) covered += 1;
+    score += termScore;
+  }
+
+  const coverageBonus = covered === meaningfulTerms.length ? 0.1 : 0;
+  return Math.min(1, score / meaningfulTerms.length + coverageBonus);
+}
+
+function duplicateTermsFromText(text: string): string[] {
+  return text
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .map((term) => term.trim())
+    .filter((term) => term.length >= 4)
+    .filter((term) => !DUPLICATE_STOPWORDS.has(term))
+    .filter((term) => !/^\d+$/.test(term));
+}
+
+function duplicateTermSet(block: RetrievalBlock): Set<string> {
+  return new Set(
+    duplicateTermsFromText(
+      [
+        block.title,
+        block.canonicalText,
+        ...block.files.map((filePath) => basename(filePath)),
+        ...block.concepts,
+        ...block.entities,
+      ].join(" "),
+    ),
+  );
+}
+
+function setIntersectionSize(a: Set<string>, b: Set<string>): number {
+  let hits = 0;
+  for (const value of a) {
+    if (b.has(value)) hits += 1;
+  }
+  return hits;
+}
+
+function duplicateSimilarity(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0;
+  const shared = setIntersectionSize(a, b);
+  if (shared < DUPLICATE_CLUSTER_MIN_SHARED_TERMS) return 0;
+  return shared / (a.size + b.size - shared);
 }
 
 function blockPreview(content: string): string {
@@ -282,35 +404,112 @@ type RankedRetrievalBlock = {
   lexicalScore: number;
   vectorScore: number;
   graphScore: number;
+  specificityScore: number;
   fileScore: number;
   conceptScore: number;
   sessionScore: number;
   resumeScore: number;
   freshnessScore: number;
   recencyScore: number;
+  ageHours: number;
+  duplicateTerms: Set<string>;
   combinedScore: number;
 };
 
-function buildTraceCandidate(
-  ranked: RankedRetrievalBlock,
-): RetrievalTraceCandidate {
+function buildSourceSignals(ranked: RankedRetrievalBlock): RetrievalTraceSources {
   return {
-    id: `${ranked.block.sourceType}:${ranked.block.sourceId}`,
+    lexical: ranked.lexicalScore > 0,
+    specificity: ranked.specificityScore > 0,
+    vector: ranked.vectorScore > 0,
+    graph: ranked.graphScore > 0,
+    file: ranked.fileScore > 0,
+    concept: ranked.conceptScore > 0,
+    session: ranked.sessionScore > 0,
+    resume: ranked.resumeScore > 0,
+    freshness: ranked.freshnessScore > 0,
+  };
+}
+
+function buildFreshnessTrace(ranked: RankedRetrievalBlock): RetrievalTraceFreshness {
+  return {
+    lane: ranked.block.freshnessLane,
+    eventAt: ranked.block.eventAt,
+    createdAt: ranked.block.createdAt,
+    updatedAt: ranked.block.updatedAt,
+    ageHours: ranked.ageHours,
+    recencyScore: ranked.recencyScore,
+  };
+}
+
+function buildTraceScore(ranked: RankedRetrievalBlock): RetrievalTraceScore {
+  return {
+    queryOverlap:
+      ranked.lexicalScore +
+      ranked.specificityScore +
+      ranked.fileScore +
+      ranked.conceptScore +
+      ranked.vectorScore +
+      ranked.graphScore,
+    lanePriority: lanePriority(ranked.block.freshnessLane),
+    recency: ranked.recency,
+    lexical: ranked.lexicalScore,
+    specificity: ranked.specificityScore,
+    vector: ranked.vectorScore,
+    graph: ranked.graphScore,
+    file: ranked.fileScore,
+    concept: ranked.conceptScore,
+    freshness: ranked.freshnessScore,
+    session: ranked.sessionScore,
+    resume: ranked.resumeScore,
+    combined: ranked.combinedScore,
+  };
+}
+
+function buildRankingMetadata(ranked: RankedRetrievalBlock): RetrievalTraceRankingMetadata {
+  return {
+    sources: buildSourceSignals(ranked),
+    freshness: buildFreshnessTrace(ranked),
+    factors: buildTraceScore(ranked),
+  };
+}
+
+function traceIdForBlock(block: RetrievalBlock): string {
+  return `${block.sourceType}:${block.sourceId}`;
+}
+
+function sourceKey(block: RetrievalBlock): string {
+  return `${block.sourceType}:${block.sourceId}`;
+}
+
+function findDuplicateRepresentative(
+  item: RankedRetrievalBlock,
+  selected: RankedRetrievalBlock[],
+): RankedRetrievalBlock | null {
+  for (const selectedItem of selected) {
+    if (sourceKey(selectedItem.block) === sourceKey(item.block)) return selectedItem;
+    if (selectedItem.fingerprint === item.fingerprint) return selectedItem;
+    if (
+      duplicateSimilarity(selectedItem.duplicateTerms, item.duplicateTerms) >=
+      DUPLICATE_CLUSTER_MIN_JACCARD
+    ) {
+      return selectedItem;
+    }
+  }
+  return null;
+}
+
+function buildTraceCandidate(ranked: RankedRetrievalBlock): RetrievalTraceCandidate {
+  const metadata = buildRankingMetadata(ranked);
+  return {
+    id: traceIdForBlock(ranked.block),
     sourceType: ranked.block.sourceType,
     blockType: ranked.block.sourceType === "observation" ? "observation" : "memory",
     lane: ranked.block.freshnessLane,
     preview: blockPreview(ranked.block.canonicalText),
     tokens: ranked.tokens,
-    score: {
-      queryOverlap:
-        ranked.lexicalScore +
-        ranked.fileScore +
-        ranked.conceptScore +
-        ranked.vectorScore +
-        ranked.graphScore,
-      lanePriority: lanePriority(ranked.block.freshnessLane),
-      recency: ranked.recency,
-    },
+    score: metadata.factors,
+    sources: metadata.sources,
+    freshness: metadata.freshness,
     selected: false,
     decision: "skipped_lane_budget",
     sessionId: ranked.block.sessionId,
@@ -345,6 +544,7 @@ export interface UnifiedRetrievalResult {
 function hasExplicitRelevance(item: RankedRetrievalBlock): boolean {
   return (
     item.lexicalScore > 0 ||
+    item.specificityScore > 0 ||
     item.fileScore > 0 ||
     item.conceptScore > 0 ||
     item.vectorScore > 0 ||
@@ -361,6 +561,7 @@ function describeWhyRetrieved(ranked: RankedRetrievalBlock): string {
   if (ranked.sessionScore > 0 && ranked.block.freshnessLane === "hot") {
     reasons.push("recent same-session state");
   }
+  if (ranked.specificityScore >= 0.75) reasons.push("specific query coverage");
   if (ranked.lexicalScore > 0) reasons.push("text match");
   if (ranked.vectorScore > 0.2) reasons.push("semantic match");
   if (ranked.graphScore > 0.2) reasons.push("graph relation");
@@ -781,6 +982,7 @@ export async function retrieveRelevantBlocks(
       );
       const fileScore = fileOverlapScore(block, focusFiles);
       const conceptScore = conceptOverlapScore(block, focusConcepts);
+      const specificityScore = scoreSpecificity(block, terms);
       const vectorScore = vectorScores.get(block.id) || 0;
       const graphScore = graphScores.get(block.id) || 0;
       const sessionScore =
@@ -802,10 +1004,12 @@ export async function retrieveRelevantBlocks(
           : 0;
       const recencyScore =
         newest === oldest ? 1 : Math.max(0, (eventMs - oldest) / (newest - oldest));
+      const ageHours = Math.max(0, (now - eventMs) / 3_600_000);
       const importanceScore = normalizeImportance(block.importance);
       const combinedScore =
         lexicalQuery.trim()
           ? lexicalScore * 2.2 +
+            specificityScore * 1.4 +
             fileScore * 1.8 +
             conceptScore * 1.5 +
             vectorScore * 1.2 +
@@ -830,6 +1034,7 @@ export async function retrieveRelevantBlocks(
           renderBlock(block, query.sessionId, graphContexts.get(block.id)),
         ),
         lexicalScore,
+        specificityScore,
         vectorScore,
         graphScore,
         fileScore,
@@ -838,6 +1043,8 @@ export async function retrieveRelevantBlocks(
         resumeScore,
         freshnessScore,
         recencyScore,
+        ageHours,
+        duplicateTerms: duplicateTermSet(block),
         combinedScore,
       };
     });
@@ -883,7 +1090,6 @@ export async function retrieveRelevantBlocks(
   const selected: RankedRetrievalBlock[] = [];
   const selectedObservationIds = new Set<string>();
   const selectedSessionBlocks = new Set<string>();
-  const fingerprints = new Set<string>();
 
   const markSkipped = (item: RankedRetrievalBlock, decision: RetrievalTraceDecision) => {
     const candidate = traceCandidates.get(item.block.id);
@@ -892,9 +1098,26 @@ export async function retrieveRelevantBlocks(
     candidate.selected = false;
   };
 
+  const markDuplicate = (
+    item: RankedRetrievalBlock,
+    representative: RankedRetrievalBlock,
+  ) => {
+    markSkipped(item, "skipped_duplicate_fingerprint");
+    const candidate = traceCandidates.get(item.block.id);
+    const representativeCandidate = traceCandidates.get(representative.block.id);
+    if (!candidate || !representativeCandidate) return;
+    candidate.duplicateOf = traceIdForBlock(representative.block);
+    const duplicateId = traceIdForBlock(item.block);
+    const collapsed = representativeCandidate.collapsedDuplicateIds ?? [];
+    if (!collapsed.includes(duplicateId)) {
+      collapsed.push(duplicateId);
+    }
+    representativeCandidate.collapsedDuplicateIds = collapsed;
+    representativeCandidate.collapsedDuplicateCount = collapsed.length;
+  };
+
   const take = (item: RankedRetrievalBlock, decision: RetrievalTraceDecision) => {
     selected.push(item);
-    fingerprints.add(item.fingerprint);
     if (item.block.sessionId) {
       selectedSessionBlocks.add(item.block.sessionId);
     }
@@ -916,8 +1139,9 @@ export async function retrieveRelevantBlocks(
       markSkipped(item, "skipped_lane_budget");
       continue;
     }
-    if (fingerprints.has(item.fingerprint)) {
-      markSkipped(item, "skipped_duplicate_fingerprint");
+    const duplicateRepresentative = findDuplicateRepresentative(item, selected);
+    if (duplicateRepresentative) {
+      markDuplicate(item, duplicateRepresentative);
       continue;
     }
     if (
@@ -953,8 +1177,9 @@ export async function retrieveRelevantBlocks(
       markSkipped(item, "skipped_lane_budget");
       continue;
     }
-    if (fingerprints.has(item.fingerprint)) {
-      markSkipped(item, "skipped_duplicate_fingerprint");
+    const duplicateRepresentative = findDuplicateRepresentative(item, selected);
+    if (duplicateRepresentative) {
+      markDuplicate(item, duplicateRepresentative);
       continue;
     }
     if (
@@ -999,25 +1224,38 @@ export async function retrieveRelevantBlocks(
       ? `<agentmemory-context project="${escapeXmlAttr(query.project || "*")}">\n${renderedBlocksWithGraph.join("\n\n")}\n</agentmemory-context>`
       : "";
 
+  const rankedByBlockId = new Map(ranked.map((item) => [item.block.id, item]));
   const searchResults: RetrievalSearchResult[] = await Promise.all(
-    selectedBlocks.map(async (block) => ({
-      block,
-      score:
-        ranked.find((item) => item.block.id === block.id)?.combinedScore || 0,
-      lexicalScore:
-        ranked.find((item) => item.block.id === block.id)?.lexicalScore || 0,
-      vectorScore:
-        ranked.find((item) => item.block.id === block.id)?.vectorScore || 0,
-      graphScore:
-        ranked.find((item) => item.block.id === block.id)?.graphScore || 0,
-      sessionId: block.sessionId,
-      observation:
-        block.sourceType === "observation" && block.sessionId
-          ? await kv
-              .get<CompressedObservation>(KV.observations(block.sessionId), block.sourceId)
-              .catch(() => null)
-          : null,
-    })),
+    selectedBlocks.map(async (block) => {
+      const rankedItem = rankedByBlockId.get(block.id);
+      const traceCandidate = traceCandidates.get(block.id);
+      const rankingMetadata = rankedItem
+        ? {
+            ...buildRankingMetadata(rankedItem),
+            duplicateOf: traceCandidate?.duplicateOf,
+            collapsedDuplicateIds: traceCandidate?.collapsedDuplicateIds,
+            collapsedDuplicateCount: traceCandidate?.collapsedDuplicateCount,
+          }
+        : undefined;
+      return {
+        block,
+        score: rankedItem?.combinedScore || 0,
+        lexicalScore: rankedItem?.lexicalScore || 0,
+        specificityScore: rankedItem?.specificityScore || 0,
+        vectorScore: rankedItem?.vectorScore || 0,
+        graphScore: rankedItem?.graphScore || 0,
+        freshnessScore: rankedItem?.freshnessScore || 0,
+        recencyScore: rankedItem?.recencyScore || 0,
+        rankingMetadata,
+        sessionId: block.sessionId,
+        observation:
+          block.sourceType === "observation" && block.sessionId
+            ? await kv
+                .get<CompressedObservation>(KV.observations(block.sessionId), block.sourceId)
+                .catch(() => null)
+            : null,
+      };
+    }),
   );
 
   const trace: RetrievalTrace = {

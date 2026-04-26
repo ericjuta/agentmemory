@@ -31,9 +31,54 @@ import {
   configureRetrievalBlockIndexingRuntime,
   getRetrievalSearchIndex,
 } from "../src/state/retrieval-block-indexing.js";
+import { VectorIndex } from "../src/state/vector-index.js";
 import { resetContextResultCacheForTests } from "../src/functions/context-result-cache.js";
 import { warmRetrievalBlockScopeMemberships } from "../src/functions/retrieval-block-scope-index.js";
-import type { RetrievalBlock } from "../src/types.js";
+import type { EmbeddingProvider, RetrievalBlock } from "../src/types.js";
+
+function makeRetrievalBlock(
+  overrides: Partial<RetrievalBlock> & { id: string; canonicalText: string },
+): RetrievalBlock {
+  const timestamp = overrides.eventAt ?? "2026-01-01T00:00:00Z";
+  return {
+    id: overrides.id,
+    sourceType: "memory",
+    sourceId: overrides.sourceId ?? overrides.id,
+    project: "/project",
+    scope: "project",
+    freshnessLane: "warm",
+    canonicalText: overrides.canonicalText,
+    title: overrides.title ?? overrides.id,
+    files: [],
+    concepts: [],
+    entities: [],
+    sourceObservationIds: [],
+    hadFailure: false,
+    hadDecision: false,
+    hadAssistantConclusion: true,
+    isResumeArtifact: false,
+    importance: 7,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    eventAt: timestamp,
+    ...overrides,
+  };
+}
+
+async function storeIndexedBlocks(
+  kv: ReturnType<typeof mockKV>,
+  blocks: RetrievalBlock[],
+): Promise<void> {
+  for (const block of blocks) {
+    await kv.set(KV.retrievalBlocks, block.id, block);
+    getRetrievalSearchIndex().addDocument(
+      block.id,
+      block.sessionId || block.project,
+      buildRetrievalBlockLexicalText(block),
+    );
+  }
+  await warmRetrievalBlockScopeMemberships(kv as never, blocks);
+}
 
 describe("retrieveRelevantBlocks", () => {
   beforeEach(() => {
@@ -521,5 +566,168 @@ describe("retrieveRelevantBlocks", () => {
     expect(unscoped.searchResults.map((entry) => entry.block.id)).toEqual([
       semanticBlock.id,
     ]);
+  });
+
+  it("prefers specific query coverage and exposes ranking diagnostics", async () => {
+    const kv = mockKV();
+    const broadBlock = makeRetrievalBlock({
+      id: "rblk_broad_vector",
+      sourceId: "mem_broad_vector",
+      title: "General vector notes",
+      canonicalText:
+        "Vector retrieval vector retrieval vector retrieval scheduler notes without timeout repair coverage",
+      concepts: ["vector"],
+      entities: ["vector"],
+      eventAt: "2026-01-03T00:00:00Z",
+      importance: 10,
+    });
+    const specificBlock = makeRetrievalBlock({
+      id: "rblk_vector_backfill_timeout",
+      sourceId: "mem_vector_backfill_timeout",
+      title: "Vector backfill timeout repair",
+      canonicalText:
+        "Bounded vector backfill timeout repair fixes missing retrieval vectors without full rebuilds",
+      concepts: ["vector", "backfill", "timeout"],
+      entities: ["vector", "backfill", "timeout"],
+      eventAt: "2026-01-01T00:00:00Z",
+      importance: 3,
+    });
+    await storeIndexedBlocks(kv, [broadBlock, specificBlock]);
+
+    const result = await retrieveRelevantBlocks(kv as never, {
+      project: "/project",
+      query: "vector backfill timeout",
+      budget: 600,
+      purpose: "smart-search",
+      maxBlocks: 2,
+    });
+
+    expect(result.searchResults[0]?.block.id).toBe(specificBlock.id);
+    expect(result.searchResults[0]?.specificityScore).toBeGreaterThan(0.9);
+    expect(result.searchResults[0]?.rankingMetadata?.sources.specificity).toBe(true);
+    expect(result.searchResults[0]?.rankingMetadata?.freshness.eventAt).toBe(
+      specificBlock.eventAt,
+    );
+    expect(
+      Number.isFinite(result.searchResults[0]?.rankingMetadata?.freshness.ageHours),
+    ).toBe(true);
+
+    const traceCandidate = result.trace.selected.find(
+      (candidate) => candidate.id === "memory:mem_vector_backfill_timeout",
+    );
+    expect(traceCandidate?.sources?.lexical).toBe(true);
+    expect(traceCandidate?.sources?.specificity).toBe(true);
+    expect(traceCandidate?.score.specificity).toBeGreaterThan(0.9);
+    expect(traceCandidate?.score.combined).toBeGreaterThan(0);
+  });
+
+  it("suppresses near-duplicate retrieval blocks and records the collapsed cluster", async () => {
+    const kv = mockKV();
+    const primary = makeRetrievalBlock({
+      id: "rblk_vector_backfill_primary",
+      sourceId: "mem_vector_backfill_primary",
+      title: "Vector backfill timeout repair",
+      canonicalText:
+        "Retrieval vector backfill timeout repair keeps missing vectors bounded and avoids full rebuilds",
+      concepts: ["retrieval", "vector", "backfill", "timeout", "repair"],
+      entities: ["retrieval", "vector", "backfill", "timeout", "repair"],
+      eventAt: "2026-01-03T00:00:00Z",
+    });
+    const nearDuplicate = makeRetrievalBlock({
+      id: "rblk_vector_backfill_duplicate",
+      sourceId: "mem_vector_backfill_duplicate",
+      title: "Timeout vector backfill repair",
+      canonicalText:
+        "Missing vector timeout repair keeps retrieval backfill bounded and avoids full rebuilds",
+      concepts: ["retrieval", "vector", "backfill", "timeout", "repair"],
+      entities: ["retrieval", "vector", "backfill", "timeout", "repair"],
+      eventAt: "2026-01-02T00:00:00Z",
+    });
+    const distinct = makeRetrievalBlock({
+      id: "rblk_vector_index_persistence",
+      sourceId: "mem_vector_index_persistence",
+      title: "Vector index persistence gate",
+      canonicalText:
+        "Retrieval vector persistence diagnostics expose deferred saves and maintenance gates",
+      concepts: ["retrieval", "vector", "persistence"],
+      entities: ["retrieval", "vector", "persistence"],
+      eventAt: "2026-01-01T00:00:00Z",
+    });
+    await storeIndexedBlocks(kv, [primary, nearDuplicate, distinct]);
+
+    const result = await retrieveRelevantBlocks(kv as never, {
+      project: "/project",
+      query: "retrieval vector backfill timeout repair",
+      budget: 900,
+      purpose: "smart-search",
+      maxBlocks: 4,
+    });
+
+    const duplicateBlockIds = [primary.id, nearDuplicate.id];
+    const selectedDuplicateIds = result.searchResults
+      .map((entry) => entry.block.id)
+      .filter((id) => duplicateBlockIds.includes(id));
+    expect(selectedDuplicateIds).toHaveLength(1);
+
+    const duplicateTraceIds = [
+      "memory:mem_vector_backfill_primary",
+      "memory:mem_vector_backfill_duplicate",
+    ];
+    const selectedTrace = result.trace.selected.find((candidate) =>
+      duplicateTraceIds.includes(candidate.id),
+    );
+    const skippedTrace = result.trace.skipped.find((candidate) =>
+      duplicateTraceIds.includes(candidate.id),
+    );
+    expect(skippedTrace?.decision).toBe("skipped_duplicate_fingerprint");
+    expect(skippedTrace?.duplicateOf).toBe(selectedTrace?.id);
+    expect(selectedTrace?.collapsedDuplicateCount).toBe(1);
+    expect(selectedTrace?.collapsedDuplicateIds).toContain(skippedTrace?.id);
+
+    const selectedSearchResult = result.searchResults.find(
+      (entry) => entry.block.id === selectedDuplicateIds[0],
+    );
+    expect(selectedSearchResult?.rankingMetadata?.collapsedDuplicateCount).toBe(1);
+  });
+
+  it("surfaces vector-source diagnostics for semantic-only candidates", async () => {
+    const kv = mockKV();
+    const vectorBlock = makeRetrievalBlock({
+      id: "rblk_vector_only",
+      sourceId: "mem_vector_only",
+      title: "Latent operator recovery",
+      canonicalText: "Scheduler recovery note carried only by embedding similarity",
+      concepts: ["scheduler", "recovery"],
+      entities: ["scheduler", "recovery"],
+    });
+    await storeIndexedBlocks(kv, [vectorBlock]);
+    const vectorIndex = new VectorIndex();
+    vectorIndex.add(vectorBlock.id, vectorBlock.project, new Float32Array([1, 0]));
+    const embeddingProvider: EmbeddingProvider = {
+      name: "test-embedding",
+      dimensions: 2,
+      embed: async () => new Float32Array([1, 0]),
+      embedBatch: async (texts) => texts.map(() => new Float32Array([1, 0])),
+    };
+    configureRetrievalBlockIndexingRuntime({
+      embeddingProvider,
+      vectorIndex,
+      scheduleSave: undefined,
+    });
+
+    const result = await retrieveRelevantBlocks(kv as never, {
+      project: "/project",
+      query: "quartz semantic probe",
+      budget: 300,
+      purpose: "smart-search",
+    });
+
+    expect(result.searchResults.map((entry) => entry.block.id)).toEqual([
+      vectorBlock.id,
+    ]);
+    expect(result.searchResults[0]?.vectorScore).toBe(1);
+    expect(result.searchResults[0]?.rankingMetadata?.sources.vector).toBe(true);
+    expect(result.searchResults[0]?.rankingMetadata?.sources.lexical).toBe(false);
+    expect(result.trace.selected[0]?.sources?.vector).toBe(true);
   });
 });

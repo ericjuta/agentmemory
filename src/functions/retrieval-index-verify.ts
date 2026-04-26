@@ -1,7 +1,10 @@
 import type { ISdk } from "iii-sdk";
 
 import type { StateKV } from "../state/kv.js";
-import { getIndexPersistencePauseReason } from "../health/write-gate.js";
+import {
+  getIndexPersistencePauseReason,
+  getLlmWorkPauseReason,
+} from "../health/write-gate.js";
 import {
   verifyRetrievalBlockIndex,
   type VerifyRetrievalBlockIndexOptions,
@@ -15,6 +18,8 @@ type RetrievalIndexVerifyPayload = {
   scheduleSave?: unknown;
   repair?: unknown;
   scanBlocks?: unknown;
+  vectorBackfill?: unknown;
+  vectorBackfillLimit?: unknown;
 };
 
 type RetrievalIndexVerifyFunctionOptions = {
@@ -28,6 +33,13 @@ function optionalFiniteNumber(value: unknown): number | undefined {
     return Number.isFinite(parsed) ? parsed : undefined;
   }
   return undefined;
+}
+
+function optionalPositiveInteger(value: unknown): number | undefined {
+  const parsed = optionalFiniteNumber(value);
+  if (parsed === undefined) return undefined;
+  if (!Number.isInteger(parsed) || parsed < 1) return undefined;
+  return parsed;
 }
 
 export function registerRetrievalIndexVerifyFunction(
@@ -44,6 +56,7 @@ export function registerRetrievalIndexVerifyFunction(
     const bm25DriftRatio = optionalFiniteNumber(data.bm25DriftRatio);
     const vectorDriftRatio = optionalFiniteNumber(data.vectorDriftRatio);
     const minAbsoluteDrift = optionalFiniteNumber(data.minAbsoluteDrift);
+    const vectorBackfillLimit = optionalPositiveInteger(data.vectorBackfillLimit);
     if (bm25DriftRatio !== undefined) options.bm25DriftRatio = bm25DriftRatio;
     if (vectorDriftRatio !== undefined) {
       options.vectorDriftRatio = vectorDriftRatio;
@@ -60,6 +73,23 @@ export function registerRetrievalIndexVerifyFunction(
     if (typeof data.scanBlocks === "boolean") {
       options.scanBlocks = data.scanBlocks;
     }
+    if (typeof data.vectorBackfill === "boolean") {
+      options.vectorBackfill = data.vectorBackfill;
+    }
+    if (vectorBackfillLimit !== undefined) {
+      options.vectorBackfillLimit = vectorBackfillLimit;
+    }
+    let llmWorkPauseReason: string | null = null;
+    if (
+      options.scanBlocks !== false &&
+      options.repair !== false &&
+      options.vectorBackfill !== false
+    ) {
+      llmWorkPauseReason = await getLlmWorkPauseReason(kv);
+      if (llmWorkPauseReason) {
+        options.vectorBackfill = false;
+      }
+    }
     const result = await verifyRetrievalBlockIndex(kv, options);
     const observationPersistence =
       functionOptions.observationPersistenceStatus?.();
@@ -69,6 +99,7 @@ export function registerRetrievalIndexVerifyFunction(
         ...result,
         writeGates: {
           indexPersistence: indexPersistencePauseReason,
+          llmWork: llmWorkPauseReason,
         },
       };
     }
@@ -80,6 +111,7 @@ export function registerRetrievalIndexVerifyFunction(
       },
       writeGates: {
         indexPersistence: indexPersistencePauseReason,
+        llmWork: llmWorkPauseReason,
       },
     };
   });

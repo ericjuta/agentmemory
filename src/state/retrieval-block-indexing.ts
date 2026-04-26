@@ -29,9 +29,15 @@ export interface RetrievalBlockIndexVerificationResult {
   bm25Size: number;
   vectorSize: number;
   expectedVectorCount: number;
+  vectorEligibleCount: number;
+  vectorPresentCount: number;
+  vectorMissingCount: number;
   bm25Drift: number;
   vectorDrift: number;
   rebuilt: number;
+  vectorBackfilled: number;
+  vectorBackfillDeferred: number;
+  vectorBackfillFailures: number;
   repaired: boolean;
   persistence?: IndexPersistenceStatus;
   error?: string;
@@ -49,6 +55,8 @@ export interface VerifyRetrievalBlockIndexOptions {
   scheduleSave?: boolean;
   repair?: boolean;
   scanBlocks?: boolean;
+  vectorBackfill?: boolean;
+  vectorBackfillLimit?: number;
 }
 
 type RetrievalIndexingRuntime = {
@@ -68,6 +76,7 @@ const runtime: RetrievalIndexingRuntime = {
 let index: SearchIndex | null = null;
 
 const DEFAULT_RETRIEVAL_BLOCK_REBUILD_EMBEDDING_BATCH_SIZE = 32;
+const DEFAULT_RETRIEVAL_VECTOR_BACKFILL_LIMIT = 32;
 const DEFAULT_RETRIEVAL_BLOCK_RETRY_DELAY_MS = 300_000;
 const MAX_RETRIEVAL_BLOCK_RETRY_DELAY_MS = 3_600_000;
 const RETRIEVAL_BLOCK_RETRY_JITTER_MS = 30_000;
@@ -422,20 +431,34 @@ export async function verifyRetrievalBlockIndex(
   const bm25Size = bm25.size;
   const vectorSize = vectorIndex?.size ?? 0;
   const persistence = runtime.persistenceStatus?.();
+  const emptyVectorRepair = {
+    vectorBackfilled: 0,
+    vectorBackfillDeferred: 0,
+    vectorBackfillFailures: 0,
+  };
 
   try {
     if (options.scanBlocks === false) {
       const blockCount = persistence?.manifest?.documentCount ?? bm25Size;
       const expectedVectorCount =
         runtime.embeddingProvider && vectorIndex ? blockCount : 0;
+      const vectorPresentCount = Math.min(vectorSize, expectedVectorCount);
+      const vectorMissingCount = Math.max(
+        0,
+        expectedVectorCount - vectorPresentCount,
+      );
       return {
         blockCount,
         bm25Size,
         vectorSize,
         expectedVectorCount,
+        vectorEligibleCount: expectedVectorCount,
+        vectorPresentCount,
+        vectorMissingCount,
         bm25Drift: Math.abs(bm25Size - blockCount),
         vectorDrift: Math.abs(vectorSize - expectedVectorCount),
         rebuilt: 0,
+        ...emptyVectorRepair,
         repaired: false,
         persistence,
       };
@@ -443,13 +466,22 @@ export async function verifyRetrievalBlockIndex(
 
     const blocks = await kv.list<RetrievalBlock>(KV.retrievalBlocks);
     const blockCount = blocks.length;
+    const vectorEligibleBlocks =
+      runtime.embeddingProvider && vectorIndex ? blocks : [];
+    const vectorMissingBlocks = vectorIndex
+      ? vectorEligibleBlocks.filter((block) => !vectorIndex.has(block.id))
+      : [];
+    const vectorEligibleCount = vectorEligibleBlocks.length;
+    const vectorMissingCount = vectorMissingBlocks.length;
+    const vectorPresentCount = Math.max(
+      0,
+      vectorEligibleCount - vectorMissingCount,
+    );
     const expectedVectorCount =
-      runtime.embeddingProvider && vectorIndex ? blockCount : 0;
+      runtime.embeddingProvider && vectorIndex ? vectorEligibleCount : 0;
     const bm25Drift = Math.abs(bm25Size - blockCount);
     const vectorDrift = Math.abs(vectorSize - expectedVectorCount);
     const bm25DriftRatio = blockCount > 0 ? bm25Drift / blockCount : 0;
-    const vectorDriftRatio =
-      expectedVectorCount > 0 ? vectorDrift / expectedVectorCount : 0;
     const minAbsoluteDrift = options.minAbsoluteDrift ?? 50;
 
     const bm25NeedsRebuild =
@@ -457,40 +489,97 @@ export async function verifyRetrievalBlockIndex(
       (bm25Size === 0 ||
         (bm25Drift > minAbsoluteDrift &&
           bm25DriftRatio > (options.bm25DriftRatio ?? 0.1)));
-    const vectorNeedsRebuild =
-      expectedVectorCount > 0 &&
-      (vectorSize === 0 ||
-        (vectorDrift > minAbsoluteDrift &&
-          vectorDriftRatio > (options.vectorDriftRatio ?? 0.1)));
-    const needsRebuild = bm25NeedsRebuild || vectorNeedsRebuild;
 
-    if (!needsRebuild || options.repair === false) {
+    if (options.repair === false) {
       return {
         blockCount,
         bm25Size,
         vectorSize,
         expectedVectorCount,
+        vectorEligibleCount,
+        vectorPresentCount,
+        vectorMissingCount,
         bm25Drift,
         vectorDrift,
         rebuilt: 0,
+        vectorBackfilled: 0,
+        vectorBackfillDeferred: vectorMissingCount,
+        vectorBackfillFailures: 0,
         repaired: false,
         persistence,
       };
     }
 
-    const rebuilt = await (options.rebuild ?? rebuildRetrievalBlockIndex)(kv);
-    if (rebuilt > 0 && options.scheduleSave !== false) {
-      runtime.scheduleSave?.();
+    if (bm25NeedsRebuild) {
+      const rebuilt = await (options.rebuild ?? rebuildRetrievalBlockIndex)(kv);
+      if (rebuilt > 0 && options.scheduleSave !== false) {
+        runtime.scheduleSave?.();
+      }
+      return {
+        blockCount,
+        bm25Size,
+        vectorSize,
+        expectedVectorCount,
+        vectorEligibleCount,
+        vectorPresentCount,
+        vectorMissingCount,
+        bm25Drift,
+        vectorDrift,
+        rebuilt,
+        ...emptyVectorRepair,
+        repaired: rebuilt > 0,
+        persistence: runtime.persistenceStatus?.() ?? persistence,
+      };
     }
+
+    let vectorBackfilled = 0;
+    let vectorBackfillFailures = 0;
+    let vectorBackfillDeferred = 0;
+    if (vectorMissingCount > 0) {
+      if (options.vectorBackfill === false) {
+        vectorBackfillDeferred = vectorMissingCount;
+      } else {
+        const vectorBackfillLimit = positiveInteger(
+          options.vectorBackfillLimit ??
+            process.env.RETRIEVAL_VECTOR_BACKFILL_LIMIT,
+          DEFAULT_RETRIEVAL_VECTOR_BACKFILL_LIMIT,
+        );
+        const backfillTargets = vectorMissingBlocks.slice(0, vectorBackfillLimit);
+        vectorBackfillDeferred = Math.max(
+          0,
+          vectorMissingCount - backfillTargets.length,
+        );
+        for (const block of backfillTargets) {
+          const result = await indexRetrievalBlock(kv, block, {
+            scheduleSave: false,
+          });
+          if (result.success) {
+            vectorBackfilled += 1;
+          } else {
+            vectorBackfillFailures += 1;
+          }
+        }
+        if (vectorBackfilled > 0 && options.scheduleSave !== false) {
+          runtime.scheduleSave?.();
+        }
+      }
+    }
+
     return {
       blockCount,
       bm25Size,
       vectorSize,
       expectedVectorCount,
+      vectorEligibleCount,
+      vectorPresentCount,
+      vectorMissingCount,
       bm25Drift,
       vectorDrift,
-      rebuilt,
-      repaired: rebuilt > 0,
+      rebuilt: 0,
+      vectorBackfilled,
+      vectorBackfillDeferred,
+      vectorBackfillFailures,
+      repaired: vectorBackfilled > 0,
       persistence: runtime.persistenceStatus?.() ?? persistence,
     };
   } catch (err) {
@@ -500,9 +589,15 @@ export async function verifyRetrievalBlockIndex(
       vectorSize,
       expectedVectorCount:
         runtime.embeddingProvider && vectorIndex ? vectorSize : 0,
+      vectorEligibleCount:
+        runtime.embeddingProvider && vectorIndex ? vectorSize : 0,
+      vectorPresentCount:
+        runtime.embeddingProvider && vectorIndex ? vectorSize : 0,
+      vectorMissingCount: 0,
       bm25Drift: 0,
       vectorDrift: 0,
       rebuilt: 0,
+      ...emptyVectorRepair,
       repaired: false,
       persistence,
       error: errorMessage(err),
