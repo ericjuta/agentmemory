@@ -958,11 +958,7 @@ export async function collectRetrievalBlocksFromState(
       .list<CompressedObservation>(KV.observations(session.id))
       .catch(() => []);
     for (const observation of observations) {
-      if (
-        observation.importance >= 6 ||
-        observation.type === "error" ||
-        observation.type === "decision"
-      ) {
+      if (shouldIndexObservation(observation)) {
         put(buildObservationRetrievalBlock(observation, session.project));
       }
     }
@@ -976,6 +972,8 @@ export async function collectLightweightRetrievalBlocksFromState(
   options?: {
     project?: string;
     sessionId?: string;
+    sessionLimit?: number;
+    deriveBeliefs?: boolean;
   },
 ): Promise<RetrievalBlock[]> {
   const [
@@ -1011,11 +1009,20 @@ export async function collectLightweightRetrievalBlocksFromState(
   const resolvedProject =
     options?.project ||
     (options?.sessionId ? sessionById.get(options.sessionId)?.project : undefined);
+  const observationSessionLimit = options?.sessionId
+    ? 8
+    : typeof options?.sessionLimit === "number" &&
+        Number.isFinite(options.sessionLimit) &&
+        options.sessionLimit >= 0
+      ? Math.floor(options.sessionLimit)
+      : resolvedProject
+        ? 4
+        : 0;
   const sessionsForObservations = sessions
     .filter((session) => {
       if (options?.sessionId && session.id === options.sessionId) return true;
       if (resolvedProject) return session.project === resolvedProject;
-      return false;
+      return observationSessionLimit > 0;
     })
     .sort((a, b) => {
       const aCurrent = Number(a.id === options?.sessionId);
@@ -1023,7 +1030,7 @@ export async function collectLightweightRetrievalBlocksFromState(
       if (bCurrent !== aCurrent) return bCurrent - aCurrent;
       return new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime();
     })
-    .slice(0, options?.sessionId ? 8 : 4);
+    .slice(0, observationSessionLimit);
 
   const blocks = new Map<string, RetrievalBlock>();
   const put = (block: RetrievalBlock | null) => {
@@ -1138,17 +1145,19 @@ export async function collectLightweightRetrievalBlocksFromState(
       put(buildProfileRetrievalBlock(profile));
     }
   }
-  const projectedBeliefs = await Promise.all(
-    beliefProjects.map(async (project) => ({
-      project,
-      beliefs: await listProjectedBeliefs(kv, project).catch(() => []),
-    })),
-  );
-  for (const { project, beliefs } of projectedBeliefs) {
-    for (const belief of beliefs.filter((item) => item.status === "active")) {
-      const block = buildBeliefRetrievalBlock(belief);
-      block.project = project;
-      put(block);
+  if (options?.deriveBeliefs !== false) {
+    const projectedBeliefs = await Promise.all(
+      beliefProjects.map(async (project) => ({
+        project,
+        beliefs: await listProjectedBeliefs(kv, project).catch(() => []),
+      })),
+    );
+    for (const { project, beliefs } of projectedBeliefs) {
+      for (const belief of beliefs.filter((item) => item.status === "active")) {
+        const block = buildBeliefRetrievalBlock(belief);
+        block.project = project;
+        put(block);
+      }
     }
   }
 
@@ -1189,15 +1198,45 @@ export interface RetrievalBlockRefreshReport {
 
 export async function reconcileRetrievalBlocksFromState(
   kv: StateKV,
-  options: { indexChanged?: boolean; maxChanged?: number } = {},
+  options: {
+    indexChanged?: boolean;
+    maxChanged?: number;
+    partial?: boolean;
+    project?: string;
+    sessionId?: string;
+    sessionLimit?: number;
+    deriveBeliefs?: boolean;
+  } = {},
 ): Promise<RetrievalBlockRefreshReport> {
-  const nextBlocks = await collectRetrievalBlocksFromState(kv);
+  const partial = options.partial === true;
+  const nextBlocks = partial
+    ? await collectLightweightRetrievalBlocksFromState(kv, {
+        project: options.project,
+        sessionId: options.sessionId,
+        sessionLimit: options.sessionLimit,
+        deriveBeliefs: options.deriveBeliefs ?? false,
+      })
+    : await collectRetrievalBlocksFromState(kv);
   const blocks = new Map(nextBlocks.map((block) => [block.id, block] as const));
 
-  const existing = await kv.list<RetrievalBlock>(KV.retrievalBlocks).catch(() => []);
-  const existingById = new Map(existing.map((block) => [block.id, block] as const));
+  const existingById = new Map<string, RetrievalBlock>();
+  const existing = partial
+    ? []
+    : await kv.list<RetrievalBlock>(KV.retrievalBlocks).catch(() => []);
+  if (partial) {
+    await runSequentially([...blocks.keys()], async (blockId) => {
+      const existingBlock = await kv
+        .get<RetrievalBlock>(KV.retrievalBlocks, blockId)
+        .catch(() => null);
+      if (existingBlock) existingById.set(blockId, existingBlock);
+    });
+  } else {
+    for (const block of existing) existingById.set(block.id, block);
+  }
   const nextIds = new Set(blocks.keys());
-  const staleBlocks = existing.filter((block) => !nextIds.has(block.id));
+  const staleBlocks = partial
+    ? []
+    : existing.filter((block) => !nextIds.has(block.id));
   await runSequentially(staleBlocks, async (block) => {
     await deleteStoredRetrievalBlock(kv, block.id, {
       block,

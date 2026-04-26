@@ -13,10 +13,13 @@ import { upsertRetrievalBlockScopeMembership } from "./retrieval-block-scope-ind
 
 const MAX_RETRIES = 3;
 const DEFAULT_BATCH_SIZE = 25;
+const DEFAULT_REFRESH_SESSION_LIMIT = 4;
 
 type RetrievalBlockRetryPayload = {
   batchSize?: number;
   refreshFromState?: boolean;
+  fullRefresh?: boolean;
+  refreshSessionLimit?: number;
 };
 
 function positiveInteger(value: unknown, fallback: number): number {
@@ -57,6 +60,12 @@ export function registerRetrievalBlockRetryFunction(
         ? await reconcileRetrievalBlocksFromState(kv, {
             indexChanged: true,
             maxChanged: batchSize,
+            partial: data.fullRefresh !== true,
+            sessionLimit: positiveInteger(
+              data.refreshSessionLimit ??
+                process.env.RETRIEVAL_BLOCK_RETRY_REFRESH_SESSION_LIMIT,
+              DEFAULT_REFRESH_SESSION_LIMIT,
+            ),
           })
         : null;
     const nowMs = Date.now();

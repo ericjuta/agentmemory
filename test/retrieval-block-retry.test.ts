@@ -280,6 +280,13 @@ describe("retrieval block retry", () => {
   it("refreshes missing source-derived retrieval blocks during catch-up", async () => {
     const sdk = mockSdk();
     const kv = mockKV();
+    const originalList = kv.list.bind(kv);
+    const listSpy = vi.spyOn(kv, "list").mockImplementation(async (scope: string) => {
+      if (scope === KV.retrievalBlocks) {
+        throw new Error("full retrieval block list should not run");
+      }
+      return originalList(scope);
+    });
     const memory = makeMemory("mem_source");
     await kv.set(KV.memories, memory.id, memory);
     configureRetrievalBlockIndexingRuntime({
@@ -295,6 +302,8 @@ describe("retrieval block retry", () => {
     })) as { refreshed: number; refreshIndexed: number };
 
     expect(result).toMatchObject({ refreshed: 1, refreshIndexed: 1 });
+    expect(listSpy).not.toHaveBeenCalledWith(KV.retrievalBlocks);
+    listSpy.mockRestore();
     const blocks = await kv.list<RetrievalBlock>(KV.retrievalBlocks);
     expect(blocks).toHaveLength(1);
     expect(blocks[0]).toMatchObject({
