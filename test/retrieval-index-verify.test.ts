@@ -376,4 +376,57 @@ describe("api::retrieval-index-verify", () => {
     expect(response.status_code).toBe(400);
     expect(response.body.error).toContain("must be non-negative numbers");
   });
+
+  it("validates and forwards retrieval vector backfill options", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    let forwarded: unknown;
+    registerApiTriggers(sdk as never, kv as never, "secret");
+    sdk.registerFunction("mem::retrieval-vector-backfill", async (payload) => {
+      forwarded = payload;
+      return { success: true, backfilled: 1 };
+    });
+
+    const response = (await sdk.trigger("api::retrieval-vector-backfill", {
+      body: {
+        batchSize: "4",
+        candidateScanLimit: 40,
+        timeBudgetMs: "1000",
+        coverageTarget: "0.98",
+        concurrency: 2,
+        scheduleSave: false,
+        resetCursor: true,
+        dryRun: true,
+        ignored: "field",
+      },
+      headers: { authorization: "Bearer secret" },
+    })) as { status_code: number; body: { backfilled: number } };
+
+    expect(response.status_code).toBe(200);
+    expect(response.body.backfilled).toBe(1);
+    expect(forwarded).toEqual({
+      batchSize: 4,
+      candidateScanLimit: 40,
+      timeBudgetMs: 1000,
+      coverageTarget: 0.98,
+      concurrency: 2,
+      scheduleSave: false,
+      resetCursor: true,
+      dryRun: true,
+    });
+  });
+
+  it("rejects invalid retrieval vector backfill options", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerApiTriggers(sdk as never, kv as never);
+
+    const response = (await sdk.trigger("api::retrieval-vector-backfill", {
+      body: { batchSize: 0 },
+      headers: {},
+    })) as { status_code: number; body: { error: string } };
+
+    expect(response.status_code).toBe(400);
+    expect(response.body.error).toContain("batchSize");
+  });
 });

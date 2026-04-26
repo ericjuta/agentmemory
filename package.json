@@ -23,6 +23,7 @@
     "migrate": "node dist/functions/migrate.js",
     "test": "vitest run --exclude test/integration.test.ts",
     "eval:retrieval": "vitest run test/retrieval-quality-eval.test.ts",
+    "eval:retrieval-quality": "vitest run test/retrieval-quality-eval.test.ts",
     "test:watch": "vitest --exclude test/integration.test.ts",
     "test:integration": "vitest run test/integration.test.ts",
     "test:all": "vitest run"

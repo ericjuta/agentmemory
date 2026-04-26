@@ -196,11 +196,46 @@ describe("Diagnostics Functions", () => {
       };
 
       expect(result.success).toBe(true);
-      expect(result.summary.pass).toBe(8);
+      expect(result.summary.pass).toBe(9);
       expect(result.summary.warn).toBe(0);
       expect(result.summary.fail).toBe(0);
       expect(result.summary.fixable).toBe(0);
       expect(result.checks.every((c) => c.status === "pass")).toBe(true);
+    });
+
+    it("reports retrieval quality guardrail warnings", async () => {
+      await kv.set(KV.config, "retrieval-quality:last-summary", {
+        grade: "B",
+        evaluatedAt: "2026-04-24T12:00:00.000Z",
+        duplicateRate: 0.12,
+        recallAt3: 0.5,
+        leakageCount: 1,
+      });
+
+      const result = (await sdk.trigger("mem::diagnose", {
+        categories: ["retrieval_quality"],
+      })) as {
+        retrievalQuality: {
+          lastEvalGrade: string;
+          lastEvalRecallAt3: number;
+          lastEvalLeakageCount: number;
+        };
+        checks: DiagnosticCheck[];
+      };
+
+      expect(result.retrievalQuality).toMatchObject({
+        lastEvalGrade: "B",
+        lastEvalRecallAt3: 0.5,
+        lastEvalLeakageCount: 1,
+      });
+      expect(
+        result.checks.find((check) => check.name === "retrieval-project-leakage")
+          ?.status,
+      ).toBe("fail");
+      expect(
+        result.checks.find((check) => check.name === "retrieval-recall-regression")
+          ?.status,
+      ).toBe("warn");
     });
 
     it("active action with no lease produces warn", async () => {

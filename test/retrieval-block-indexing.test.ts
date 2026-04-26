@@ -367,6 +367,8 @@ describe("retrieval block indexing", () => {
       vectorEligibleCount: 3,
       vectorPresentCount: 1,
       vectorMissingCount: 2,
+      vectorCoverageRatio: 1 / 3,
+      oldestMissingVectorAt: blocks[1].updatedAt,
       vectorBackfilled: 1,
       vectorBackfillDeferred: 1,
       vectorBackfillFailures: 0,
@@ -415,6 +417,59 @@ describe("retrieval block indexing", () => {
     expect(provider.embed).not.toHaveBeenCalled();
     expect(vectorIndex.size).toBe(0);
     expect(scheduleSave).not.toHaveBeenCalled();
+  });
+
+  it("verifier uses active scope memberships instead of stale retrieval block storage", async () => {
+    const kv = mockKV();
+    const vectorIndex = new VectorIndex();
+    const provider: EmbeddingProvider = {
+      name: "test-embeddings",
+      dimensions: 3,
+      embed: vi.fn(async () => new Float32Array([0.1, 0.2, 0.3])),
+      embedBatch: vi.fn(async () => []),
+    };
+    configureRetrievalBlockIndexingRuntime({
+      embeddingProvider: provider,
+      vectorIndex,
+      scheduleSave: vi.fn(),
+    });
+    const first = makeBlock("rblk-active-1", "Active retrieval block one");
+    const second = makeBlock("rblk-active-2", "Active retrieval block two");
+    const stale = makeBlock("rblk-stale", "Stale retrieval block");
+    for (const block of [first, second, stale]) {
+      await kv.set(KV.retrievalBlocks, block.id, block);
+    }
+    await kv.set(KV.retrievalBlockIndex, "scope:project:%2Fproject", {
+      ids: [first.id, second.id],
+    });
+    for (const block of [first, second]) {
+      getRetrievalSearchIndex().addDocument(
+        block.id,
+        block.project,
+        block.canonicalText,
+      );
+    }
+    vectorIndex.add(first.id, first.project, new Float32Array([1, 0, 0]));
+
+    const result = await verifyRetrievalBlockIndex(kv as never, {
+      repair: false,
+      vectorBackfill: false,
+    });
+
+    expect(result).toMatchObject({
+      blockCount: 2,
+      bm25Size: 2,
+      vectorSize: 1,
+      expectedVectorCount: 2,
+      vectorEligibleCount: 2,
+      vectorPresentCount: 1,
+      vectorIndexedCount: 1,
+      vectorMissingCount: 1,
+      vectorCoverageRatio: 0.5,
+      vectorBackfillDeferred: 1,
+      repaired: false,
+    });
+    expect(provider.embed).not.toHaveBeenCalled();
   });
 
   it("verifier reports vector backfill failures and leaves retry queue handling to block indexing", async () => {

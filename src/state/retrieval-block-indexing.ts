@@ -30,8 +30,11 @@ export interface RetrievalBlockIndexVerificationResult {
   vectorSize: number;
   expectedVectorCount: number;
   vectorEligibleCount: number;
+  vectorIndexedCount: number;
   vectorPresentCount: number;
   vectorMissingCount: number;
+  vectorCoverageRatio: number;
+  oldestMissingVectorAt?: string;
   bm25Drift: number;
   vectorDrift: number;
   rebuilt: number;
@@ -64,6 +67,10 @@ type RetrievalIndexingRuntime = {
   vectorIndex: VectorIndex | null;
   scheduleSave?: (() => void) | undefined;
   persistenceStatus?: (() => IndexPersistenceStatus) | undefined;
+};
+
+type RetrievalBlockScopeEntry = {
+  ids?: unknown;
 };
 
 const runtime: RetrievalIndexingRuntime = {
@@ -112,6 +119,67 @@ function stableJitterMs(seed: string): number {
     hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
   }
   return hash % RETRIEVAL_BLOCK_RETRY_JITTER_MS;
+}
+
+function vectorCoverageRatio(present: number, eligible: number): number {
+  if (eligible <= 0) return 1;
+  return Math.max(0, Math.min(1, present / eligible));
+}
+
+function olderIso(a: string | undefined, b: string | undefined): string | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  return new Date(a).getTime() <= new Date(b).getTime() ? a : b;
+}
+
+function blockVectorAgeTimestamp(block: RetrievalBlock): string {
+  return block.updatedAt || block.eventAt || block.createdAt;
+}
+
+function isRetrievalBlock(value: unknown): value is RetrievalBlock {
+  const block = value as RetrievalBlock;
+  return (
+    !!block &&
+    typeof block.id === "string" &&
+    typeof block.sourceType === "string" &&
+    typeof block.sourceId === "string" &&
+    typeof block.project === "string" &&
+    typeof block.scope === "string" &&
+    typeof block.freshnessLane === "string" &&
+    typeof block.canonicalText === "string" &&
+    typeof block.title === "string" &&
+    Array.isArray(block.files) &&
+    Array.isArray(block.concepts) &&
+    Array.isArray(block.entities) &&
+    Array.isArray(block.sourceObservationIds)
+  );
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.filter((value) => value.length > 0))];
+}
+
+async function loadActiveRetrievalBlocks(kv: StateKV): Promise<RetrievalBlock[]> {
+  const scopeEntries = await kv
+    .list<RetrievalBlockScopeEntry>(KV.retrievalBlockIndex)
+    .catch(() => []);
+  const activeIds = uniqueStrings(
+    scopeEntries.flatMap((entry) =>
+      Array.isArray(entry?.ids)
+        ? entry.ids.filter((id): id is string => typeof id === "string")
+        : [],
+    ),
+  );
+  if (activeIds.length > 0) {
+    const loaded = await Promise.all(
+      activeIds.map((id) =>
+        kv.get<RetrievalBlock>(KV.retrievalBlocks, id).catch(() => null),
+      ),
+    );
+    return loaded.filter(isRetrievalBlock);
+  }
+  const blocks = await kv.list<unknown>(KV.retrievalBlocks);
+  return blocks.filter(isRetrievalBlock);
 }
 
 export function nextRetrievalBlockRetryAttemptAt(
@@ -447,14 +515,20 @@ export async function verifyRetrievalBlockIndex(
         0,
         expectedVectorCount - vectorPresentCount,
       );
+      const coverageRatio = vectorCoverageRatio(
+        vectorPresentCount,
+        expectedVectorCount,
+      );
       return {
         blockCount,
         bm25Size,
         vectorSize,
         expectedVectorCount,
         vectorEligibleCount: expectedVectorCount,
+        vectorIndexedCount: vectorPresentCount,
         vectorPresentCount,
         vectorMissingCount,
+        vectorCoverageRatio: coverageRatio,
         bm25Drift: Math.abs(bm25Size - blockCount),
         vectorDrift: Math.abs(vectorSize - expectedVectorCount),
         rebuilt: 0,
@@ -464,7 +538,7 @@ export async function verifyRetrievalBlockIndex(
       };
     }
 
-    const blocks = await kv.list<RetrievalBlock>(KV.retrievalBlocks);
+    const blocks = await loadActiveRetrievalBlocks(kv);
     const blockCount = blocks.length;
     const vectorEligibleBlocks =
       runtime.embeddingProvider && vectorIndex ? blocks : [];
@@ -476,6 +550,14 @@ export async function verifyRetrievalBlockIndex(
     const vectorPresentCount = Math.max(
       0,
       vectorEligibleCount - vectorMissingCount,
+    );
+    const coverageRatio = vectorCoverageRatio(
+      vectorPresentCount,
+      vectorEligibleCount,
+    );
+    const oldestMissingVectorAt = vectorMissingBlocks.reduce<string | undefined>(
+      (oldest, block) => olderIso(oldest, blockVectorAgeTimestamp(block)),
+      undefined,
     );
     const expectedVectorCount =
       runtime.embeddingProvider && vectorIndex ? vectorEligibleCount : 0;
@@ -497,8 +579,11 @@ export async function verifyRetrievalBlockIndex(
         vectorSize,
         expectedVectorCount,
         vectorEligibleCount,
+        vectorIndexedCount: vectorPresentCount,
         vectorPresentCount,
         vectorMissingCount,
+        vectorCoverageRatio: coverageRatio,
+        oldestMissingVectorAt,
         bm25Drift,
         vectorDrift,
         rebuilt: 0,
@@ -521,8 +606,11 @@ export async function verifyRetrievalBlockIndex(
         vectorSize,
         expectedVectorCount,
         vectorEligibleCount,
+        vectorIndexedCount: vectorPresentCount,
         vectorPresentCount,
         vectorMissingCount,
+        vectorCoverageRatio: coverageRatio,
+        oldestMissingVectorAt,
         bm25Drift,
         vectorDrift,
         rebuilt,
@@ -571,8 +659,11 @@ export async function verifyRetrievalBlockIndex(
       vectorSize,
       expectedVectorCount,
       vectorEligibleCount,
+      vectorIndexedCount: vectorPresentCount,
       vectorPresentCount,
       vectorMissingCount,
+      vectorCoverageRatio: coverageRatio,
+      oldestMissingVectorAt,
       bm25Drift,
       vectorDrift,
       rebuilt: 0,
@@ -591,9 +682,12 @@ export async function verifyRetrievalBlockIndex(
         runtime.embeddingProvider && vectorIndex ? vectorSize : 0,
       vectorEligibleCount:
         runtime.embeddingProvider && vectorIndex ? vectorSize : 0,
+      vectorIndexedCount:
+        runtime.embeddingProvider && vectorIndex ? vectorSize : 0,
       vectorPresentCount:
         runtime.embeddingProvider && vectorIndex ? vectorSize : 0,
       vectorMissingCount: 0,
+      vectorCoverageRatio: 1,
       bm25Drift: 0,
       vectorDrift: 0,
       rebuilt: 0,

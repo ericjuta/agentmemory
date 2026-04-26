@@ -4,6 +4,11 @@ import type { StateKV } from "../state/kv.js";
 import { KV } from "../state/schema.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
 import { recordAudit } from "./audit.js";
+import {
+  getRetrievalSearchIndex,
+  getRetrievalVectorIndex,
+  getRetrievalBlockIndexingRuntime,
+} from "../state/retrieval-block-indexing.js";
 import type {
   Action,
   ActionEdge,
@@ -16,6 +21,7 @@ import type {
   MeshPeer,
   Session,
   Memory,
+  RetrievalBlockRetryEntry,
 } from "../types.js";
 
 const ALL_CATEGORIES = [
@@ -27,10 +33,25 @@ const ALL_CATEGORIES = [
   "sessions",
   "memories",
   "mesh",
+  "retrieval_quality",
 ];
 
 const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
 const ONE_HOUR_MS = 60 * 60 * 1000;
+const TEN_MINUTES_MS = 10 * 60 * 1000;
+
+interface RetrievalQualityEvalSummary {
+  grade?: string;
+  evaluatedAt?: string;
+  duplicateRate?: number;
+  recallAt3?: number;
+  leakageCount?: number;
+}
+
+function ratio(numerator: number, denominator: number): number {
+  if (denominator <= 0) return 1;
+  return Math.max(0, Math.min(1, numerator / denominator));
+}
 
 export function registerDiagnosticsFunction(sdk: ISdk, kv: StateKV): void {
   sdk.registerFunction("mem::diagnose", 
@@ -421,6 +442,123 @@ export function registerDiagnosticsFunction(sdk: ISdk, kv: StateKV): void {
         }
       }
 
+      let retrievalQuality:
+        | {
+            bm25Coverage: number;
+            vectorCoverage: number;
+            deferredFreshnessLag: {
+              queuedCount: number;
+              oldestQueuedAt?: string;
+              oldestAgeMs: number;
+            };
+            duplicateRate: number | null;
+            lastEvalGrade: string | null;
+            lastEvalAt: string | null;
+            lastEvalRecallAt3: number | null;
+            lastEvalLeakageCount: number | null;
+          }
+        | undefined;
+
+      if (categories.includes("retrieval_quality")) {
+        const persistence =
+          getRetrievalBlockIndexingRuntime().persistenceStatus?.();
+        const bm25Size = getRetrievalSearchIndex().size;
+        const vectorSize = getRetrievalVectorIndex()?.size ?? 0;
+        const blockCount = persistence?.manifest?.documentCount ?? bm25Size;
+        const vectorCount = Math.min(
+          persistence?.manifest?.vectorCount ?? vectorSize,
+          blockCount,
+        );
+        const retryEntries = await kv
+          .list<RetrievalBlockRetryEntry>(KV.retrievalBlockRetry)
+          .catch(() => []);
+        const oldestQueuedAt = retryEntries.reduce<string | undefined>(
+          (oldest, entry) => {
+            const timestamp = entry.firstFailedAt || entry.lastFailedAt;
+            if (!timestamp) return oldest;
+            if (!oldest) return timestamp;
+            return new Date(timestamp).getTime() < new Date(oldest).getTime()
+              ? timestamp
+              : oldest;
+          },
+          undefined,
+        );
+        const oldestAgeMs = oldestQueuedAt
+          ? Math.max(0, now - new Date(oldestQueuedAt).getTime())
+          : 0;
+        const evalSummary = await kv
+          .get<RetrievalQualityEvalSummary>(
+            KV.config,
+            "retrieval-quality:last-summary",
+          )
+          .catch(() => null);
+        retrievalQuality = {
+          bm25Coverage: ratio(bm25Size, blockCount),
+          vectorCoverage: ratio(vectorCount, blockCount),
+          deferredFreshnessLag: {
+            queuedCount: retryEntries.length,
+            oldestQueuedAt,
+            oldestAgeMs,
+          },
+          duplicateRate: evalSummary?.duplicateRate ?? null,
+          lastEvalGrade: evalSummary?.grade ?? null,
+          lastEvalAt: evalSummary?.evaluatedAt ?? null,
+          lastEvalRecallAt3: evalSummary?.recallAt3 ?? null,
+          lastEvalLeakageCount: evalSummary?.leakageCount ?? null,
+        };
+
+        if (retrievalQuality.vectorCoverage < 0.95) {
+          checks.push({
+            name: "retrieval-vector-coverage-low",
+            category: "retrieval_quality",
+            status: "warn",
+            message: `Retrieval vector coverage is ${Math.round(retrievalQuality.vectorCoverage * 100)}%`,
+            fixable: false,
+          });
+        }
+        if (oldestAgeMs > TEN_MINUTES_MS) {
+          checks.push({
+            name: "retrieval-freshness-lag",
+            category: "retrieval_quality",
+            status: "warn",
+            message: `Retrieval queue has been pending for ${Math.round(oldestAgeMs / 60000)} minutes`,
+            fixable: false,
+          });
+        }
+        if ((evalSummary?.leakageCount ?? 0) > 0) {
+          checks.push({
+            name: "retrieval-project-leakage",
+            category: "retrieval_quality",
+            status: "fail",
+            message: `Retrieval eval reported ${evalSummary?.leakageCount} project leakage hits`,
+            fixable: false,
+          });
+        }
+        if ((evalSummary?.recallAt3 ?? 1) < 0.9) {
+          checks.push({
+            name: "retrieval-recall-regression",
+            category: "retrieval_quality",
+            status: "warn",
+            message: `Retrieval eval recall@3 is ${evalSummary?.recallAt3}`,
+            fixable: false,
+          });
+        }
+        if (
+          !checks.some(
+            (check) =>
+              check.category === "retrieval_quality" && check.status !== "pass",
+          )
+        ) {
+          checks.push({
+            name: "retrieval-quality-ok",
+            category: "retrieval_quality",
+            status: "pass",
+            message: "Retrieval quality guardrails are healthy",
+            fixable: false,
+          });
+        }
+      }
+
       const summary = {
         pass: checks.filter((c) => c.status === "pass").length,
         warn: checks.filter((c) => c.status === "warn").length,
@@ -428,7 +566,7 @@ export function registerDiagnosticsFunction(sdk: ISdk, kv: StateKV): void {
         fixable: checks.filter((c) => c.fixable).length,
       };
 
-      return { success: true, checks, summary };
+      return { success: true, checks, summary, retrievalQuality };
     },
   );
 

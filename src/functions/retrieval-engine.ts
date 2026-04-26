@@ -5,6 +5,7 @@ import type {
   GuardrailMemory,
   HandoffPacket,
   RetrievalBlock,
+  RetrievalBlockRetryEntry,
   RetrievalContextItem,
   RetrievalIntent,
   RetrievalSearchResult,
@@ -49,6 +50,15 @@ const RETRIEVAL_BLOCK_SCOPE_COOLDOWN_MS = 60_000;
 const RETRIEVAL_BLOCK_VECTOR_MIN_SCORE = 0.35;
 const DUPLICATE_CLUSTER_MIN_JACCARD = 0.72;
 const DUPLICATE_CLUSTER_MIN_SHARED_TERMS = 5;
+
+type RetrievalQueryClass =
+  | "resume"
+  | "debug"
+  | "file"
+  | "decision"
+  | "implementation"
+  | "architecture"
+  | "broad";
 
 const DUPLICATE_STOPWORDS = new Set([
   "about",
@@ -333,6 +343,89 @@ function isResumeQuery(query?: string): boolean {
   ].some((term) => normalized.includes(term));
 }
 
+function classifyRetrievalQuery(
+  query: UnifiedRetrievalQuery,
+  terms: string[],
+  focusFiles: string[],
+  resumeQuery: boolean,
+): RetrievalQueryClass {
+  if (resumeQuery || query.intent === "resume") return "resume";
+  if (focusFiles.length > 0 || terms.some((term) => term.includes("/") || term.includes("."))) {
+    return "file";
+  }
+  const normalized = (query.query || "").toLowerCase();
+  if (/\b(error|failure|timeout|incident|bug|debug|oom|crash|regression)\b/.test(normalized)) {
+    return "debug";
+  }
+  if (/\b(decision|decide|approved|rejected|chosen|policy)\b/.test(normalized)) {
+    return "decision";
+  }
+  if (/\b(implement|code|function|test|api|endpoint|worker|build|deploy)\b/.test(normalized)) {
+    return "implementation";
+  }
+  if (/\b(architecture|design|pattern|system|strategy)\b/.test(normalized)) {
+    return "architecture";
+  }
+  return "broad";
+}
+
+function sourceTypePrior(
+  block: RetrievalBlock,
+  queryClass: RetrievalQueryClass,
+): number {
+  switch (queryClass) {
+    case "resume":
+      return block.isResumeArtifact || block.sourceType === "working_set" ? 1 : 0.35;
+    case "debug":
+      return block.sourceType === "observation" || block.hadFailure
+        ? 1
+        : block.sourceType === "guardrail" || block.sourceType === "decision"
+          ? 0.78
+          : block.sourceType === "working_set"
+            ? 0.22
+            : 0.45;
+    case "file":
+      return block.files.length > 0 || block.sourceType === "dossier" ? 1 : 0.4;
+    case "decision":
+      return block.sourceType === "decision" || block.hadDecision
+        ? 1
+        : block.sourceType === "working_set"
+          ? 0.35
+          : 0.5;
+    case "implementation":
+      return block.sourceType === "observation" ||
+        block.sourceType === "dossier" ||
+        block.sourceType === "decision"
+        ? 0.92
+        : block.sourceType === "working_set"
+          ? 0.32
+          : 0.55;
+    case "architecture":
+      return block.sourceType === "semantic_memory" ||
+        block.sourceType === "procedural_memory" ||
+        block.sourceType === "profile"
+        ? 0.9
+        : 0.55;
+    case "broad":
+      return 0.55;
+  }
+}
+
+function exactQueryBoost(block: RetrievalBlock, query: string | undefined, terms: string[]): number {
+  if (!query || terms.length === 0) return 0;
+  const normalizedQuery = query.toLowerCase().trim();
+  const title = block.title.toLowerCase();
+  const sourceId = block.sourceId.toLowerCase();
+  const id = block.id.toLowerCase();
+  const files = block.files.join(" ").toLowerCase();
+  if (sourceId.includes(normalizedQuery) || id.includes(normalizedQuery)) return 1;
+  if (title.includes(normalizedQuery)) return 0.9;
+  if (block.files.some((filePath) => filePath.toLowerCase() === normalizedQuery)) return 0.85;
+  if (terms.every((term) => title.includes(term))) return 0.75;
+  if (terms.some((term) => files.includes(term))) return 0.55;
+  return 0;
+}
+
 function getCachedQueryEmbedding(cacheKey: string): Float32Array | null {
   const cached = queryEmbeddingCache.get(cacheKey);
   if (!cached) return null;
@@ -409,6 +502,9 @@ type RankedRetrievalBlock = {
   conceptScore: number;
   sessionScore: number;
   resumeScore: number;
+  sourcePriorScore: number;
+  exactBoostScore: number;
+  vectorCoverageScore: number;
   freshnessScore: number;
   recencyScore: number;
   ageHours: number;
@@ -461,6 +557,9 @@ function buildTraceScore(ranked: RankedRetrievalBlock): RetrievalTraceScore {
     freshness: ranked.freshnessScore,
     session: ranked.sessionScore,
     resume: ranked.resumeScore,
+    sourcePrior: ranked.sourcePriorScore,
+    exactBoost: ranked.exactBoostScore,
+    vectorCoverage: ranked.vectorCoverageScore,
     combined: ranked.combinedScore,
   };
 }
@@ -765,6 +864,7 @@ export async function retrieveRelevantBlocks(
   const resumeQuery =
     query.intent === "resume" ||
     (query.intent !== "next_action" && isResumeQuery(query.query));
+  const queryClass = classifyRetrievalQuery(query, terms, focusFiles, resumeQuery);
   const nextActionIntent = query.intent === "next_action";
   const hasTargetedInput =
     lexicalQuery.trim().length > 0 || resumeQuery || nextActionIntent;
@@ -817,6 +917,14 @@ export async function retrieveRelevantBlocks(
   const runtime = getRetrievalBlockIndexingRuntime();
   const vectorIndex = getRetrievalVectorIndex();
   const scopedBlockIds = new Set(blocks.map((block) => block.id));
+  const vectorCoveredBlockCount =
+    vectorIndex && scopedBlockIds.size > 0
+      ? blocks.filter((block) => vectorIndex.has(block.id)).length
+      : 0;
+  const vectorCoverageConfidence =
+    vectorIndex && scopedBlockIds.size > 0
+      ? Math.max(0.15, Math.min(1, vectorCoveredBlockCount / scopedBlockIds.size))
+      : 0;
   if (lexicalQuery.trim() && runtime.embeddingProvider && vectorIndex && vectorIndex.size > 0) {
     try {
       const cacheKey = `${runtime.embeddingProvider.name}:${lexicalQuery}`;
@@ -837,7 +945,8 @@ export async function retrieveRelevantBlocks(
         candidateIds.add(result.obsId);
         vectorScores.set(
           result.obsId,
-          maxVector > 0 ? result.score / maxVector : result.score,
+          (maxVector > 0 ? result.score / maxVector : result.score) *
+            vectorCoverageConfidence,
         );
       }
     } catch {
@@ -856,7 +965,8 @@ export async function retrieveRelevantBlocks(
     ...focusFiles.map((filePath) => basename(filePath)),
     ...focusConcepts,
   ]);
-  if (entityHints.length > 0) {
+  const graphExpanded = Boolean(query.project) && entityHints.length > 0;
+  if (graphExpanded) {
     try {
       const graphResults = await getGraphRetrieval().searchByEntities(entityHints, 2, 40);
       const byObservationId = new Map<string, number>();
@@ -989,6 +1099,10 @@ export async function retrieveRelevantBlocks(
         query.sessionId && block.sessionId === query.sessionId ? 1 : 0;
       const resumeScore =
         resumeQuery && block.isResumeArtifact ? 1 : 0;
+      const sourcePriorScore = sourceTypePrior(block, queryClass);
+      const exactBoostScore = exactQueryBoost(block, query.query, terms);
+      const workingSetPenalty =
+        block.sourceType === "working_set" && queryClass !== "resume" ? 0.45 : 0;
       const freshnessScore =
         block.freshnessLane === "hot"
           ? 1
@@ -1013,17 +1127,21 @@ export async function retrieveRelevantBlocks(
             fileScore * 1.8 +
             conceptScore * 1.5 +
             vectorScore * 1.2 +
-            graphScore * 0.8 +
+            graphScore * 0.55 +
+            sourcePriorScore * 0.85 +
+            exactBoostScore * 1.1 +
             sessionScore * 0.7 +
             resumeScore * 0.6 +
             intentScore * 0.6 +
             freshnessScore * 0.5 +
             recencyScore * 0.5 +
-            importanceScore * 0.05
+            importanceScore * 0.05 -
+            workingSetPenalty
           : sessionScore * 2.4 +
             freshnessScore * 1.6 +
             resumeScore * 1.2 +
             intentScore * 1.1 +
+            sourcePriorScore * 0.4 +
             recencyScore * 0.8 +
             importanceScore * 0.08;
       return {
@@ -1041,6 +1159,9 @@ export async function retrieveRelevantBlocks(
         conceptScore,
         sessionScore,
         resumeScore,
+        sourcePriorScore,
+        exactBoostScore,
+        vectorCoverageScore: vectorCoverageConfidence,
         freshnessScore,
         recencyScore,
         ageHours,
@@ -1065,6 +1186,27 @@ export async function retrieveRelevantBlocks(
     .sort((a, b) => b.combinedScore - a.combinedScore);
 
   const traceTimestamp = new Date().toISOString();
+  const retryEntries = await kv
+    .list<RetrievalBlockRetryEntry>(KV.retrievalBlockRetry)
+    .catch(() => []);
+  const scopedRetryEntries = retryEntries.filter((entry) => {
+    const block = entry.block;
+    if (!block) return Boolean(query.project || query.sessionId);
+    if (query.sessionId && block.sessionId === query.sessionId) return true;
+    if (query.project && block.project === query.project) return true;
+    return !query.project && !query.sessionId;
+  });
+  const oldestQueuedAt = scopedRetryEntries.reduce<string | undefined>(
+    (oldest, entry) => {
+      const timestamp = entry.firstFailedAt || entry.lastFailedAt;
+      if (!timestamp) return oldest;
+      if (!oldest) return timestamp;
+      return new Date(timestamp).getTime() < new Date(oldest).getTime()
+        ? timestamp
+        : oldest;
+    },
+    undefined,
+  );
   const laneBudgets: Record<RetrievalTraceLane, number> =
     query.purpose === "enrich"
       ? {
@@ -1281,6 +1423,22 @@ export async function retrieveRelevantBlocks(
         return b.score.recency - a.score.recency;
       }),
     usefulnessLink,
+    degradedFreshness:
+      usingStateFallbackBlocks ||
+      scopedBlockReadIncomplete ||
+      scopedRetryEntries.length > 0,
+    freshnessLag:
+      scopedRetryEntries.length > 0
+        ? {
+            queuedCount: scopedRetryEntries.length,
+            oldestQueuedAt,
+            affectedSourceTypes: [
+              ...new Set(scopedRetryEntries.map((entry) => entry.sourceType)),
+            ],
+          }
+        : undefined,
+    vectorCoverageConfidence,
+    graphExpanded,
   };
 
   const result = {

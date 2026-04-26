@@ -344,6 +344,9 @@ export interface RetrievalTraceScore {
   freshness?: number;
   session?: number;
   resume?: number;
+  sourcePrior?: number;
+  exactBoost?: number;
+  vectorCoverage?: number;
   combined?: number;
 }
 
@@ -417,6 +420,14 @@ export interface RetrievalTrace {
   selected: RetrievalTraceCandidate[];
   skipped: RetrievalTraceCandidate[];
   usefulnessLink: ContextInjection | null;
+  degradedFreshness?: boolean;
+  freshnessLag?: {
+    queuedCount: number;
+    oldestQueuedAt?: string;
+    affectedSourceTypes: string[];
+  };
+  vectorCoverageConfidence?: number;
+  graphExpanded?: boolean;
 }
 
 export interface RetrievalContextItem {

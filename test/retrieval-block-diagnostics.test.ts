@@ -5,6 +5,7 @@ import {
   configureRetrievalBlockIndexingRuntime,
   getRetrievalSearchIndex,
 } from "../src/state/retrieval-block-indexing.js";
+import { VectorIndex } from "../src/state/vector-index.js";
 import { KV } from "../src/state/schema.js";
 import type { RetrievalBlock } from "../src/types.js";
 import { mockKV, mockSdk } from "./helpers/mocks.js";
@@ -95,6 +96,12 @@ describe("mem::retrieval-blocks-diagnostics", () => {
       manifestDocumentCount: number;
       estimatedFullScanCount: number;
       scanRisk: { level: string };
+      quality: {
+        bm25Coverage: number;
+        vectorCoverage: number;
+        vectorMissingCount: number;
+        deferredFreshnessLag: { queuedCount: number };
+      };
       sampleCount: number;
       samples: Array<{ id: string; project?: string }>;
     };
@@ -103,8 +110,75 @@ describe("mem::retrieval-blocks-diagnostics", () => {
     expect(result.manifestDocumentCount).toBe(123);
     expect(result.estimatedFullScanCount).toBe(123);
     expect(result.scanRisk.level).toBe("high");
+    expect(result.quality).toMatchObject({
+      bm25Coverage: 0,
+      vectorCoverage: 0,
+      vectorEligibleCount: 1,
+      vectorIndexedCount: 0,
+      vectorMissingCount: 1,
+      deferredFreshnessLag: { queuedCount: 0 },
+    });
     expect(result.sampleCount).toBe(1);
     expect(result.samples[0]).toMatchObject({ id: block.id, project: "/project" });
-    expect(list).not.toHaveBeenCalled();
+    expect(list.mock.calls.some(([scope]) => scope === KV.retrievalBlocks)).toBe(
+      false,
+    );
+  });
+
+  it("reports scoped vector coverage from the live vector index", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    const block = makeBlock("rblk_vector");
+    const vectorIndex = new VectorIndex();
+    vectorIndex.add(block.id, block.project, new Float32Array([1, 0, 0]));
+    getRetrievalSearchIndex().addDocument(
+      block.id,
+      block.project,
+      block.canonicalText,
+    );
+    await kv.set(KV.retrievalBlocks, block.id, block);
+    await kv.set(KV.retrievalBlockIndex, "scope:project:%2Fproject", {
+      ids: [block.id],
+      updatedAt: "2026-04-24T12:00:00.000Z",
+    });
+    configureRetrievalBlockIndexingRuntime({
+      embeddingProvider: null,
+      vectorIndex,
+      persistenceStatus: () => ({
+        scope: KV.retrievalBlockIndex,
+        mode: "sharded",
+        status: "ok",
+        manifest: {
+          savedAt: "2026-04-24T12:00:00.000Z",
+          bm25Shards: 1,
+          vectorShards: 0,
+          bm25Bytes: 256,
+          vectorBytes: 0,
+          documentCount: 99,
+          vectorCount: 0,
+        },
+      }),
+    });
+    registerRetrievalBlockDiagnosticsFunction(sdk as never, kv as never);
+
+    const result = (await sdk.trigger("mem::retrieval-blocks-diagnostics", {
+      project: "/project",
+    })) as {
+      quality: {
+        bm25Coverage: number;
+        vectorCoverage: number;
+        vectorEligibleCount: number;
+        vectorIndexedCount: number;
+        vectorMissingCount: number;
+      };
+    };
+
+    expect(result.quality).toMatchObject({
+      bm25Coverage: 1,
+      vectorCoverage: 1,
+      vectorEligibleCount: 1,
+      vectorIndexedCount: 1,
+      vectorMissingCount: 0,
+    });
   });
 });

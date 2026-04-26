@@ -1,6 +1,6 @@
 import type { ISdk } from "iii-sdk";
 
-import type { RetrievalBlock } from "../types.js";
+import type { RetrievalBlock, RetrievalBlockRetryEntry } from "../types.js";
 import type { StateKV } from "../state/kv.js";
 import { KV } from "../state/schema.js";
 import {
@@ -20,6 +20,14 @@ interface DiagnosticsPayload {
 interface ScopeEntry {
   ids?: unknown;
   updatedAt?: unknown;
+}
+
+interface RetrievalQualityEvalSummary {
+  grade?: string;
+  evaluatedAt?: string;
+  duplicateRate?: number;
+  recallAt3?: number;
+  leakageCount?: number;
 }
 
 function parseNonNegativeInt(value: unknown, fallback: number): number {
@@ -54,6 +62,15 @@ function requestedScopeKeys(options: {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function ratio(numerator: number, denominator: number): number {
+  if (denominator <= 0) return 1;
+  return Math.max(0, Math.min(1, numerator / denominator));
+}
+
+function retryTimestamp(entry: RetrievalBlockRetryEntry): string {
+  return entry.firstFailedAt || entry.lastFailedAt;
 }
 
 async function readScopeEntry(
@@ -95,12 +112,43 @@ export function registerRetrievalBlockDiagnosticsFunction(
     const largeScanThreshold = parseNonNegativeInt(data.largeScanThreshold, 5_000);
     const persistence = getRetrievalBlockIndexingRuntime().persistenceStatus?.();
     const manifestDocumentCount = persistence?.manifest?.documentCount;
+    const manifestVectorCount = persistence?.manifest?.vectorCount;
+    const bm25Size = getRetrievalSearchIndex().size;
+    const vectorIndex = getRetrievalVectorIndex();
+    const vectorSize = vectorIndex?.size ?? 0;
+    const retryEntries = await kv
+      .list<RetrievalBlockRetryEntry>(KV.retrievalBlockRetry)
+      .catch(() => []);
+    const oldestRetryAt = retryEntries.reduce<string | undefined>(
+      (oldest, entry) => {
+        const timestamp = retryTimestamp(entry);
+        if (!timestamp) return oldest;
+        if (!oldest) return timestamp;
+        return new Date(timestamp).getTime() < new Date(oldest).getTime()
+          ? timestamp
+          : oldest;
+      },
+      undefined,
+    );
+    const evalSummary = await kv
+      .get<RetrievalQualityEvalSummary>(KV.config, "retrieval-quality:last-summary")
+      .catch(() => null);
     const scopeEntries = await Promise.all(
       requestedScopeKeys({ project, sessionId, branch }).map((key) =>
         readScopeEntry(kv, key),
       ),
     );
     const scopedIds = [...new Set(scopeEntries.flatMap((entry) => entry.ids))];
+    const activeEligibleCount =
+      scopedIds.length > 0 ? scopedIds.length : manifestDocumentCount ?? bm25Size;
+    const activeVectorIndexedCount =
+      scopedIds.length > 0 && vectorIndex
+        ? scopedIds.filter((id) => vectorIndex.has(id)).length
+        : Math.min(manifestVectorCount ?? vectorSize, activeEligibleCount);
+    const activeVectorMissingCount = Math.max(
+      0,
+      activeEligibleCount - activeVectorIndexedCount,
+    );
     const sampleIds = scopedIds.slice(0, sampleLimit);
     const samples = await Promise.all(
       sampleIds.map(async (id) => {
@@ -137,8 +185,44 @@ export function registerRetrievalBlockDiagnosticsFunction(
       source: "retrieval-index-manifest-and-scope-memberships",
       persistence,
       manifestDocumentCount,
-      bm25Size: getRetrievalSearchIndex().size,
-      vectorSize: getRetrievalVectorIndex()?.size ?? 0,
+      bm25Size,
+      vectorSize,
+      quality: {
+        bm25Coverage: ratio(bm25Size, activeEligibleCount),
+        vectorCoverage: ratio(activeVectorIndexedCount, activeEligibleCount),
+        vectorEligibleCount: activeEligibleCount,
+        vectorIndexedCount: activeVectorIndexedCount,
+        vectorMissingCount: activeVectorMissingCount,
+        deferredFreshnessLag: {
+          queuedCount: retryEntries.length,
+          oldestQueuedAt: oldestRetryAt,
+          oldestAgeMs: oldestRetryAt
+            ? Math.max(0, Date.now() - new Date(oldestRetryAt).getTime())
+            : 0,
+          affectedSourceTypes: [
+            ...new Set(retryEntries.map((entry) => entry.sourceType)),
+          ],
+          affectedProjects: [
+            ...new Set(
+              retryEntries
+                .map((entry) => entry.block?.project)
+                .filter((value): value is string => Boolean(value)),
+            ),
+          ],
+          affectedSessions: [
+            ...new Set(
+              retryEntries
+                .map((entry) => entry.block?.sessionId)
+                .filter((value): value is string => Boolean(value)),
+            ),
+          ],
+        },
+        duplicateRate: evalSummary?.duplicateRate ?? null,
+        lastEvalGrade: evalSummary?.grade ?? null,
+        lastEvalAt: evalSummary?.evaluatedAt ?? null,
+        lastEvalRecallAt3: evalSummary?.recallAt3 ?? null,
+        lastEvalLeakageCount: evalSummary?.leakageCount ?? null,
+      },
       estimatedFullScanCount,
       scanRisk,
       scopes: scopeEntries.map(({ ids, ...entry }) => entry),

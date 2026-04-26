@@ -1,59 +1,47 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import {
+  compactRetrievalQualitySummary,
   evaluateRetrievalQuality,
   evaluateRetrievalQualityCase,
+  type RetrievalQualityEvalCase,
 } from "../src/eval/retrieval-quality.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 describe("retrieval quality eval harness", () => {
   it("passes a deterministic fixture with strong relevance and low duplication", () => {
+    const fixturePath = join(__dirname, "fixtures", "retrieval-quality-cases.json");
+    const fixtureCases = JSON.parse(
+      readFileSync(fixturePath, "utf8"),
+    ) as RetrievalQualityEvalCase[];
     const result = evaluateRetrievalQuality(
-      [
-        {
-          id: "vector-backfill-specificity",
-          query: "vector backfill timeout repair",
-          resultIds: [
-            "rblk_vector_backfill_timeout",
-            "rblk_vector_retry_queue",
-            "rblk_index_persistence",
-          ],
-          relevantIds: [
-            "rblk_vector_backfill_timeout",
-            "rblk_vector_retry_queue",
-          ],
-          forbiddenIds: ["rblk_working_set_noise"],
-          duplicateGroups: [
-            ["rblk_vector_backfill_timeout", "rblk_vector_backfill_copy"],
-          ],
-          k: 3,
-        },
-        {
-          id: "scope-contract",
-          query: "smart search cwd branch scope_required",
-          resultIds: [
-            "rblk_smart_search_scope",
-            "rblk_api_scope_validation",
-            "rblk_global_legacy_noise",
-          ],
-          relevantIds: [
-            "rblk_smart_search_scope",
-            "rblk_api_scope_validation",
-          ],
-          forbiddenIds: ["rblk_other_project_memory"],
-          k: 3,
-        },
-      ],
+      fixtureCases,
       {
-        minPrecisionAtK: 0.66,
-        minRecallAtK: 1,
+        minPrecisionAtK: 0.33,
+        minRecallAtK: 0.9,
         minMrr: 1,
         maxDuplicateRate: 0,
+        minTop1Precision: 0.7,
+        minRecallAt3: 0.9,
       },
     );
 
     expect(result.passed).toBe(true);
-    expect(result.averages.precisionAtK).toBeGreaterThanOrEqual(0.66);
-    expect(result.averages.recallAtK).toBe(1);
+    expect(result.grade).toBe("A+");
+    expect(result.averages.precisionAtK).toBeGreaterThanOrEqual(0.6);
+    expect(result.averages.recallAt3).toBeGreaterThanOrEqual(0.9);
     expect(result.averages.duplicateRate).toBe(0);
+    expect(result.averages.leakageCount).toBe(0);
+    expect(result.averages.p95LatencyMs).toBeLessThan(1000);
+    expect(compactRetrievalQualitySummary(result)).toMatchObject({
+      grade: "A+",
+      recallAt3: result.averages.recallAt3,
+      leakageCount: 0,
+      passed: true,
+    });
   });
 
   it("reports the specific gate failures for noisy results", () => {

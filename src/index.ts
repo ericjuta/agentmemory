@@ -97,6 +97,7 @@ import {
 import { registerRetrievalBlockRetryFunction } from "./functions/retrieval-block-retry.js";
 import { registerRetrievalIndexVerifyFunction } from "./functions/retrieval-index-verify.js";
 import { registerRetrievalBlockDiagnosticsFunction } from "./functions/retrieval-block-diagnostics.js";
+import { registerRetrievalVectorBackfillFunction } from "./functions/retrieval-vector-backfill.js";
 import { registerConsolidatedMemoryBackfillFunction } from "./functions/consolidated-memory-backfill.js";
 import { registerDeferredWorkFunction } from "./functions/deferred-work.js";
 import { registerApiTriggers } from "./triggers/api.js";
@@ -235,6 +236,7 @@ async function main() {
     observationPersistenceStatus: () => indexPersistence?.getStatus(),
   });
   registerRetrievalBlockDiagnosticsFunction(sdk, kv);
+  registerRetrievalVectorBackfillFunction(sdk, kv);
   registerConsolidatedMemoryBackfillFunction(sdk, kv);
   registerDeferredWorkFunction(sdk, kv);
 
@@ -442,7 +444,7 @@ async function main() {
     `[agentmemory] Ready. ${embeddingProvider ? "Triple-stream (BM25+Vector+Graph)" : "BM25+Graph"} search active.`,
   );
   console.log(
-    `[agentmemory] Endpoints: 132 REST + 44 MCP tools + 6 MCP resources + 3 MCP prompts`,
+    `[agentmemory] Endpoints: 133 REST + 44 MCP tools + 6 MCP resources + 3 MCP prompts`,
   );
 
   const viewerPort = config.restPort + 2;
@@ -628,6 +630,7 @@ async function main() {
 
   let indexVerifyHandle: AdaptiveTimerHandle | undefined;
   let retrievalIndexVerifyHandle: AdaptiveTimerHandle | undefined;
+  let retrievalVectorBackfillHandle: AdaptiveTimerHandle | undefined;
   let delayedRetrievalIndexVerifyTimer: ReturnType<typeof setTimeout> | undefined;
   if (process.env.INDEX_VERIFY_ENABLED !== "false") {
     indexVerifyHandle = createAdaptiveTimer(
@@ -674,7 +677,9 @@ async function main() {
     retrievalIndexVerifyHandle = createAdaptiveTimer(
       async () =>
         runMaintenanceTask("Retrieval index verify", async () => {
-          const result = await verifyRetrievalBlockIndex(kv);
+          const result = await verifyRetrievalBlockIndex(kv, {
+            vectorBackfill: false,
+          });
           if (result.error) {
             console.warn(
               `[agentmemory] Retrieval index verify failed: ${result.error}`,
@@ -699,6 +704,37 @@ async function main() {
     console.log(
       `[agentmemory] Retrieval index verify: enabled (every 120m, adaptive)`,
     );
+    if (process.env.RETRIEVAL_VECTOR_BACKFILL_ENABLED !== "false") {
+      retrievalVectorBackfillHandle = createAdaptiveTimer(
+        async () =>
+          runMaintenanceTask("Retrieval vector backfill", async () => {
+            const result = await sdk.trigger<
+              Record<string, unknown>,
+              { backfilled?: number; failed?: number; attempted?: number }
+            >({
+              function_id: "mem::retrieval-vector-backfill",
+              payload: {},
+            });
+            return (
+              (result?.backfilled || 0) +
+              (result?.failed || 0) +
+              (result?.attempted || 0)
+            );
+          }),
+        {
+          baseMs: parseInt(
+            process.env.RETRIEVAL_VECTOR_BACKFILL_INTERVAL_MS || "60000",
+            10,
+          ),
+          minMs: 30_000,
+          maxMs: 900_000,
+          label: "Retrieval vector backfill",
+        },
+      );
+      console.log(
+        `[agentmemory] Retrieval vector backfill: enabled (adaptive, every 1m base)`,
+      );
+    }
     if (process.env.RETRIEVAL_INDEX_STARTUP_VERIFY_ENABLED !== "false") {
       const startupVerifyDelayMs = parseInt(
         process.env.RETRIEVAL_INDEX_STARTUP_VERIFY_DELAY_MS || "30000",
@@ -758,6 +794,7 @@ async function main() {
     evictionHandle?.stop();
     indexVerifyHandle?.stop();
     retrievalIndexVerifyHandle?.stop();
+    retrievalVectorBackfillHandle?.stop();
     if (delayedRetrievalIndexVerifyTimer) {
       clearTimeout(delayedRetrievalIndexVerifyTimer);
     }

@@ -3584,6 +3584,78 @@ export function registerApiTriggers(
   });
   sdk.registerTrigger({ type: "http", function_id: "api::retrieval-index-verify", config: { api_path: "/agentmemory/retrieval-index/verify", http_method: "POST" } });
 
+  sdk.registerFunction("api::retrieval-vector-backfill",  async (req: ApiRequest) => {
+    const denied = checkAuth(req, secret);
+    if (denied) return denied;
+    const body = (req.body || {}) as Record<string, unknown>;
+    const batchSize = parseOptionalPositiveInt(body.batchSize);
+    const candidateScanLimit = parseOptionalPositiveInt(body.candidateScanLimit);
+    const timeBudgetMs = parseOptionalPositiveInt(body.timeBudgetMs);
+    const coverageTarget = parseOptionalNonNegativeNumber(body.coverageTarget);
+    const concurrency = parseOptionalPositiveInt(body.concurrency);
+    if (
+      batchSize === null ||
+      candidateScanLimit === null ||
+      timeBudgetMs === null ||
+      coverageTarget === null ||
+      (coverageTarget !== undefined &&
+        (coverageTarget <= 0 || coverageTarget > 1)) ||
+      concurrency === null
+    ) {
+      return {
+        status_code: 400,
+        body: {
+          error:
+            "batchSize, candidateScanLimit, timeBudgetMs, and concurrency must be positive integers when provided; coverageTarget must be > 0 and <= 1",
+        },
+      };
+    }
+    if (
+      body.scheduleSave !== undefined &&
+      typeof body.scheduleSave !== "boolean"
+    ) {
+      return {
+        status_code: 400,
+        body: { error: "scheduleSave must be a boolean when provided" },
+      };
+    }
+    if (
+      body.resetCursor !== undefined &&
+      typeof body.resetCursor !== "boolean"
+    ) {
+      return {
+        status_code: 400,
+        body: { error: "resetCursor must be a boolean when provided" },
+      };
+    }
+    if (body.dryRun !== undefined && typeof body.dryRun !== "boolean") {
+      return {
+        status_code: 400,
+        body: { error: "dryRun must be a boolean when provided" },
+      };
+    }
+    const payload: Record<string, unknown> = {};
+    if (batchSize !== undefined) payload.batchSize = batchSize;
+    if (candidateScanLimit !== undefined) {
+      payload.candidateScanLimit = candidateScanLimit;
+    }
+    if (timeBudgetMs !== undefined) payload.timeBudgetMs = timeBudgetMs;
+    if (coverageTarget !== undefined) payload.coverageTarget = coverageTarget;
+    if (concurrency !== undefined) payload.concurrency = concurrency;
+    if (typeof body.scheduleSave === "boolean") {
+      payload.scheduleSave = body.scheduleSave;
+    }
+    if (typeof body.resetCursor === "boolean") {
+      payload.resetCursor = body.resetCursor;
+    }
+    if (typeof body.dryRun === "boolean") {
+      payload.dryRun = body.dryRun;
+    }
+    const result = await sdk.trigger({ function_id: "mem::retrieval-vector-backfill", payload });
+    return { status_code: 200, body: result };
+  });
+  sdk.registerTrigger({ type: "http", function_id: "api::retrieval-vector-backfill", config: { api_path: "/agentmemory/retrieval-vector/backfill", http_method: "POST" } });
+
   sdk.registerFunction("api::retrieval-blocks-diagnostics",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
     if (denied) return denied;
