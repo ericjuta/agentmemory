@@ -96,6 +96,23 @@ type ObserveMetadata = {
   persistenceClass: ObservationPersistenceClass;
 };
 
+const OPERATOR_DIAGNOSTIC_ENDPOINTS = [
+  "/agentmemory/health",
+  "/agentmemory/livez",
+  "/agentmemory/retrieval-proof",
+  "/agentmemory/retrieval-blocks/diagnostics",
+  "/agentmemory/retrieval-index/verify",
+  "/agentmemory/retrieval-vector/backfill",
+  "/agentmemory/retrieval-blocks/retry",
+  "/agentmemory/compress-retry",
+];
+
+const OPERATOR_DIAGNOSTIC_PATTERNS = [
+  /docker\s+compose\s+(?:ps|logs)\b/i,
+  /git\s+status\s+--short\s+--branch\b/i,
+  /git\s+log\s+--oneline\b/i,
+];
+
 function bestEffortTrigger(
   sdk: ISdk,
   functionId: string,
@@ -136,6 +153,38 @@ function asPersistenceClass(
     return value;
   }
   return undefined;
+}
+
+function stringifyForDiagnosticScan(value: unknown): string {
+  if (value === undefined || value === null) return "";
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function isOperatorDiagnosticObservation(payload: HookPayload): boolean {
+  if (
+    payload.hookType !== "pre_tool_use" &&
+    payload.hookType !== "post_tool_use" &&
+    payload.hookType !== "post_tool_failure"
+  ) {
+    return false;
+  }
+  const data =
+    typeof payload.data === "object" && payload.data !== null
+      ? (payload.data as Record<string, unknown>)
+      : {};
+  const toolName = asNonEmptyString(data["tool_name"])?.toLowerCase() || "";
+  const toolInput = stringifyForDiagnosticScan(data["tool_input"]).slice(0, 20_000);
+  const haystack = `${toolName}\n${toolInput}`.toLowerCase();
+  if (!haystack.trim()) return false;
+  if (OPERATOR_DIAGNOSTIC_ENDPOINTS.some((endpoint) => haystack.includes(endpoint))) {
+    return true;
+  }
+  return OPERATOR_DIAGNOSTIC_PATTERNS.some((pattern) => pattern.test(haystack));
 }
 
 function normalizeObserveMetadata(
@@ -220,6 +269,9 @@ function normalizeObserveMetadata(
       };
     }
     persistenceClass = parsed;
+  }
+  if (isOperatorDiagnosticObservation(payload)) {
+    persistenceClass = "diagnostics_only";
   }
 
   return {

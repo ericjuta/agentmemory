@@ -9,6 +9,44 @@ function authHeaders(): Record<string, string> {
   return h;
 }
 
+const OPERATOR_DIAGNOSTIC_ENDPOINTS = [
+  "/agentmemory/health",
+  "/agentmemory/livez",
+  "/agentmemory/retrieval-proof",
+  "/agentmemory/retrieval-blocks/diagnostics",
+  "/agentmemory/retrieval-index/verify",
+  "/agentmemory/retrieval-vector/backfill",
+  "/agentmemory/retrieval-blocks/retry",
+  "/agentmemory/compress-retry",
+];
+
+const OPERATOR_DIAGNOSTIC_PATTERNS = [
+  /docker\s+compose\s+(?:ps|logs)\b/i,
+  /git\s+status\s+--short\s+--branch\b/i,
+  /git\s+log\s+--oneline\b/i,
+];
+
+function stringifyForDiagnosticScan(value: unknown): string {
+  if (value === undefined || value === null) return "";
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function isOperatorDiagnosticToolUse(data: Record<string, unknown>): boolean {
+  const toolName = typeof data.tool_name === "string" ? data.tool_name : "";
+  const toolInput = stringifyForDiagnosticScan(data.tool_input).slice(0, 20_000);
+  const haystack = `${toolName}\n${toolInput}`.toLowerCase();
+  if (!haystack.trim()) return false;
+  if (OPERATOR_DIAGNOSTIC_ENDPOINTS.some((endpoint) => haystack.includes(endpoint))) {
+    return true;
+  }
+  return OPERATOR_DIAGNOSTIC_PATTERNS.some((pattern) => pattern.test(haystack));
+}
+
 async function main() {
   let input = "";
   for await (const chunk of process.stdin) {
@@ -23,6 +61,7 @@ async function main() {
   }
 
   const sessionId = (data.session_id as string) || "unknown";
+  const operatorDiagnostic = isOperatorDiagnosticToolUse(data);
 
   try {
     await fetch(`${REST_URL}/agentmemory/observe`, {
@@ -34,6 +73,12 @@ async function main() {
         project: data.cwd || process.cwd(),
         cwd: data.cwd || process.cwd(),
         timestamp: new Date().toISOString(),
+        ...(operatorDiagnostic
+          ? {
+              persistenceClass: "diagnostics_only",
+              capabilities: ["operator_diagnostic"],
+            }
+          : {}),
         data: {
           turn_id: data.turn_id ?? data.turnId,
           tool_name: data.tool_name,

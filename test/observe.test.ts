@@ -226,6 +226,99 @@ describe("observe freshness plumbing", () => {
     });
   });
 
+  it("keeps operator proof commands out of hot recall even when marked persistent", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerObserveFunction(sdk as never, kv as never);
+
+    const result = (await sdk.trigger("mem::observe", {
+      hookType: "post_tool_use",
+      sessionId: "session-1",
+      project: "/project",
+      cwd: "/project",
+      timestamp: "2026-03-29T12:00:06.000Z",
+      source: "codex-native",
+      payloadVersion: "1",
+      eventId: "evt-proof",
+      persistenceClass: "persistent",
+      capabilities: ["structured_post_tool_payload", "event_identity"],
+      data: {
+        session_id: "session-1",
+        turn_id: "turn-proof",
+        cwd: "/project",
+        model: "gpt-5.4",
+        tool_name: "Bash",
+        tool_use_id: "toolu_proof",
+        tool_input: {
+          command:
+            "curl -sS http://127.0.0.1:3113/agentmemory/retrieval-proof",
+        },
+        tool_output: { status: "ok" },
+      },
+    })) as { persisted: boolean; persistenceClass: string; observationId: string };
+
+    expect(result).toMatchObject({
+      persisted: false,
+      persistenceClass: "diagnostics_only",
+    });
+    expect(await kv.list<any>(KV.observations("session-1"))).toHaveLength(0);
+    expect(await kv.list<any>(KV.retrievalBlocks)).toHaveLength(0);
+    expect(await kv.list<any>(KV.retrievalBlockRetry)).toHaveLength(0);
+    expect(
+      await kv.get<any>(KV.observeReceipts("session-1"), "evt-proof"),
+    ).toMatchObject({
+      eventId: "evt-proof",
+      observationId: result.observationId,
+      persistenceClass: "diagnostics_only",
+    });
+  });
+
+  it("keeps normal persistent tool results on the hot recall path", async () => {
+    const previousAutoCompress = process.env["AGENTMEMORY_AUTO_COMPRESS"];
+    process.env["AGENTMEMORY_AUTO_COMPRESS"] = "false";
+    const sdk = mockSdk();
+    const kv = mockKV();
+    try {
+      registerObserveFunction(sdk as never, kv as never);
+
+      const result = (await sdk.trigger("mem::observe", {
+        hookType: "post_tool_use",
+        sessionId: "session-1",
+        project: "/project",
+        cwd: "/project",
+        timestamp: "2026-03-29T12:00:07.000Z",
+        source: "codex-native",
+        payloadVersion: "1",
+        eventId: "evt-edit",
+        persistenceClass: "persistent",
+        capabilities: ["structured_post_tool_payload", "event_identity"],
+        data: {
+          session_id: "session-1",
+          turn_id: "turn-edit",
+          cwd: "/project",
+          model: "gpt-5.4",
+          tool_name: "Edit",
+          tool_use_id: "toolu_edit",
+          tool_input: { file_path: "/project/src/app.ts" },
+          tool_output: { changed_files: ["/project/src/app.ts"] },
+        },
+      })) as { persisted: boolean; persistenceClass: string };
+
+      expect(result).toMatchObject({
+        persisted: true,
+        persistenceClass: "persistent",
+      });
+      expect(await kv.list<any>(KV.observations("session-1"))).toHaveLength(1);
+      expect((await kv.list<any>(KV.retrievalBlocks)).length).toBeGreaterThan(0);
+    } finally {
+      if (previousAutoCompress === undefined) {
+        delete process.env["AGENTMEMORY_AUTO_COMPRESS"];
+      } else {
+        process.env["AGENTMEMORY_AUTO_COMPRESS"] = previousAutoCompress;
+      }
+    }
+  });
+
   it("feeds synthetic compression signals back into the current turn capsule", async () => {
     const previousAutoCompress = process.env["AGENTMEMORY_AUTO_COMPRESS"];
     process.env["AGENTMEMORY_AUTO_COMPRESS"] = "false";
