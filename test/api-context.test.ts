@@ -120,6 +120,32 @@ describe("api::context", () => {
     expect(response.body.trace.queryTerms).toContain("3113");
   });
 
+  it("applies a bounded default budget to context refresh requests", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    let contextPayload: Record<string, unknown> | undefined;
+    sdk.registerFunction("mem::context", async (payload: unknown) => {
+      contextPayload = payload as Record<string, unknown>;
+      return { context: "", items: [], blocks: 0, trace: {} };
+    });
+    registerApiTriggers(sdk as never, kv as never);
+
+    const response = (await sdk.trigger("api::context-refresh", {
+      body: {
+        sessionId: "session-api-context-refresh-budget",
+        project: "/project",
+        query: "budget proof",
+      },
+      headers: {},
+    })) as { status_code: number };
+
+    expect(response.status_code).toBe(200);
+    expect(contextPayload).toMatchObject({
+      sessionId: "session-api-context-refresh-budget",
+      budget: 1500,
+    });
+  });
+
   it("returns an empty skipped context payload under hot-path pressure", async () => {
     const previousQueueHigh =
       process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_QUEUE_HIGH"];

@@ -886,7 +886,17 @@ export function registerApiTriggers(
       }
       const result = await sdk.trigger({
         function_id: "mem::context",
-        payload: parsed.payload,
+        payload: {
+          ...parsed.payload,
+          budget:
+            parsed.payload.budget ??
+            readBoundedPositiveIntEnv(
+              "AGENTMEMORY_CONTEXT_REFRESH_DEFAULT_BUDGET",
+              1500,
+              100,
+              12000,
+            ),
+        },
       });
       return { status_code: 200, body: result };
     },

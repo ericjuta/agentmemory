@@ -2,11 +2,21 @@
 
 const REST_URL = process.env["AGENTMEMORY_URL"] || "http://127.0.0.1:3111";
 const SECRET = process.env["AGENTMEMORY_SECRET"] || "";
+const DEFAULT_CONTEXT_REFRESH_BUDGET = 1500;
 
 function authHeaders(): Record<string, string> {
   const h: Record<string, string> = { "Content-Type": "application/json" };
   if (SECRET) h["Authorization"] = `Bearer ${SECRET}`;
   return h;
+}
+
+function contextRefreshBudget(): number {
+  const raw = process.env["AGENTMEMORY_CONTEXT_REFRESH_HOOK_BUDGET"];
+  if (!raw) return DEFAULT_CONTEXT_REFRESH_BUDGET;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_CONTEXT_REFRESH_BUDGET;
 }
 
 async function main() {
@@ -50,7 +60,12 @@ async function main() {
       const res = await fetch(`${REST_URL}/agentmemory/context/refresh`, {
         method: "POST",
         headers: authHeaders(),
-        body: JSON.stringify({ sessionId, project, query: prompt }),
+        body: JSON.stringify({
+          sessionId,
+          project,
+          query: prompt,
+          budget: contextRefreshBudget(),
+        }),
         signal: AbortSignal.timeout(4000),
       });
 
