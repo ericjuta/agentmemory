@@ -101,7 +101,7 @@ describe("retrieval block retry", () => {
 
     const result = await sdk.trigger("mem::retrieval-block-retry", {});
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       retried: 0,
       removed: 0,
       succeeded: 1,
@@ -111,6 +111,56 @@ describe("retrieval block retry", () => {
     });
     expect(await kv.get(KV.retrievalBlockRetry, block.id)).toBeNull();
     expect(await kv.get(KV.retrievalBlockEmbeddings(block.id), "data")).toBeTruthy();
+  });
+
+  it("coalesces operator diagnostic retry entries without indexing them", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    const provider: EmbeddingProvider = {
+      name: "test-embeddings",
+      dimensions: 3,
+      embed: vi.fn(async () => new Float32Array([0.1, 0.2, 0.3])),
+      embedBatch: vi.fn(async () => []),
+    };
+
+    configureRetrievalBlockIndexingRuntime({
+      embeddingProvider: provider,
+      vectorIndex: new VectorIndex(),
+      scheduleSave: vi.fn(),
+    });
+    registerRetrievalBlockRetryFunction(sdk as never, kv as never);
+
+    const block: RetrievalBlock = {
+      ...makeBlock("rblk-diagnostic"),
+      sourceType: "observation",
+      sourceId: "obs-diagnostic",
+      canonicalText: "Checked /agentmemory/health and git status --short --branch",
+      title: "Operator health probe",
+    };
+    await kv.set(KV.retrievalBlockRetry, block.id, {
+      blockId: block.id,
+      sourceType: block.sourceType,
+      operation: "upsert",
+      block,
+      retries: 0,
+      firstFailedAt: "2026-04-23T14:55:48.000Z",
+      lastFailedAt: "2026-04-23T14:55:48.000Z",
+      lastError: "health_unhealthy",
+    } satisfies RetrievalBlockRetryEntry);
+
+    const result = await sdk.trigger("mem::retrieval-block-retry", {});
+
+    expect(result).toMatchObject({
+      retried: 0,
+      removed: 1,
+      succeeded: 0,
+      skipped: 0,
+      deferred: 0,
+      processed: 0,
+      diagnosticsRemoved: 1,
+    });
+    expect(provider.embed).not.toHaveBeenCalled();
+    expect(await kv.get(KV.retrievalBlockRetry, block.id)).toBeNull();
   });
 
   it("increments retry counts for retriable failures and drops exhausted entries", async () => {
@@ -219,7 +269,7 @@ describe("retrieval block retry", () => {
 
     const result = await sdk.trigger("mem::retrieval-block-retry", {});
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       retried: 0,
       removed: 0,
       succeeded: 0,
@@ -303,7 +353,7 @@ describe("retrieval block retry", () => {
       batchSize: 2,
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       retried: 0,
       removed: 0,
       succeeded: 2,

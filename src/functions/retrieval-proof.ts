@@ -94,13 +94,20 @@ export function registerRetrievalProofFunction(sdk: ISdk, kv: StateKV): void {
       typeof quality.lastEvalLeakageCount === "number"
         ? quality.lastEvalLeakageCount
         : null;
-    const queuedCount =
+    const freshnessLag =
       quality.deferredFreshnessLag &&
       typeof quality.deferredFreshnessLag === "object" &&
-      typeof (quality.deferredFreshnessLag as { queuedCount?: unknown }).queuedCount ===
-        "number"
-        ? (quality.deferredFreshnessLag as { queuedCount: number }).queuedCount
+      !Array.isArray(quality.deferredFreshnessLag)
+        ? (quality.deferredFreshnessLag as Record<string, unknown>)
         : null;
+    const queuedCount =
+      typeof freshnessLag?.queuedCount === "number"
+        ? freshnessLag.queuedCount
+        : null;
+    const blockingQueuedCount =
+      typeof freshnessLag?.blockingQueuedCount === "number"
+        ? freshnessLag.blockingQueuedCount
+        : queuedCount;
 
     let search:
       | {
@@ -165,7 +172,7 @@ export function registerRetrievalProofFunction(sdk: ISdk, kv: StateKV): void {
       diagnosticsRecord.success === true &&
       (vectorCoverage === null || vectorCoverage >= coverageTarget) &&
       (leakageCount === null || leakageCount === 0) &&
-      (queuedCount === null || queuedCount === 0) &&
+      (blockingQueuedCount === null || blockingQueuedCount === 0) &&
       !Object.values(writeGates).some(Boolean) &&
       !("error" in search);
 
@@ -180,6 +187,21 @@ export function registerRetrievalProofFunction(sdk: ISdk, kv: StateKV): void {
         alerts: health?.alerts ?? [],
       },
       writeGates,
+      maintenance: {
+        status:
+          blockingQueuedCount && blockingQueuedCount > 0
+            ? "blocking_freshness_lag"
+            : queuedCount && queuedCount > 0
+              ? "non_blocking_backlog"
+              : "caught_up",
+        queuedCount,
+        blockingQueuedCount,
+        diagnosticQueuedCount:
+          typeof freshnessLag?.diagnosticQueuedCount === "number"
+            ? freshnessLag.diagnosticQueuedCount
+            : null,
+        byLane: freshnessLag?.byLane ?? null,
+      },
       coverageTarget,
       diagnostics: diagnosticsRecord,
       search,

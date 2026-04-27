@@ -461,6 +461,9 @@ export interface SessionBootstrap {
   activeDecisions: DecisionMemory[];
   branchOverlaySummary?: string | null;
   retrievalTrace?: RetrievalTrace;
+  partial?: boolean;
+  omitted?: string[];
+  warnings?: string[];
 }
 
 export type CloseoutStepStatus = "ok" | "skipped" | "failed";

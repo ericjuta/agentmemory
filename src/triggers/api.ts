@@ -8,6 +8,7 @@ import type {
   CompressedObservation,
   DecisionMemory,
   GuardrailMemory,
+  HealthSnapshot,
   HookPayload,
   ObservationPersistenceClass,
   RetrievalIntent,
@@ -37,6 +38,137 @@ type Response = {
   headers?: Record<string, string>;
   body: unknown;
 };
+
+type ServingStatus = "healthy" | "degraded" | "critical";
+
+type BoundedResult<T> = {
+  status: "ok" | "timeout" | "error";
+  value: T;
+};
+
+type SessionBootstrapOptions = {
+  includeContext?: boolean;
+};
+
+const SESSION_START_BRANCH_DETECTION_TIMEOUT_MS = 750;
+const SESSION_START_PERSIST_TIMEOUT_MS = 1000;
+const SESSION_START_BOOTSTRAP_TIMEOUT_MS = 1000;
+
+function readBoundedPositiveIntEnv(
+  name: string,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+}
+
+function envFlagEnabled(name: string): boolean {
+  const raw = process.env[name];
+  return raw === "1" || raw === "true" || raw === "yes";
+}
+
+function settleWithin<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  fallback: () => T,
+): Promise<BoundedResult<T>> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resolve({ status: "timeout", value: fallback() });
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({ status: "ok", value });
+      },
+      () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({ status: "error", value: fallback() });
+      },
+    );
+  });
+}
+
+function emptySessionBootstrap(warnings: string[] = []): SessionBootstrap {
+  return {
+    context: "",
+    items: [],
+    latestHandoff: null,
+    nextAction: null,
+    guardrails: [],
+    activeDecisions: [],
+    branchOverlaySummary: null,
+    ...(warnings.length > 0
+      ? { partial: true, omitted: ["bootstrap"], warnings }
+      : {}),
+  };
+}
+
+function markSessionBootstrapPartial(
+  bootstrap: SessionBootstrap,
+  omitted: string,
+  warning: string,
+): void {
+  bootstrap.partial = true;
+  bootstrap.omitted = [...new Set([...(bootstrap.omitted ?? []), omitted])];
+  bootstrap.warnings = [...new Set([...(bootstrap.warnings ?? []), warning])];
+}
+
+function servingStatusFromHealth(
+  health: HealthSnapshot | null | undefined,
+): ServingStatus {
+  if (!health) return "healthy";
+  if (
+    health.connectionState === "disconnected" ||
+    health.connectionState === "failed"
+  ) {
+    return "critical";
+  }
+  if (health.connectionState === "reconnecting") return "degraded";
+  if (health.kvConnectivity?.status === "error") {
+    return (health.kvConnectivity.consecutiveFailures ?? 1) >= 3
+      ? "critical"
+      : "degraded";
+  }
+  if (health.snapshotPersistence?.status === "error") {
+    return (health.snapshotPersistence.consecutiveFailures ?? 1) >= 3
+      ? "critical"
+      : "degraded";
+  }
+  const alerts = health.alerts ?? [];
+  if (
+    alerts.some(
+      (alert) =>
+        alert.startsWith("event_loop_lag_critical_") ||
+        alert.startsWith("memory_critical_"),
+    )
+  ) {
+    return "critical";
+  }
+  if (
+    alerts.some(
+      (alert) =>
+        alert.startsWith("event_loop_lag_warn_") ||
+        alert.startsWith("memory_warn_"),
+    )
+  ) {
+    return "degraded";
+  }
+  return "healthy";
+}
 
 function parseOptionalInt(raw: unknown): number | undefined {
   if (raw === undefined || raw === null || raw === "") return undefined;
@@ -325,7 +457,34 @@ async function buildSessionBootstrap(
   kv: StateKV,
   session: Session,
   budget?: number,
+  options: SessionBootstrapOptions = {},
 ): Promise<SessionBootstrap> {
+  const contextPromise =
+    options.includeContext === false
+      ? Promise.resolve({
+          context: "",
+          items: [],
+          trace: undefined,
+        })
+      : (sdk
+          .trigger({
+            function_id: "mem::context",
+            payload: {
+              sessionId: session.id,
+              project: session.project,
+              budget,
+              intent: "resume",
+            },
+          })
+          .catch(() => ({
+            context: "",
+            items: [],
+            trace: undefined,
+          })) as Promise<{
+          context?: string;
+          items?: SessionBootstrap["items"];
+          trace?: SessionBootstrap["retrievalTrace"];
+        }>);
   const [
     contextResult,
     latestHandoff,
@@ -334,25 +493,7 @@ async function buildSessionBootstrap(
     activeDecisions,
     overlays,
   ] = await Promise.all([
-    sdk
-      .trigger({
-        function_id: "mem::context",
-        payload: {
-          sessionId: session.id,
-          project: session.project,
-          budget,
-          intent: "resume",
-        },
-      })
-      .catch(() => ({
-        context: "",
-        items: [],
-        trace: undefined,
-      })) as Promise<{
-        context?: string;
-        items?: SessionBootstrap["items"];
-        trace?: SessionBootstrap["retrievalTrace"];
-      }>,
+    contextPromise,
     findLatestHandoffPacket(kv, {
       project: session.project,
       scopeType: "session",
@@ -400,6 +541,67 @@ async function buildSessionBootstrap(
     branchOverlaySummary,
     retrievalTrace: contextResult.trace,
   };
+}
+
+async function detectBranchForSessionStart(
+  cwd: string,
+): Promise<BoundedResult<string | undefined>> {
+  return settleWithin(
+    detectWorktreeInfo(cwd).then((info) => info.branch || undefined),
+    readBoundedPositiveIntEnv(
+      "AGENTMEMORY_SESSION_START_BRANCH_TIMEOUT_MS",
+      SESSION_START_BRANCH_DETECTION_TIMEOUT_MS,
+      50,
+      5000,
+    ),
+    () => undefined,
+  );
+}
+
+async function persistSessionForStart(
+  kv: StateKV,
+  sessionId: string,
+  session: Session,
+): Promise<BoundedResult<boolean>> {
+  return settleWithin(
+    kv.set(KV.sessions, sessionId, session).then(() => true),
+    readBoundedPositiveIntEnv(
+      "AGENTMEMORY_SESSION_START_PERSIST_TIMEOUT_MS",
+      SESSION_START_PERSIST_TIMEOUT_MS,
+      50,
+      5000,
+    ),
+    () => false,
+  );
+}
+
+async function buildSessionBootstrapForStart(
+  sdk: ISdk,
+  kv: StateKV,
+  session: Session,
+  budget?: number,
+): Promise<BoundedResult<SessionBootstrap>> {
+  const includeContext = envFlagEnabled(
+    "AGENTMEMORY_SESSION_START_INCLUDE_CONTEXT",
+  );
+  const result = await settleWithin(
+    buildSessionBootstrap(sdk, kv, session, budget, { includeContext }),
+    readBoundedPositiveIntEnv(
+      "AGENTMEMORY_SESSION_START_BOOTSTRAP_TIMEOUT_MS",
+      SESSION_START_BOOTSTRAP_TIMEOUT_MS,
+      50,
+      5000,
+    ),
+    () => emptySessionBootstrap(),
+  );
+  if (result.status === "ok" && !includeContext) {
+    markSessionBootstrapPartial(
+      result.value,
+      "context",
+      "session_start_context_deferred",
+    );
+  }
+  return result;
 }
 
 export function registerApiTriggers(
@@ -467,13 +669,37 @@ export function registerApiTriggers(
         })),
       ]);
 
-      const status = health?.status || "healthy";
-      const statusCode = status === "critical" ? 503 : 200;
+      const runtimeStatus = health?.status || "healthy";
+      const deferredTotalQueued =
+        deferredWork &&
+        typeof deferredWork === "object" &&
+        "totalQueued" in deferredWork &&
+        typeof deferredWork.totalQueued === "number"
+          ? deferredWork.totalQueued
+          : null;
+      const writeGateValues =
+        writeGates && typeof writeGates === "object" && !("error" in writeGates)
+          ? Object.values(writeGates)
+          : [];
+      const maintenancePaused = writeGateValues.some(Boolean);
+      const maintenanceStatus = maintenancePaused
+        ? "paused"
+        : deferredTotalQueued && deferredTotalQueued > 0
+          ? "behind"
+          : deferredTotalQueued === 0
+            ? "caught_up"
+            : "unknown";
+      const servingStatus = servingStatusFromHealth(health);
+      const status = servingStatus;
+      const statusCode = servingStatus === "critical" ? 503 : 200;
 
       return {
         status_code: statusCode,
         body: {
           status,
+          runtimeStatus,
+          servingStatus,
+          maintenanceStatus,
           service: "agentmemory",
           version: VERSION,
           health: health || null,
@@ -481,6 +707,11 @@ export function registerApiTriggers(
           circuitBreaker,
           deferredWork,
           writeGates,
+          maintenance: {
+            status: maintenanceStatus,
+            totalQueued: deferredTotalQueued,
+            paused: maintenancePaused,
+          },
         },
       };
     },
@@ -909,17 +1140,67 @@ export function registerApiTriggers(
           body: { error: "budget must be a positive integer" },
         };
       }
+      const branchResult = branch
+        ? ({
+            status: "ok",
+            value: branch,
+          } as BoundedResult<string | undefined>)
+        : await detectBranchForSessionStart(cwd);
+      const warnings: string[] = [];
+      if (branchResult.status === "timeout") {
+        warnings.push("session_start_branch_detection_timeout");
+      } else if (branchResult.status === "error") {
+        warnings.push("session_start_branch_detection_failed");
+      }
       const session: Session = {
         id: sessionId,
         project,
         cwd,
-        branch: branch || (await detectWorktreeInfo(cwd)).branch || undefined,
+        branch: branchResult.value,
         startedAt: new Date().toISOString(),
         status: "active",
         observationCount: 0,
       };
-      await kv.set(KV.sessions, sessionId, session);
-      const bootstrap = await buildSessionBootstrap(sdk, kv, session, budget || undefined);
+      const persistenceResult = await persistSessionForStart(
+        kv,
+        sessionId,
+        session,
+      );
+      if (persistenceResult.status === "timeout") {
+        warnings.push("session_start_persistence_timeout");
+      } else if (persistenceResult.status === "error") {
+        warnings.push("session_start_persistence_failed");
+      }
+      const bootstrapResult = persistenceResult.value
+        ? await buildSessionBootstrapForStart(sdk, kv, session, budget || undefined)
+        : {
+            status: "ok" as const,
+            value: emptySessionBootstrap(["session_start_persistence_unavailable"]),
+          };
+      const bootstrap = bootstrapResult.value;
+      if (
+        bootstrapResult.status === "timeout" &&
+        !bootstrap.warnings?.includes("session_start_bootstrap_timeout")
+      ) {
+        markSessionBootstrapPartial(
+          bootstrap,
+          "bootstrap",
+          "session_start_bootstrap_timeout",
+        );
+      } else if (
+        bootstrapResult.status === "error" &&
+        !bootstrap.warnings?.includes("session_start_bootstrap_failed")
+      ) {
+        markSessionBootstrapPartial(
+          bootstrap,
+          "bootstrap",
+          "session_start_bootstrap_failed",
+        );
+      }
+      if (warnings.length > 0) {
+        bootstrap.partial = true;
+        bootstrap.warnings = [...new Set([...(bootstrap.warnings ?? []), ...warnings])];
+      }
       return {
         status_code: 200,
         body: {

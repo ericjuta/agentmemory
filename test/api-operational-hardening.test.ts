@@ -41,8 +41,10 @@ describe("operational hardening APIs", () => {
           compression: { queued: number };
           retrievalBlocks: { queued: number };
           graphExtraction: { queued: number };
+          totalQueued: number;
         };
         writeGates: Record<string, null>;
+        maintenance: { status: string; totalQueued: number; paused: boolean };
       };
     };
 
@@ -51,6 +53,12 @@ describe("operational hardening APIs", () => {
       compression: { queued: 1 },
       retrievalBlocks: { queued: 1 },
       graphExtraction: { queued: 1 },
+      totalQueued: 3,
+    });
+    expect(response.body.maintenance).toEqual({
+      status: "behind",
+      totalQueued: 3,
+      paused: false,
     });
     expect(response.body.writeGates).toMatchObject({
       llmWork: null,
@@ -58,6 +66,53 @@ describe("operational hardening APIs", () => {
       graphExtraction: null,
       indexPersistence: null,
     });
+  });
+
+  it("keeps serving health separate from CPU-paused maintenance", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    await kv.set(KV.health, "latest", {
+      status: "critical",
+      alerts: ["cpu_critical_95%"],
+      connectionState: "connected",
+      kvConnectivity: { status: "ok", consecutiveFailures: 0 },
+      snapshotPersistence: { status: "ok", consecutiveFailures: 0 },
+      eventLoopLagMs: 0,
+      cpu: { percent: 95, userMicros: 0, systemMicros: 0 },
+      memory: { heapUsed: 0, heapTotal: 1, heapLimit: 1, external: 0, rss: 0 },
+      pipeline: { compressActive: 0, compressPending: 0, totalInflight: 0 },
+      workers: [],
+      uptimeSeconds: 1,
+    });
+    await kv.set(KV.retrievalBlockRetry, "rblk_1", {
+      blockId: "rblk_1",
+      sourceType: "memory",
+      retries: 0,
+      firstFailedAt: "2026-04-25T00:00:00.000Z",
+      lastFailedAt: "2026-04-25T00:00:00.000Z",
+      lastError: "timeout",
+    });
+    registerApiTriggers(sdk as never, kv as never);
+
+    const response = (await sdk.trigger("api::health", {
+      headers: {},
+    })) as {
+      status_code: number;
+      body: {
+        status: string;
+        runtimeStatus: string;
+        servingStatus: string;
+        maintenanceStatus: string;
+        writeGates: Record<string, string | null>;
+      };
+    };
+
+    expect(response.status_code).toBe(200);
+    expect(response.body.status).toBe("healthy");
+    expect(response.body.servingStatus).toBe("healthy");
+    expect(response.body.runtimeStatus).toBe("critical");
+    expect(response.body.maintenanceStatus).toBe("paused");
+    expect(response.body.writeGates.llmWork).toBe("cpu_critical_95%");
   });
 
   it("forwards whitelisted retrieval block diagnostic options", async () => {

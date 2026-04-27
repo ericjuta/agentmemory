@@ -178,6 +178,7 @@ describe("mem::retrieval-vector-backfill", () => {
     await storeBlocks(kv, [
       makeBlock("rblk-scope-timeout", "2026-04-24T12:00:00.000Z"),
     ]);
+    getRetrievalSearchIndex().clear();
     const rawList = kv.list.bind(kv);
     const listSpy = vi.fn(async <T>(scope: string): Promise<T[]> => {
       if (scope === KV.retrievalBlockIndex) {
@@ -208,6 +209,46 @@ describe("mem::retrieval-vector-backfill", () => {
     });
     expect(listSpy.mock.calls.some(([scope]) => scope === KV.retrievalBlocks)).toBe(false);
     expect(provider.embed).not.toHaveBeenCalled();
+  });
+
+  it("uses loaded BM25 retrieval IDs before listing scope-index KV state", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    const vectorIndex = new VectorIndex();
+    const provider: EmbeddingProvider = {
+      name: "test-embeddings",
+      dimensions: 3,
+      embed: vi.fn(async () => new Float32Array([0.1, 0.2, 0.3])),
+      embedBatch: vi.fn(async () => []),
+    };
+    configureRetrievalBlockIndexingRuntime({
+      embeddingProvider: provider,
+      vectorIndex,
+      scheduleSave: vi.fn(),
+    });
+    await storeBlocks(kv, [
+      makeBlock("rblk-bm25-source", "2026-04-24T12:00:00.000Z"),
+    ]);
+    const rawList = kv.list.bind(kv);
+    const listSpy = vi.fn(async <T>(scope: string): Promise<T[]> => {
+      if (scope === KV.retrievalBlockIndex) {
+        throw new Error("scope index should not be listed");
+      }
+      return rawList(scope);
+    });
+    kv.list = listSpy as typeof kv.list;
+    registerRetrievalVectorBackfillFunction(sdk as never, kv as never);
+
+    const result = (await sdk.trigger("mem::retrieval-vector-backfill", {
+      batchSize: 1,
+    })) as { attempted: number; backfilled: number; source: string };
+
+    expect(result).toMatchObject({
+      attempted: 1,
+      backfilled: 1,
+      source: "retrieval-bm25-index",
+    });
+    expect(listSpy).not.toHaveBeenCalledWith(KV.retrievalBlockIndex);
   });
 
   it("reports failed provider calls through the existing retry queue", async () => {

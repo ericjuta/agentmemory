@@ -78,4 +78,38 @@ describe("mem::retrieval-proof", () => {
       reason: "scope_required",
     });
   });
+
+  it("does not fail proof for non-blocking maintenance backlog", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    sdk.registerFunction("mem::retrieval-blocks-diagnostics", async () => ({
+      success: true,
+      quality: {
+        vectorCoverage: 1,
+        lastEvalLeakageCount: 0,
+        deferredFreshnessLag: {
+          queuedCount: 4,
+          blockingQueuedCount: 0,
+          diagnosticQueuedCount: 1,
+          byLane: { hot: 0, warm: 0, cold: 4 },
+        },
+      },
+    }));
+    registerRetrievalProofFunction(sdk as never, kv as never);
+
+    const result = (await sdk.trigger("mem::retrieval-proof", {
+      project: "/project",
+      includeSearch: false,
+    })) as {
+      pass: boolean;
+      maintenance: { status: string; queuedCount: number; blockingQueuedCount: number };
+    };
+
+    expect(result.pass).toBe(true);
+    expect(result.maintenance).toMatchObject({
+      status: "non_blocking_backlog",
+      queuedCount: 4,
+      blockingQueuedCount: 0,
+    });
+  });
 });

@@ -289,6 +289,155 @@ describe("Codex payload compatibility", () => {
     expect(response.body.bootstrap.guardrails[0]?.id).toBe(guardrail.id);
     expect(response.body.bootstrap.activeDecisions[0]?.id).toBe(decision.id);
     expect(response.body.bootstrap.branchOverlaySummary).toContain("deploy overlay");
+    expect(response.body.bootstrap.warnings).toContain(
+      "session_start_context_deferred",
+    );
+  });
+
+  it("defers context retrieval during session start by default", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerApiTriggers(sdk as never, kv as never);
+    let contextCalled = false;
+    sdk.registerFunction("mem::context", async () => {
+      contextCalled = true;
+      return { context: "should not be returned", items: [] };
+    });
+    sdk.registerFunction("mem::next", async () => ({
+      success: true,
+      suggestion: null,
+    }));
+
+    const response = (await sdk.trigger("api::session::start", {
+      body: {
+        sessionId: "session-context-deferred",
+        project: "/project",
+        cwd: "/project",
+        branch: "main",
+      },
+      headers: {},
+    })) as {
+      status_code: number;
+      body: {
+        context: string;
+        bootstrap: {
+          partial?: boolean;
+          omitted?: string[];
+          warnings?: string[];
+        };
+      };
+    };
+
+    expect(response.status_code).toBe(200);
+    expect(contextCalled).toBe(false);
+    expect(response.body.context).toBe("");
+    expect(response.body.bootstrap.partial).toBe(true);
+    expect(response.body.bootstrap.omitted).toContain("context");
+    expect(response.body.bootstrap.warnings).toContain(
+      "session_start_context_deferred",
+    );
+  });
+
+  it("fails open when session start bootstrap stalls", async () => {
+    const previousTimeout = process.env.AGENTMEMORY_SESSION_START_BOOTSTRAP_TIMEOUT_MS;
+    process.env.AGENTMEMORY_SESSION_START_BOOTSTRAP_TIMEOUT_MS = "5";
+    try {
+      const sdk = mockSdk();
+      const kv = mockKV();
+      registerApiTriggers(sdk as never, kv as never);
+
+      sdk.registerFunction("mem::context", async () => new Promise(() => {}));
+      sdk.registerFunction("mem::next", async () => new Promise(() => {}));
+
+      const startedAt = Date.now();
+      const response = (await sdk.trigger("api::session::start", {
+        body: {
+          sessionId: "session-bootstrap-timeout",
+          project: "/project",
+          cwd: "/project",
+          branch: "main",
+        },
+        headers: {},
+      })) as {
+        status_code: number;
+        body: {
+          context: string;
+          bootstrap: {
+            partial?: boolean;
+            omitted?: string[];
+            warnings?: string[];
+          };
+        };
+      };
+
+      expect(Date.now() - startedAt).toBeLessThan(1000);
+      expect(response.status_code).toBe(200);
+      expect(response.body.context).toBe("");
+      expect(response.body.bootstrap.partial).toBe(true);
+      expect(response.body.bootstrap.omitted).toContain("bootstrap");
+      expect(response.body.bootstrap.warnings).toContain(
+        "session_start_bootstrap_timeout",
+      );
+      const session = await kv.get<Session>(KV.sessions, "session-bootstrap-timeout");
+      expect(session?.status).toBe("active");
+    } finally {
+      if (previousTimeout === undefined) {
+        delete process.env.AGENTMEMORY_SESSION_START_BOOTSTRAP_TIMEOUT_MS;
+      } else {
+        process.env.AGENTMEMORY_SESSION_START_BOOTSTRAP_TIMEOUT_MS = previousTimeout;
+      }
+    }
+  });
+
+  it("fails open when session persistence stalls", async () => {
+    const previousTimeout = process.env.AGENTMEMORY_SESSION_START_PERSIST_TIMEOUT_MS;
+    process.env.AGENTMEMORY_SESSION_START_PERSIST_TIMEOUT_MS = "5";
+    try {
+      const sdk = mockSdk();
+      const kv = mockKV();
+      const slowKv = {
+        ...kv,
+        set: async <T>(scope: string, key: string, data: T): Promise<T> => {
+          if (scope === KV.sessions) {
+            return new Promise(() => {});
+          }
+          return kv.set(scope, key, data);
+        },
+      };
+      registerApiTriggers(sdk as never, slowKv as never);
+
+      const response = (await sdk.trigger("api::session::start", {
+        body: {
+          sessionId: "session-persistence-timeout",
+          project: "/project",
+          cwd: "/project",
+          branch: "main",
+        },
+        headers: {},
+      })) as {
+        status_code: number;
+        body: {
+          context: string;
+          bootstrap: {
+            partial?: boolean;
+            warnings?: string[];
+          };
+        };
+      };
+
+      expect(response.status_code).toBe(200);
+      expect(response.body.context).toBe("");
+      expect(response.body.bootstrap.partial).toBe(true);
+      expect(response.body.bootstrap.warnings).toContain(
+        "session_start_persistence_timeout",
+      );
+    } finally {
+      if (previousTimeout === undefined) {
+        delete process.env.AGENTMEMORY_SESSION_START_PERSIST_TIMEOUT_MS;
+      } else {
+        process.env.AGENTMEMORY_SESSION_START_PERSIST_TIMEOUT_MS = previousTimeout;
+      }
+    }
   });
 
   it("supports bounded idempotent closeout for Codex sessions", async () => {

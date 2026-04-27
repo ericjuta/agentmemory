@@ -101,7 +101,11 @@ import { registerRetrievalVectorBackfillFunction } from "./functions/retrieval-v
 import { registerRetrievalQualitySummaryFunction } from "./functions/retrieval-quality-summary.js";
 import { registerRetrievalProofFunction } from "./functions/retrieval-proof.js";
 import { registerConsolidatedMemoryBackfillFunction } from "./functions/consolidated-memory-backfill.js";
-import { registerDeferredWorkFunction } from "./functions/deferred-work.js";
+import {
+  getDeferredWorkStatus,
+  registerDeferredWorkFunction,
+} from "./functions/deferred-work.js";
+import { registerMaintenanceCatchUpFunction } from "./functions/maintenance-catch-up.js";
 import { registerApiTriggers } from "./triggers/api.js";
 import { registerEventTriggers } from "./triggers/events.js";
 import { registerMcpEndpoints } from "./mcp/server.js";
@@ -323,6 +327,7 @@ async function main() {
   registerTemporalGraphFunctions(sdk, kv, provider);
   registerRetentionFunctions(sdk, kv);
   registerCompressFileFunction(sdk, kv, provider);
+  registerMaintenanceCatchUpFunction(sdk, kv);
   console.log(
     `[agentmemory] v0.6 advanced retrieval: sliding-window, query-expansion, temporal-graph, retention-scoring`,
   );
@@ -556,13 +561,13 @@ async function main() {
   if (process.env.COMPRESS_RETRY_ENABLED !== "false") {
     compressRetryHandle = createAdaptiveTimer(
       async () =>
-        runMaintenanceTask("Compress retry", async () => {
-          const result = await sdk.trigger<
-            Record<string, never>,
-            { retried?: number; removed?: number; queued?: number; succeeded?: number }
-          >({ function_id: "mem::compress-retry", payload: {} });
-          return (result?.retried || 0) + (result?.removed || 0) + (result?.queued || 0) + (result?.succeeded || 0);
-        }),
+       runMaintenanceTask("Compress retry", async () => {
+         const result = await sdk.trigger<
+            { lane: "compression" },
+            { workDone?: number }
+          >({ function_id: "mem::maintenance-catch-up", payload: { lane: "compression" } });
+          return result?.workDone || 0;
+       }),
       { baseMs: 300_000, minMs: 60_000, maxMs: 900_000, label: "Compress retry" },
     );
     console.log(`[agentmemory] Compress retry: enabled (every 5m, adaptive)`);
@@ -572,13 +577,13 @@ async function main() {
   if (process.env.RETRIEVAL_BLOCK_RETRY_ENABLED !== "false") {
     retrievalBlockRetryHandle = createAdaptiveTimer(
       async () =>
-        runMaintenanceTask("Retrieval block retry", async () => {
-          const result = await sdk.trigger<
-            Record<string, never>,
-            { retried?: number; removed?: number; succeeded?: number; refreshed?: number; refreshIndexed?: number }
-          >({ function_id: "mem::retrieval-block-retry", payload: { refreshFromState: true } });
-          return (result?.retried || 0) + (result?.removed || 0) + (result?.succeeded || 0) + (result?.refreshed || 0) + (result?.refreshIndexed || 0);
-        }),
+       runMaintenanceTask("Retrieval block retry", async () => {
+         const result = await sdk.trigger<
+            { lane: "retrieval" },
+            { workDone?: number }
+          >({ function_id: "mem::maintenance-catch-up", payload: { lane: "retrieval" } });
+          return result?.workDone || 0;
+       }),
       { baseMs: 300_000, minMs: 60_000, maxMs: 900_000, label: "Retrieval block retry" },
     );
     console.log(`[agentmemory] Retrieval block retry: enabled (every 5m, adaptive)`);
@@ -588,13 +593,13 @@ async function main() {
   if (isGraphExtractionEnabled() && process.env.GRAPH_CATCH_UP_ENABLED !== "false") {
     graphCatchUpHandle = createAdaptiveTimer(
       async () =>
-        runMaintenanceTask("Graph catch-up", async () => {
-          const result = await sdk.trigger<
-            Record<string, never>,
-            { extracted?: number; removed?: number }
-          >({ function_id: "mem::graph-catch-up", payload: {} });
-          return (result?.extracted || 0) + (result?.removed || 0);
-        }),
+       runMaintenanceTask("Graph catch-up", async () => {
+         const result = await sdk.trigger<
+            { lane: "graph" },
+            { workDone?: number }
+          >({ function_id: "mem::maintenance-catch-up", payload: { lane: "graph" } });
+          return result?.workDone || 0;
+       }),
       { baseMs: 300_000, minMs: 60_000, maxMs: 900_000, label: "Graph catch-up" },
     );
     console.log(`[agentmemory] Graph catch-up: enabled (every 5m, adaptive)`);
@@ -712,12 +717,26 @@ async function main() {
       retrievalVectorBackfillHandle = createAdaptiveTimer(
         async () =>
           runMaintenanceTask("Retrieval vector backfill", async () => {
+            const deferredWork = await getDeferredWorkStatus(kv).catch(() => null);
+            if (
+              (deferredWork?.retrievalBlocks.queued ?? 0) > 0 ||
+              (deferredWork?.compression.queued ?? 0) > 0 ||
+              (deferredWork?.graphExtraction.queued ?? 0) > 0
+            ) {
+              return 0;
+            }
             const result = await sdk.trigger<
               Record<string, unknown>,
               { backfilled?: number; failed?: number; attempted?: number }
             >({
               function_id: "mem::retrieval-vector-backfill",
-              payload: {},
+              payload: {
+                batchSize: 4,
+                candidateScanLimit: 80,
+                timeBudgetMs: 8_000,
+                concurrency: 1,
+                scheduleSave: false,
+              },
             });
             return (
               (result?.backfilled || 0) +
@@ -727,16 +746,16 @@ async function main() {
           }),
         {
           baseMs: parseInt(
-            process.env.RETRIEVAL_VECTOR_BACKFILL_INTERVAL_MS || "60000",
+            process.env.RETRIEVAL_VECTOR_BACKFILL_INTERVAL_MS || "300000",
             10,
           ),
-          minMs: 30_000,
+          minMs: 300_000,
           maxMs: 900_000,
           label: "Retrieval vector backfill",
         },
       );
       console.log(
-        `[agentmemory] Retrieval vector backfill: enabled (adaptive, every 1m base)`,
+        `[agentmemory] Retrieval vector backfill: enabled (adaptive, every 5m base)`,
       );
     }
     if (process.env.RETRIEVAL_INDEX_STARTUP_VERIFY_ENABLED !== "false") {

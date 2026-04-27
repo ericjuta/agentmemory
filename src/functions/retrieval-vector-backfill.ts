@@ -5,14 +5,15 @@ import type { StateKV } from "../state/kv.js";
 import { KV } from "../state/schema.js";
 import {
   getRetrievalBlockIndexingRuntime,
+  getRetrievalSearchIndex,
   indexRetrievalBlock,
 } from "../state/retrieval-block-indexing.js";
 import { getLlmWorkPauseReason } from "../health/write-gate.js";
 
 const CURSOR_KEY = "retrieval-vector-backfill-cursor";
-const DEFAULT_BATCH_SIZE = 32;
-const DEFAULT_CANDIDATE_SCAN_LIMIT = 640;
-const DEFAULT_TIME_BUDGET_MS = 25_000;
+const DEFAULT_BATCH_SIZE = 4;
+const DEFAULT_CANDIDATE_SCAN_LIMIT = 80;
+const DEFAULT_TIME_BUDGET_MS = 8_000;
 const DEFAULT_CONCURRENCY = 1;
 
 interface RetrievalVectorBackfillCursor {
@@ -100,9 +101,18 @@ function countPresentVectors(
 
 async function loadCandidateIds(kv: StateKV): Promise<{
   ids: string[];
-  source: "scope-index" | "retrieval-block-scan" | "scope-index-unavailable";
+  source:
+    | "retrieval-bm25-index"
+    | "scope-index"
+    | "retrieval-block-scan"
+    | "scope-index-unavailable";
   error?: string;
 }> {
+  const indexedIds = uniqueStrings(getRetrievalSearchIndex().documentIds()).sort();
+  if (indexedIds.length > 0) {
+    return { ids: indexedIds, source: "retrieval-bm25-index" };
+  }
+
   const scopeEntriesResult = await kv
     .list<ScopeEntry>(KV.retrievalBlockIndex)
     .then((entries) => ({ entries }))

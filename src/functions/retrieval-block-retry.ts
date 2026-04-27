@@ -18,6 +18,28 @@ const DEFAULT_TIME_BUDGET_MS = 20_000;
 const MIN_RETRY_WORK_MS = 250;
 const TIMEOUT = Symbol("timeout");
 
+const DIAGNOSTIC_SOURCE_TYPES = new Set([
+  "observation",
+  "turn_capsule",
+  "working_set",
+  "session_summary",
+] satisfies RetrievalBlock["sourceType"][]);
+
+const OPERATOR_DIAGNOSTIC_MARKERS = [
+  "/agentmemory/health",
+  "/agentmemory/livez",
+  "/agentmemory/retrieval-proof",
+  "/agentmemory/retrieval-blocks/diagnostics",
+  "/agentmemory/retrieval-index/verify",
+  "/agentmemory/retrieval-vector/backfill",
+  "/agentmemory/retrieval-blocks/retry",
+  "/agentmemory/compress-retry",
+  "docker compose ps",
+  "docker compose logs",
+  "git status --short --branch",
+  "git log --oneline",
+];
+
 type RetrievalBlockRetryPayload = {
   batchSize?: number;
   refreshFromState?: boolean;
@@ -42,6 +64,45 @@ function isDue(entry: RetrievalBlockRetryEntry, nowMs: number): boolean {
   if (!entry.nextAttemptAt) return true;
   const nextAttemptMs = Date.parse(entry.nextAttemptAt);
   return Number.isNaN(nextAttemptMs) || nextAttemptMs <= nowMs;
+}
+
+function isOperatorDiagnosticRetryEntry(entry: RetrievalBlockRetryEntry): boolean {
+  if (!DIAGNOSTIC_SOURCE_TYPES.has(entry.sourceType)) return false;
+  const block = entry.block;
+  if (!block) return false;
+  const haystack = [
+    block.title,
+    block.canonicalText,
+    ...block.files,
+    ...block.concepts,
+    ...block.entities,
+    entry.lastError,
+  ]
+    .join("\n")
+    .toLowerCase();
+  return OPERATOR_DIAGNOSTIC_MARKERS.some((marker) =>
+    haystack.includes(marker),
+  );
+}
+
+async function coalesceRetryEntries(
+  kv: StateKV,
+  entries: RetrievalBlockRetryEntry[],
+): Promise<{
+  entries: RetrievalBlockRetryEntry[];
+  diagnosticsRemoved: number;
+}> {
+  const kept: RetrievalBlockRetryEntry[] = [];
+  let diagnosticsRemoved = 0;
+  for (const entry of entries) {
+    if (isOperatorDiagnosticRetryEntry(entry)) {
+      await kv.delete(KV.retrievalBlockRetry, entry.blockId).catch(() => {});
+      diagnosticsRemoved++;
+      continue;
+    }
+    kept.push(entry);
+  }
+  return { entries: kept, diagnosticsRemoved };
 }
 
 function remainingBudgetMs(deadlineMs: number): number {
@@ -115,12 +176,14 @@ export function registerRetrievalBlockRetryFunction(
         refreshReport = refresh.value;
       }
     }
-    const entries = await kv.list<RetrievalBlockRetryEntry>(
+    const listedEntries = await kv.list<RetrievalBlockRetryEntry>(
       KV.retrievalBlockRetry,
     );
+    const coalescedEntries = await coalesceRetryEntries(kv, listedEntries);
+    const entries = coalescedEntries.entries;
     const nowMs = Date.now();
     let retried = 0;
-    let removed = 0;
+    let removed = coalescedEntries.diagnosticsRemoved;
     let succeeded = 0;
     let skipped = 0;
     let deferred = 0;
@@ -218,6 +281,7 @@ export function registerRetrievalBlockRetryFunction(
         deferred,
         processed,
         refreshed: refreshReport?.changed ?? 0,
+        diagnosticsRemoved: coalescedEntries.diagnosticsRemoved,
         timedOut,
       });
     }
@@ -242,6 +306,7 @@ export function registerRetrievalBlockRetryFunction(
           refreshIndexed: refreshReport.indexed,
           refreshIndexFailures: refreshReport.indexFailures,
           refreshLimited: refreshReport.limited,
+          diagnosticsRemoved: coalescedEntries.diagnosticsRemoved,
           ...timeoutFields,
         }
       : {
@@ -251,6 +316,7 @@ export function registerRetrievalBlockRetryFunction(
           skipped,
           deferred,
           processed,
+          diagnosticsRemoved: coalescedEntries.diagnosticsRemoved,
           ...timeoutFields,
         };
  });

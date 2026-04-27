@@ -17,6 +17,7 @@ export interface DeferredWorkStatus {
     queued: number;
     error?: string;
   };
+  totalQueued: number;
 }
 
 async function countScope(
@@ -41,11 +42,14 @@ export async function getDeferredWorkStatus(
     countScope(kv, KV.retrievalBlockRetry),
     countScope(kv, KV.graphExtractionRetry),
   ]);
+  const totalQueued =
+    compression.queued + retrievalBlocks.queued + graphExtraction.queued;
   return {
     generatedAt: new Date().toISOString(),
     compression,
     retrievalBlocks,
     graphExtraction,
+    totalQueued,
   };
 }
 

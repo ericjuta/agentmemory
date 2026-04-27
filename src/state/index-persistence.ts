@@ -315,14 +315,16 @@ export class IndexPersistence {
     );
     const vector =
       this.vector && this.vector.size > 0
-        ? await this.writePayloadShards(
-            "vector",
-            this.vector.serialize(),
-            this.vector.size,
-            previous?.vector ?? undefined,
-            generation,
-          )
-        : null;
+        ? previous?.vector && this.vector.size < previous.vector.count
+          ? previous.vector
+          : await this.writePayloadShards(
+              "vector",
+              this.vector.serialize(),
+              this.vector.size,
+              previous?.vector ?? undefined,
+              generation,
+            )
+        : previous?.vector ?? null;
 
     const manifest: ShardedIndexManifest = {
       schemaVersion: 1,

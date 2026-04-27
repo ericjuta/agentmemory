@@ -27,6 +27,25 @@ interface ScopeEntry {
   updatedAt?: unknown;
 }
 
+type FreshnessLane = RetrievalBlock["freshnessLane"];
+
+const BLOCKING_FRESHNESS_LANES = new Set<FreshnessLane>(["hot", "warm"]);
+
+const OPERATOR_DIAGNOSTIC_MARKERS = [
+  "/agentmemory/health",
+  "/agentmemory/livez",
+  "/agentmemory/retrieval-proof",
+  "/agentmemory/retrieval-blocks/diagnostics",
+  "/agentmemory/retrieval-index/verify",
+  "/agentmemory/retrieval-vector/backfill",
+  "/agentmemory/retrieval-blocks/retry",
+  "/agentmemory/compress-retry",
+  "docker compose ps",
+  "docker compose logs",
+  "git status --short --branch",
+  "git log --oneline",
+];
+
 function parseNonNegativeInt(value: unknown, fallback: number): number {
   if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
     return Math.floor(value);
@@ -68,6 +87,48 @@ function ratio(numerator: number, denominator: number): number {
 
 function retryTimestamp(entry: RetrievalBlockRetryEntry): string {
   return entry.firstFailedAt || entry.lastFailedAt;
+}
+
+function laneForRetryEntry(entry: RetrievalBlockRetryEntry): FreshnessLane {
+  if (entry.block?.freshnessLane) return entry.block.freshnessLane;
+  if (entry.sourceType === "turn_capsule" || entry.sourceType === "working_set") {
+    return "hot";
+  }
+  if (
+    entry.sourceType === "observation" ||
+    entry.sourceType === "guardrail" ||
+    entry.sourceType === "decision" ||
+    entry.sourceType === "dossier" ||
+    entry.sourceType === "handoff" ||
+    entry.sourceType === "branch_overlay"
+  ) {
+    return "warm";
+  }
+  return "cold";
+}
+
+function isOperatorDiagnosticRetryEntry(entry: RetrievalBlockRetryEntry): boolean {
+  const block = entry.block;
+  if (!block) return false;
+  const haystack = [
+    block.title,
+    block.canonicalText,
+    ...block.files,
+    ...block.concepts,
+    ...block.entities,
+    entry.lastError,
+  ]
+    .join("\n")
+    .toLowerCase();
+  return OPERATOR_DIAGNOSTIC_MARKERS.some((marker) =>
+    haystack.includes(marker),
+  );
+}
+
+function retryCountByLane(entries: RetrievalBlockRetryEntry[]): Record<FreshnessLane, number> {
+  const counts: Record<FreshnessLane, number> = { hot: 0, warm: 0, cold: 0 };
+  for (const entry of entries) counts[laneForRetryEntry(entry)]++;
+  return counts;
 }
 
 async function readScopeEntry(
@@ -116,6 +177,15 @@ export function registerRetrievalBlockDiagnosticsFunction(
     const retryEntries = await kv
       .list<RetrievalBlockRetryEntry>(KV.retrievalBlockRetry)
       .catch(() => []);
+   const retryLaneCounts = retryCountByLane(retryEntries);
+    const diagnosticQueuedCount = retryEntries.filter((entry) =>
+      isOperatorDiagnosticRetryEntry(entry),
+    ).length;
+    const blockingQueuedCount =
+     retryEntries.filter((entry) =>
+       BLOCKING_FRESHNESS_LANES.has(laneForRetryEntry(entry)) &&
+       !isOperatorDiagnosticRetryEntry(entry),
+      ).length;
     const oldestRetryAt = retryEntries.reduce<string | undefined>(
       (oldest, entry) => {
         const timestamp = retryTimestamp(entry);
@@ -191,6 +261,10 @@ export function registerRetrievalBlockDiagnosticsFunction(
         vectorMissingCount: activeVectorMissingCount,
         deferredFreshnessLag: {
           queuedCount: retryEntries.length,
+          blockingQueuedCount: Math.max(0, blockingQueuedCount),
+          diagnosticQueuedCount,
+          byLane: retryLaneCounts,
+          blockingLanes: [...BLOCKING_FRESHNESS_LANES],
           oldestQueuedAt: oldestRetryAt,
           oldestAgeMs: oldestRetryAt
             ? Math.max(0, Date.now() - new Date(oldestRetryAt).getTime())
