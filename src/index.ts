@@ -269,7 +269,7 @@ async function main() {
 
   if (isAutoCompressEnabled()) {
     console.log(
-      `[agentmemory] WARNING: AGENTMEMORY_AUTO_COMPRESS=true — every PostToolUse observation will be sent to your LLM provider for compression. This spends API tokens proportional to your session tool-use frequency (see #138). Set AGENTMEMORY_AUTO_COMPRESS=false to disable.`,
+      `[agentmemory] WARNING: AGENTMEMORY_AUTO_COMPRESS=true — persistent observations are queued for LLM compression by background maintenance. This spends API tokens proportional to session tool-use frequency (see #138). Set AGENTMEMORY_AUTO_COMPRESS=false to disable.`,
     );
   } else {
     console.log(

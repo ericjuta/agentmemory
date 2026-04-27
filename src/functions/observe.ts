@@ -395,6 +395,10 @@ function compressionTrackerPauseReason(
   return inflight >= limit ? `compress_inflight_${inflight}_gte_${limit}` : null;
 }
 
+function shouldCompressInlineOnObserve(): boolean {
+  return process.env["AGENTMEMORY_OBSERVE_INLINE_COMPRESS"] === "true";
+}
+
 function shouldShedObservation(
   payload: HookPayload,
   metadata: ObserveMetadata,
@@ -640,17 +644,17 @@ export function registerObserveFunction(
             hotPathPressure?.reason ||
             compressionTrackerPauseReason(tracker) ||
             (await getLlmWorkPauseReason(kv));
-          if (pauseReason) {
+          if (pauseReason || !shouldCompressInlineOnObserve()) {
             compressionMode = "deferred";
             await enqueueCompressionRetry(kv, {
               observationId: obsId,
               sessionId: payload.sessionId,
-              error: pauseReason,
+              error: pauseReason || "observe_inline_compress_deferred",
             });
-            logger.warn("Auto compression deferred while health is unhealthy", {
+            logger[pauseReason ? "warn" : "info"]("Auto compression queued", {
               obsId,
               sessionId: payload.sessionId,
-              reason: pauseReason,
+              reason: pauseReason || "observe_inline_compress_deferred",
             });
           } else {
             compressionMode = "llm";

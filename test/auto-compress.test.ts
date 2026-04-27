@@ -83,11 +83,13 @@ describe("mem::observe auto-compress gate (#138)", () => {
   beforeEach(() => {
     vi.resetModules();
     delete process.env["AGENTMEMORY_AUTO_COMPRESS"];
+    delete process.env["AGENTMEMORY_OBSERVE_INLINE_COMPRESS"];
     tempCwd = mkdtempSync(join(tmpdir(), "agentmemory-auto-compress-"));
     process.chdir(tempCwd);
   });
   afterEach(() => {
     delete process.env["AGENTMEMORY_AUTO_COMPRESS"];
+    delete process.env["AGENTMEMORY_OBSERVE_INLINE_COMPRESS"];
     process.chdir(originalCwd);
     if (tempCwd) {
       rmSync(tempCwd, { recursive: true, force: true });
@@ -141,8 +143,38 @@ describe("mem::observe auto-compress gate (#138)", () => {
     expect(obs.confidence).toBeGreaterThan(0.3);
   });
 
-  it("AGENTMEMORY_AUTO_COMPRESS=true: fires mem::compress exactly once", async () => {
+  it("AGENTMEMORY_AUTO_COMPRESS=true: queues compression off the observe path", async () => {
     process.env["AGENTMEMORY_AUTO_COMPRESS"] = "true";
+    const { registerObserveFunction } = await import(
+      "../src/functions/observe.js"
+    );
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerObserveFunction(sdk as never, kv as never);
+
+    const result = (await sdk.trigger("mem::observe", validPayload())) as {
+      observationId: string;
+    };
+
+    const compressCalls = sdk.triggered.filter((t) => t.id === "mem::compress");
+    expect(compressCalls).toHaveLength(0);
+    const queued = await kv.get<{
+      obsId: string;
+      sessionId: string;
+      retries: number;
+      lastError?: string;
+    }>(KV.compressRetry, result.observationId);
+    expect(queued).toMatchObject({
+      obsId: result.observationId,
+      sessionId: "ses_test",
+      retries: 0,
+      lastError: "observe_inline_compress_deferred",
+    });
+  });
+
+  it("AGENTMEMORY_OBSERVE_INLINE_COMPRESS=true: fires mem::compress exactly once", async () => {
+    process.env["AGENTMEMORY_AUTO_COMPRESS"] = "true";
+    process.env["AGENTMEMORY_OBSERVE_INLINE_COMPRESS"] = "true";
     const { registerObserveFunction } = await import(
       "../src/functions/observe.js"
     );
