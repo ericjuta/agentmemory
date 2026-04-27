@@ -296,7 +296,7 @@ describe("IndexPersistence", () => {
     await persistence.save();
 
     const manifest = await baseKv.get<any>(
-      KV.retrievalBlockIndex,
+      KV.indexManifest(KV.retrievalBlockIndex),
       "manifest",
     );
     expect(manifest.bm25.shards.length).toBeGreaterThan(1);
@@ -319,7 +319,10 @@ describe("IndexPersistence", () => {
       kind: "bm25",
     });
     expect(await baseKv.get(manifest.bm25.shards[0].scope, "data")).not.toBeNull();
-    expect(baseKv.keys(KV.retrievalBlockIndex)).toEqual(["manifest"]);
+    expect(baseKv.keys(KV.indexManifest(KV.retrievalBlockIndex))).toEqual([
+      "manifest",
+    ]);
+    expect(baseKv.keys(KV.retrievalBlockIndex)).toEqual([]);
     expect(await baseKv.get(KV.retrievalBlockIndex, "data")).toBeNull();
     expect(persistence.getStatus()).toMatchObject({
       status: "ok",
@@ -356,7 +359,7 @@ describe("IndexPersistence", () => {
 
     await persistence.save();
 
-    const manifest = await kv.get<any>(KV.bm25Index, "manifest");
+    const manifest = await kv.get<any>(KV.indexManifest(KV.bm25Index), "manifest");
     expect(manifest.mode).toBe("sharded");
     expect(manifest.schemaVersion).toBe(2);
     expect(manifest.bm25.shards.length).toBeGreaterThan(1);
@@ -367,7 +370,8 @@ describe("IndexPersistence", () => {
         shard.key === "data",
       ),
     ).toBe(true);
-    expect(kv.keys(KV.bm25Index)).toEqual(["manifest"]);
+    expect(kv.keys(KV.indexManifest(KV.bm25Index))).toEqual(["manifest"]);
+    expect(kv.keys(KV.bm25Index)).toEqual([]);
     expect(await kv.get(KV.bm25Index, "data")).toBeNull();
     expect(await kv.get(KV.bm25Index, "vectors")).toBeNull();
     expect(persistence.getStatus()).toMatchObject({
@@ -412,10 +416,55 @@ describe("IndexPersistence", () => {
     expect(loaded.vector?.size).toBe(1);
     expect(loader.getStatus()).toMatchObject({
       status: "ok",
+      manifestScope: KV.indexManifest(KV.retrievalBlockIndex),
+      manifestSource: "manifest-scope",
       manifest: {
         documentCount: 1,
         vectorCount: 1,
       },
+    });
+  });
+
+  it("loads current manifests without reading the parent index scope", async () => {
+    const bm25 = new SearchIndex();
+    bm25.addDocument("doc_1", "session_1", "auth middleware token validation");
+    const persistence = new IndexPersistence(
+      kv as never,
+      bm25,
+      null,
+      KV.retrievalBlockIndex,
+      { mode: "sharded", shardSizeBytes: 80 },
+    );
+    await persistence.save();
+
+    const guardKv = {
+      ...kv,
+      get: vi.fn(async <T>(scope: string, key: string): Promise<T | null> => {
+        if (scope === KV.retrievalBlockIndex) {
+          throw new Error("parent scope should not be read");
+        }
+        return kv.get<T>(scope, key);
+      }),
+    };
+    const loader = new IndexPersistence(
+      guardKv as never,
+      new SearchIndex(),
+      null,
+      KV.retrievalBlockIndex,
+      { mode: "sharded", shardSizeBytes: 80 },
+    );
+
+    const loaded = await loader.load();
+
+    expect(loaded.bm25?.size).toBe(1);
+    expect(guardKv.get).not.toHaveBeenCalledWith(
+      KV.retrievalBlockIndex,
+      expect.any(String),
+    );
+    expect(loader.getStatus()).toMatchObject({
+      status: "ok",
+      manifestSource: "manifest-scope",
+      manifest: { legacyPayloadPresent: false },
     });
   });
 
@@ -469,15 +518,21 @@ describe("IndexPersistence", () => {
 
     await persistence.save();
 
-    const manifest = await kv.get<any>(KV.retrievalBlockIndex, "manifest");
+    const manifest = await kv.get<any>(
+      KV.indexManifest(KV.retrievalBlockIndex),
+      "manifest",
+    );
     expect(manifest.schemaVersion).toBe(2);
     expect(manifest.bm25.shards[0]).toMatchObject({
       scope: expect.stringContaining(`${KV.retrievalBlockIndex}:shard:bm25:`),
       key: "data",
       kind: "bm25",
     });
-    expect(await kv.get(KV.retrievalBlockIndex, shardKey)).toBeNull();
-    expect(kv.keys(KV.retrievalBlockIndex)).toEqual(["manifest"]);
+    expect(await kv.get(KV.retrievalBlockIndex, shardKey)).not.toBeNull();
+    expect(kv.keys(KV.indexManifest(KV.retrievalBlockIndex))).toEqual([
+      "manifest",
+    ]);
+    expect(kv.keys(KV.retrievalBlockIndex)).toEqual([shardKey, "manifest"]);
   });
 
   it("preserves a larger complete vector manifest over a partial in-memory vector index", async () => {
@@ -495,7 +550,10 @@ describe("IndexPersistence", () => {
       { mode: "sharded", shardSizeBytes: 80 },
     );
     await persistence.save();
-    const firstManifest = await kv.get<any>(KV.retrievalBlockIndex, "manifest");
+    const firstManifest = await kv.get<any>(
+      KV.indexManifest(KV.retrievalBlockIndex),
+      "manifest",
+    );
 
     const partialVector = new VectorIndex();
     partialVector.add("doc_0", "session_1", new Float32Array([0, 1, 2]));
@@ -509,7 +567,10 @@ describe("IndexPersistence", () => {
     await updater.load();
     await updater.save();
 
-    const nextManifest = await kv.get<any>(KV.retrievalBlockIndex, "manifest");
+    const nextManifest = await kv.get<any>(
+      KV.indexManifest(KV.retrievalBlockIndex),
+      "manifest",
+    );
     expect(nextManifest.vector.count).toBe(4);
     expect(nextManifest.vector.shards).toEqual(firstManifest.vector.shards);
 
@@ -537,7 +598,10 @@ describe("IndexPersistence", () => {
       { mode: "sharded", shardSizeBytes: 80 },
     );
     await firstPersistence.save();
-    const firstManifest = await kv.get<any>(KV.retrievalBlockIndex, "manifest");
+    const firstManifest = await kv.get<any>(
+      KV.indexManifest(KV.retrievalBlockIndex),
+      "manifest",
+    );
 
     const partialBm25 = new SearchIndex();
     partialBm25.addDocument("doc_0", "session_1", "retrieval block 0");
@@ -550,7 +614,10 @@ describe("IndexPersistence", () => {
     );
     await startupPersistence.save();
 
-    const nextManifest = await kv.get<any>(KV.retrievalBlockIndex, "manifest");
+    const nextManifest = await kv.get<any>(
+      KV.indexManifest(KV.retrievalBlockIndex),
+      "manifest",
+    );
     expect(nextManifest.bm25.count).toBe(4);
     expect(nextManifest.bm25.shards).toEqual(firstManifest.bm25.shards);
 
@@ -580,7 +647,10 @@ describe("IndexPersistence", () => {
       { mode: "sharded", shardSizeBytes: 80 },
     );
     await persistence.save();
-    const manifest = await kv.get<any>(KV.retrievalBlockIndex, "manifest");
+    const manifest = await kv.get<any>(
+      KV.indexManifest(KV.retrievalBlockIndex),
+      "manifest",
+    );
     await kv.delete(manifest.bm25.shards[0].scope, manifest.bm25.shards[0].key);
 
     const loader = new IndexPersistence(
@@ -623,7 +693,7 @@ describe("IndexPersistence", () => {
     );
     await persistence.save();
     const firstManifest = await baseKv.get<any>(
-      KV.retrievalBlockIndex,
+      KV.indexManifest(KV.retrievalBlockIndex),
       "manifest",
     );
 
@@ -635,9 +705,9 @@ describe("IndexPersistence", () => {
     failShardWrites = true;
 
     await expect(persistence.save()).rejects.toThrow("state unavailable");
-    expect(await baseKv.get(KV.retrievalBlockIndex, "manifest")).toEqual(
-      firstManifest,
-    );
+    expect(
+      await baseKv.get(KV.indexManifest(KV.retrievalBlockIndex), "manifest"),
+    ).toEqual(firstManifest);
 
     const loader = new IndexPersistence(
       baseKv as never,
@@ -683,7 +753,7 @@ describe("IndexPersistence", () => {
       .mock.calls.filter(([scope]) => scope.includes(":shard:"));
     expect(shardWrites).toHaveLength(0);
     expect(recordingKv.set).toHaveBeenCalledWith(
-      KV.retrievalBlockIndex,
+      KV.indexManifest(KV.retrievalBlockIndex),
       "manifest",
       expect.any(Object),
     );

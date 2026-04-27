@@ -24,6 +24,8 @@ export interface IndexPersistenceOptions {
 
 export interface IndexPersistenceStatus {
   scope: string;
+  manifestScope?: string;
+  manifestSource?: "manifest-scope" | "parent-scope" | "legacy-payload";
   mode: IndexPersistenceMode;
   status: "idle" | "ok" | "error" | "incomplete";
   lastSuccessfulSaveAt?: string;
@@ -86,6 +88,13 @@ interface PayloadManifestV2 extends BasePayloadManifest {
 }
 
 type PayloadManifest = PayloadManifestV1 | PayloadManifestV2;
+
+type ManifestSource = "manifest-scope" | "parent-scope";
+
+interface StoredManifest {
+  manifest: ShardedIndexManifest;
+  source: ManifestSource;
+}
 
 interface ShardedIndexManifestV1 {
   schemaVersion: 1;
@@ -243,6 +252,7 @@ export class IndexPersistence {
   private nextDelayMs = DEBOUNCE_MS;
   private readonly mode: IndexPersistenceMode;
   private readonly shardSizeBytes: number;
+  private readonly manifestScope: string;
   private readonly now: () => string;
   private readonly shouldDeferSave: () => boolean | string | null | Promise<boolean | string | null>;
   private deferredCount = 0;
@@ -259,6 +269,7 @@ export class IndexPersistence {
     options: IndexPersistenceOptions = {},
   ) {
     this.mode = options.mode ?? "legacy";
+    this.manifestScope = KV.indexManifest(this.scope);
     this.shardSizeBytes = positiveInteger(
       options.shardSizeBytes,
       DEFAULT_SHARD_BYTES,
@@ -267,6 +278,7 @@ export class IndexPersistence {
     this.shouldDeferSave = options.shouldDeferSave ?? (() => false);
     this.status = {
       scope: this.scope,
+      manifestScope: this.manifestScope,
       mode: this.mode,
       status: "idle",
     };
@@ -419,13 +431,9 @@ export class IndexPersistence {
       vector,
     };
 
-    await this.kv.set(this.scope, SHARDED_MANIFEST_KEY, manifest);
+    await this.kv.set(this.manifestScope, SHARDED_MANIFEST_KEY, manifest);
     this.completeManifest = manifest;
     await this.deleteUnreferencedShards(previous, manifest);
-    await Promise.all([
-      this.kv.delete(this.scope, LEGACY_BM25_KEY).catch(() => {}),
-      this.kv.delete(this.scope, LEGACY_VECTOR_KEY).catch(() => {}),
-    ]);
     this.recordSuccess(manifest, false);
   }
 
@@ -473,8 +481,24 @@ export class IndexPersistence {
   }
 
   private async loadStoredManifest(): Promise<ShardedIndexManifest | null> {
+    return (await this.loadStoredManifestWithSource())?.manifest ?? null;
+  }
+
+  private async loadStoredManifestWithSource(): Promise<StoredManifest | null> {
+    const manifest = await this.loadManifestFrom(this.manifestScope);
+    if (manifest) return { manifest, source: "manifest-scope" };
+    const parentManifest = await this.loadManifestFrom(this.scope);
+    if (parentManifest) {
+      return { manifest: parentManifest, source: "parent-scope" };
+    }
+    return null;
+  }
+
+  private async loadManifestFrom(
+    scope: string,
+  ): Promise<ShardedIndexManifest | null> {
     const manifest = await this.kv
-      .get<unknown>(this.scope, SHARDED_MANIFEST_KEY)
+      .get<unknown>(scope, SHARDED_MANIFEST_KEY)
       .catch(() => null);
     return isShardedIndexManifest(manifest) ? manifest : null;
   }
@@ -558,9 +582,9 @@ export class IndexPersistence {
     await Promise.all(
       previousShards
         .filter((shard) => !nextRefs.has(this.shardRef(shard)))
+        .filter((shard): shard is PhysicalShardDescriptor => "scope" in shard)
         .map((shard) => {
-          const storage = this.shardStorage(shard);
-          return this.kv.delete(storage.scope, storage.key).catch(() => {});
+          return this.kv.delete(shard.scope, shard.key).catch(() => {});
         }),
     );
   }
@@ -587,10 +611,9 @@ export class IndexPersistence {
     bm25: SearchIndex | null;
     vector: VectorIndex | null;
   } | null> {
-    const manifest = await this.kv
-      .get<unknown>(this.scope, SHARDED_MANIFEST_KEY)
-      .catch(() => null);
-    if (!isShardedIndexManifest(manifest)) return null;
+    const stored = await this.loadStoredManifestWithSource();
+    if (!stored) return null;
+    const { manifest, source } = stored;
 
     let incomplete = false;
     const bm25Data = await this.loadPayload(manifest.bm25);
@@ -613,26 +636,30 @@ export class IndexPersistence {
     if (incomplete) {
       this.status = {
         scope: this.scope,
+        manifestScope: this.manifestScope,
+        manifestSource: source,
         mode: this.mode,
         status: "incomplete",
         error: "persisted index shards are missing or stale",
         manifest: this.statusFromManifest(
           manifest,
           true,
-          await this.hasLegacyPayload(),
+          source === "manifest-scope" ? false : undefined,
         ),
       };
     } else {
       this.completeManifest = manifest;
       this.status = {
         scope: this.scope,
+        manifestScope: this.manifestScope,
+        manifestSource: source,
         mode: this.mode,
         status: "ok",
         lastSuccessfulSaveAt: manifest.savedAt,
         manifest: this.statusFromManifest(
           manifest,
           false,
-          await this.hasLegacyPayload(),
+          source === "manifest-scope" ? false : undefined,
         ),
       };
     }
@@ -689,19 +716,13 @@ export class IndexPersistence {
     if (bm25 || vector) {
       this.status = {
         scope: this.scope,
+        manifestScope: this.manifestScope,
+        manifestSource: "legacy-payload",
         mode: this.mode,
         status: "ok",
       };
     }
     return { bm25, vector };
-  }
-
-  private async hasLegacyPayload(): Promise<boolean> {
-    const [bm25, vector] = await Promise.all([
-      this.kv.get(this.scope, LEGACY_BM25_KEY).catch(() => null),
-      this.kv.get(this.scope, LEGACY_VECTOR_KEY).catch(() => null),
-    ]);
-    return bm25 !== null || vector !== null;
   }
 
   private recordSuccess(
@@ -711,6 +732,8 @@ export class IndexPersistence {
     const savedAt = manifest?.savedAt ?? this.now();
     this.status = {
       scope: this.scope,
+      manifestScope: this.manifestScope,
+      manifestSource: manifest ? "manifest-scope" : this.status.manifestSource,
       mode: this.mode,
       status: "ok",
       lastSuccessfulSaveAt: savedAt,
@@ -724,6 +747,7 @@ export class IndexPersistence {
     this.status = {
       ...this.status,
       scope: this.scope,
+      manifestScope: this.manifestScope,
       mode: this.mode,
       status: "error",
       lastFailureAt: this.now(),
