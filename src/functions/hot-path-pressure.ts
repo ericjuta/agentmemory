@@ -14,7 +14,7 @@ export interface ObserveHotPathPressure extends HotPathPressure {
   mode: "defer_derived" | "shed";
 }
 
-const DEFAULT_CONTEXT_QUEUE_THRESHOLD = 100;
+const DEFAULT_CONTEXT_QUEUE_THRESHOLD = 300;
 const DEFAULT_OBSERVE_DERIVED_QUEUE_THRESHOLD = 300;
 const DEFAULT_OBSERVE_SHED_QUEUE_THRESHOLD = 1000;
 const DEFAULT_PRESSURE_CACHE_MS = 2000;

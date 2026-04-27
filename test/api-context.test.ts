@@ -146,6 +146,50 @@ describe("api::context", () => {
     });
   });
 
+  it("keeps context available for normal deferred backlog by default", async () => {
+    const previousQueueHigh =
+      process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_QUEUE_HIGH"];
+    delete process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_QUEUE_HIGH"];
+
+    const sdk = mockSdk();
+    const kv = mockKV();
+    try {
+      registerContextFunction(sdk as never, kv as never, 900);
+      registerApiTriggers(sdk as never, kv as never);
+      for (let i = 0; i < 120; i++) {
+        await kv.set(KV.compressRetry, `queued-compress-${i}`, {
+          obsId: `queued-compress-${i}`,
+        });
+      }
+
+      const response = (await sdk.trigger("api::context", {
+        body: {
+          sessionId: "session-api-context-normal-backlog",
+          project: "/project",
+          query: "retrieval trace",
+        },
+        headers: {},
+      })) as {
+        status_code: number;
+        body: {
+          skipped?: boolean;
+          reason?: string;
+        };
+      };
+
+      expect(response.status_code).toBe(200);
+      expect(response.body.skipped).toBeUndefined();
+      expect(response.body.reason).toBeUndefined();
+    } finally {
+      if (previousQueueHigh === undefined) {
+        delete process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_QUEUE_HIGH"];
+      } else {
+        process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_QUEUE_HIGH"] =
+          previousQueueHigh;
+      }
+    }
+  });
+
   it("returns an empty skipped context payload under hot-path pressure", async () => {
     const previousQueueHigh =
       process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_QUEUE_HIGH"];
