@@ -3918,6 +3918,51 @@ export function registerApiTriggers(
   });
   sdk.registerTrigger({ type: "http", function_id: "api::retrieval-index-verify", config: { api_path: "/agentmemory/retrieval-index/verify", http_method: "POST" } });
 
+  sdk.registerFunction("api::index-persistence-compact",  async (req: ApiRequest) => {
+    const denied = checkAuth(req, secret);
+    if (denied) return denied;
+    const body = (req.body || {}) as Record<string, unknown>;
+    const target = asNonEmptyString(body.target);
+    const timeBudgetMs = parseOptionalPositiveInt(body.timeBudgetMs);
+    if (
+      target !== null &&
+      target !== "all" &&
+      target !== "observation" &&
+      target !== "retrieval"
+    ) {
+      return {
+        status_code: 400,
+        body: { error: "target must be observation, retrieval, or all" },
+      };
+    }
+    if (timeBudgetMs === null) {
+      return {
+        status_code: 400,
+        body: { error: "timeBudgetMs must be a positive integer when provided" },
+      };
+    }
+    if (body.force !== undefined && typeof body.force !== "boolean") {
+      return {
+        status_code: 400,
+        body: { error: "force must be a boolean when provided" },
+      };
+    }
+    if (body.verify !== undefined && typeof body.verify !== "boolean") {
+      return {
+        status_code: 400,
+        body: { error: "verify must be a boolean when provided" },
+      };
+    }
+    const payload: Record<string, unknown> = {};
+    if (target) payload.target = target;
+    if (timeBudgetMs !== undefined) payload.timeBudgetMs = timeBudgetMs;
+    if (typeof body.force === "boolean") payload.force = body.force;
+    if (typeof body.verify === "boolean") payload.verify = body.verify;
+    const result = await sdk.trigger({ function_id: "mem::index-persistence-compact", payload });
+    return { status_code: 200, body: result };
+  });
+  sdk.registerTrigger({ type: "http", function_id: "api::index-persistence-compact", config: { api_path: "/agentmemory/index-persistence/compact", http_method: "POST" } });
+
   sdk.registerFunction("api::retrieval-vector-backfill",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
     if (denied) return denied;

@@ -17,6 +17,10 @@ recover useful legacy memories without reintroducing cross-project leakage.
 - 2026-04-27 live investigation found the logical index shards still share the
   same StateKV scope, so the file-based iii adapter still stores them in giant
   physical scope files.
+- P0 physical-scope v2 index manifests are implemented, with
+  `mem::index-persistence-compact` and
+  `POST /agentmemory/index-persistence/compact` for bounded operator
+  migration under the index write gate.
 - P1 legacy consolidated-memory backfill is implemented as
   `mem::consolidated-memory-backfill` and
   `POST /agentmemory/consolidated-memory/backfill`.

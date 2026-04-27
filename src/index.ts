@@ -102,6 +102,7 @@ import { registerRetrievalVectorRepairWorkerFunction } from "./functions/retriev
 import { registerRetrievalQualitySummaryFunction } from "./functions/retrieval-quality-summary.js";
 import { registerRetrievalProofFunction } from "./functions/retrieval-proof.js";
 import { registerConsolidatedMemoryBackfillFunction } from "./functions/consolidated-memory-backfill.js";
+import { registerIndexPersistenceCompactionFunction } from "./functions/index-persistence-compaction.js";
 import {
   getDeferredWorkStatus,
   registerDeferredWorkFunction,
@@ -405,6 +406,20 @@ async function main() {
         status: "idle",
       },
   });
+  registerIndexPersistenceCompactionFunction(sdk, kv, {
+    observation: {
+      save: () =>
+        indexPersistence?.save() ??
+        Promise.reject(new Error("observation persistence unavailable")),
+      status: () => indexPersistence?.getStatus(),
+    },
+    retrieval: {
+      save: () =>
+        retrievalIndexPersistence?.save() ??
+        Promise.reject(new Error("retrieval persistence unavailable")),
+      status: () => retrievalIndexPersistence?.getStatus(),
+    },
+  });
 
   const loaded = await indexPersistence.load().catch((err) => {
     console.warn(`[agentmemory] Failed to load persisted index:`, err);
@@ -455,7 +470,7 @@ async function main() {
     `[agentmemory] Ready. ${embeddingProvider ? "Triple-stream (BM25+Vector+Graph)" : "BM25+Graph"} search active.`,
   );
   console.log(
-    `[agentmemory] Endpoints: 137 REST + 44 MCP tools + 6 MCP resources + 3 MCP prompts`,
+    `[agentmemory] Endpoints: 138 REST + 44 MCP tools + 6 MCP resources + 3 MCP prompts`,
   );
 
   const viewerPort = config.restPort + 2;
