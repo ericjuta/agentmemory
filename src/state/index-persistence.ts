@@ -12,6 +12,7 @@ const DEFAULT_SHARD_BYTES = 256 * 1024;
 const SHARDED_MANIFEST_KEY = "manifest";
 const LEGACY_BM25_KEY = "data";
 const LEGACY_VECTOR_KEY = "vectors";
+const STABLE_SHARD_GENERATIONS = ["stable-a", "stable-b"] as const;
 
 export type IndexPersistenceMode = "legacy" | "sharded";
 
@@ -55,6 +56,7 @@ export interface IndexPersistenceStatus {
 }
 
 type PayloadKind = "bm25" | "vector";
+type StableShardGeneration = (typeof STABLE_SHARD_GENERATIONS)[number];
 
 interface BaseShardDescriptor {
   key: string;
@@ -245,6 +247,12 @@ function isPhysicalPayloadManifest(
   return payload.shards.every((shard) => "scope" in shard);
 }
 
+function isStableShardGeneration(
+  generation: string | undefined,
+): generation is StableShardGeneration {
+  return generation === "stable-a" || generation === "stable-b";
+}
+
 export class IndexPersistence {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private inFlight: Promise<void> | null = null;
@@ -407,21 +415,17 @@ export class IndexPersistence {
 
   private async saveSharded(): Promise<void> {
     const savedAt = this.now();
-    const generation = `${Date.parse(savedAt) || Date.now()}-${Math.random()
-      .toString(36)
-      .slice(2, 10)}`;
     const previous = this.completeManifest ?? (await this.loadStoredManifest());
     const bm25 =
       previous?.bm25 && this.bm25.size < previous.bm25.count
-        ? await this.preserveOrMigratePayload("bm25", previous.bm25, generation)
+        ? await this.preserveOrMigratePayload("bm25", previous.bm25)
         : await this.writePayloadShards(
             "bm25",
             this.bm25.serialize(),
             this.bm25.size,
             previous?.bm25,
-            generation,
           );
-    const vector = await this.resolveVectorPayload(previous, generation);
+    const vector = await this.resolveVectorPayload(previous);
 
     const manifest: ShardedIndexManifestV2 = {
       schemaVersion: 2,
@@ -439,15 +443,14 @@ export class IndexPersistence {
 
   private async resolveVectorPayload(
     previous: ShardedIndexManifest | null,
-    generation: string,
   ): Promise<PayloadManifestV2 | null> {
     if (!this.vector || this.vector.size === 0) {
       if (!previous?.vector) return null;
-      return this.preserveOrMigratePayload("vector", previous.vector, generation);
+      return this.preserveOrMigratePayload("vector", previous.vector);
     }
 
     if (previous?.vector && this.vector.size < previous.vector.count) {
-      return this.preserveOrMigratePayload("vector", previous.vector, generation);
+      return this.preserveOrMigratePayload("vector", previous.vector);
     }
 
     return this.writePayloadShards(
@@ -455,14 +458,12 @@ export class IndexPersistence {
       this.vector.serialize(),
       this.vector.size,
       previous?.vector ?? undefined,
-      generation,
     );
   }
 
   private async preserveOrMigratePayload(
     kind: PayloadKind,
     payload: PayloadManifest,
-    generation: string,
   ): Promise<PayloadManifestV2> {
     if (isPhysicalPayloadManifest(payload)) return payload;
 
@@ -476,7 +477,6 @@ export class IndexPersistence {
       loaded.value,
       payload.count,
       undefined,
-      generation,
     );
   }
 
@@ -508,12 +508,11 @@ export class IndexPersistence {
     serialized: string,
     count: number,
     previous: PayloadManifest | undefined,
-    generation: string,
   ): Promise<PayloadManifestV2> {
     const chunks = chunkStringByBytes(serialized, this.shardSizeBytes);
-    const previousByHash = new Map(
+    const previousByIndex = new Map(
       (previous && isPhysicalPayloadManifest(previous) ? previous.shards : []).map(
-        (shard) => [`${shard.sha256}:${shard.byteLength}`, shard],
+        (shard) => [shard.index, shard],
       ),
     );
     const shards: PhysicalShardDescriptor[] = [];
@@ -524,15 +523,14 @@ export class IndexPersistence {
         byteLength: byteLength(chunk),
         sha256: sha256(chunk),
       };
-      const existing = previousByHash.get(
-        `${descriptor.sha256}:${descriptor.byteLength}`,
-      );
-      if (existing) {
-        shards.push(existing);
+      const previousShard = previousByIndex.get(index);
+      if (previousShard && this.shardMatches(previousShard, descriptor)) {
+        shards.push(previousShard);
         continue;
       }
 
       const key = "data";
+      const generation = this.nextShardGeneration(previousShard);
       const scope = KV.indexShard(this.scope, kind, generation, index);
       const shard: PhysicalShardDescriptor = {
         scope,
@@ -556,6 +554,23 @@ export class IndexPersistence {
       sha256: sha256(serialized),
       shards,
     };
+  }
+
+  private shardMatches(
+    shard: PhysicalShardDescriptor,
+    descriptor: Pick<PhysicalShardDescriptor, "byteLength" | "sha256">,
+  ): boolean {
+    return (
+      shard.byteLength === descriptor.byteLength &&
+      shard.sha256 === descriptor.sha256
+    );
+  }
+
+  private nextShardGeneration(
+    previous: PhysicalShardDescriptor | undefined,
+  ): StableShardGeneration {
+    if (!isStableShardGeneration(previous?.generation)) return "stable-a";
+    return previous.generation === "stable-a" ? "stable-b" : "stable-a";
   }
 
   private async verifyShard(shard: PhysicalShardDescriptor): Promise<void> {

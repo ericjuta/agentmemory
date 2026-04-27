@@ -758,4 +758,61 @@ describe("IndexPersistence", () => {
       expect.any(Object),
     );
   });
+
+  it("bounds changed shard writes to stable physical slots", async () => {
+    const bm25 = new SearchIndex();
+    const baseKv = mockKV();
+    const recordingKv = {
+      ...baseKv,
+      set: vi.fn(baseKv.set),
+    };
+    const persistence = new IndexPersistence(
+      recordingKv as never,
+      bm25,
+      null,
+      KV.retrievalBlockIndex,
+      { mode: "sharded", shardSizeBytes: 90 },
+    );
+
+    for (let i = 0; i < 4; i++) {
+      bm25.addDocument(
+        `doc_${i}`,
+        "session_1",
+        `retrieval block stable slot ${i} `.repeat(20),
+      );
+      await persistence.save();
+    }
+
+    const manifest = await baseKv.get<any>(
+      KV.indexManifest(KV.retrievalBlockIndex),
+      "manifest",
+    );
+    const scopesByShard = new Map<string, Set<string>>();
+    const shardWrites = vi
+      .mocked(recordingKv.set)
+      .mock.calls.filter(([scope]) => scope.includes(":shard:"));
+
+    for (const [scope] of shardWrites) {
+      const match = String(scope).match(/:shard:(bm25|vector):(stable-[ab]):(\d+)$/);
+      expect(match).not.toBeNull();
+      const [, kind, generation, index] = match!;
+      const key = `${kind}:${index}`;
+      const generations = scopesByShard.get(key) ?? new Set<string>();
+      generations.add(generation);
+      scopesByShard.set(key, generations);
+    }
+
+    expect(shardWrites.length).toBeGreaterThan(0);
+    for (const generations of scopesByShard.values()) {
+      expect([...generations].sort()).toEqual(
+        expect.arrayContaining([expect.stringMatching(/^stable-[ab]$/)]),
+      );
+      expect(generations.size).toBeLessThanOrEqual(2);
+    }
+    expect(
+      manifest.bm25.shards.every((shard: { generation: string }) =>
+        shard.generation === "stable-a" || shard.generation === "stable-b",
+      ),
+    ).toBe(true);
+  });
 });

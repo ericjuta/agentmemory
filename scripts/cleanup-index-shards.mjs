@@ -138,6 +138,33 @@ function collectReferencedShardScopes(manifest) {
   return scopes;
 }
 
+function collectRetainedStableSlotScopes(manifest) {
+  const scopes = new Set();
+  for (const payload of [manifest.bm25, manifest.vector].filter(Boolean)) {
+    for (const shard of payload.shards ?? []) {
+      const paired = stablePairScope(shard);
+      if (paired) scopes.add(paired);
+    }
+  }
+  return scopes;
+}
+
+function stablePairScope(shard) {
+  if (
+    typeof shard?.scope !== "string" ||
+    (shard.generation !== "stable-a" && shard.generation !== "stable-b") ||
+    (shard.kind !== "bm25" && shard.kind !== "vector") ||
+    typeof shard.index !== "number"
+  ) {
+    return null;
+  }
+  const index = String(shard.index).padStart(5, "0");
+  const suffix = `:shard:${shard.kind}:${shard.generation}:${index}`;
+  if (!shard.scope.endsWith(suffix)) return null;
+  const other = shard.generation === "stable-a" ? "stable-b" : "stable-a";
+  return `${shard.scope.slice(0, -suffix.length)}:shard:${shard.kind}:${other}:${index}`;
+}
+
 function listPhysicalShardFiles(dataDir, parentScope) {
   const prefix = `${parentScope}:shard:`;
   return readdirSync(dataDir)
@@ -176,6 +203,8 @@ function run() {
   if (options.apply) mkdirSync(options.backupDir, { recursive: true });
 
   const keptScopes = new Set();
+  const referencedScopes = new Set();
+  const retainedStableSlotScopes = new Set();
   const manifests = {};
   for (const parentScope of parentScopes) {
     const manifest = loadManifest(options.dataDir, parentScope);
@@ -185,6 +214,11 @@ function run() {
       vectorShards: manifest.vector?.shards?.length ?? 0,
     };
     for (const scope of collectReferencedShardScopes(manifest)) {
+      referencedScopes.add(scope);
+      keptScopes.add(scope);
+    }
+    for (const scope of collectRetainedStableSlotScopes(manifest)) {
+      retainedStableSlotScopes.add(scope);
       keptScopes.add(scope);
     }
   }
@@ -215,7 +249,8 @@ function run() {
     dataDir: options.dataDir,
     target: options.target,
     manifests,
-    referencedShardScopes: keptScopes.size,
+    referencedShardScopes: referencedScopes.size,
+    retainedStableSlotScopes: retainedStableSlotScopes.size,
     physicalShardFiles: physicalFiles.length,
     orphanShardFiles: orphanFiles.length,
     orphanBytes,
