@@ -524,7 +524,11 @@ export class IndexPersistence {
         sha256: sha256(chunk),
       };
       const previousShard = previousByIndex.get(index);
-      if (previousShard && this.shardMatches(previousShard, descriptor)) {
+      if (
+        previousShard &&
+        isStableShardGeneration(previousShard.generation) &&
+        this.shardMatches(previousShard, descriptor)
+      ) {
         shards.push(previousShard);
         continue;
       }

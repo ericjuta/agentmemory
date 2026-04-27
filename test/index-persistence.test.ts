@@ -759,6 +759,68 @@ describe("IndexPersistence", () => {
     );
   });
 
+  it("migrates unchanged random-generation shards into stable slots", async () => {
+    const source = new SearchIndex();
+    source.addDocument(
+      "doc_1",
+      "session_1",
+      "auth middleware token validation ".repeat(20),
+    );
+    const serialized = source.serialize();
+    const randomScope = KV.indexShard(
+      KV.retrievalBlockIndex,
+      "bm25",
+      "1777298608987-random",
+      0,
+    );
+    await kv.set(randomScope, "data", serialized);
+    await kv.set(KV.indexManifest(KV.retrievalBlockIndex), "manifest", {
+      schemaVersion: 2,
+      mode: "sharded",
+      savedAt: "2026-04-24T12:00:00.000Z",
+      bm25: {
+        kind: "bm25",
+        byteLength: byteLength(serialized),
+        count: 1,
+        sha256: sha256(serialized),
+        shards: [
+          {
+            scope: randomScope,
+            key: "data",
+            kind: "bm25",
+            generation: "1777298608987-random",
+            index: 0,
+            byteLength: byteLength(serialized),
+            sha256: sha256(serialized),
+          },
+        ],
+      },
+      vector: null,
+    });
+
+    const target = new SearchIndex();
+    const persistence = new IndexPersistence(
+      kv as never,
+      target,
+      null,
+      KV.retrievalBlockIndex,
+      { mode: "sharded", shardSizeBytes: 10_000 },
+    );
+    const loaded = await persistence.load();
+    target.restoreFrom(loaded.bm25!);
+    await persistence.save();
+
+    const manifest = await kv.get<any>(
+      KV.indexManifest(KV.retrievalBlockIndex),
+      "manifest",
+    );
+    expect(manifest.bm25.shards[0]).toMatchObject({
+      generation: "stable-a",
+      scope: KV.indexShard(KV.retrievalBlockIndex, "bm25", "stable-a", 0),
+    });
+    expect(await kv.get(randomScope, "data")).toBeNull();
+  });
+
   it("bounds changed shard writes to stable physical slots", async () => {
     const bm25 = new SearchIndex();
     const baseKv = mockKV();
