@@ -20,7 +20,7 @@ import { logger } from "../logger.js";
 import { Semaphore } from "../state/semaphore.js";
 import { getGraphExtractionPauseReason } from "../health/write-gate.js";
 
-const graphSemaphore = new Semaphore(2);
+const graphSemaphore = new Semaphore(1);
 const DEFAULT_GRAPH_CATCH_UP_BATCH_SIZE = 10;
 
 function positiveInteger(value: unknown, fallback: number): number {

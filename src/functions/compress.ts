@@ -40,7 +40,7 @@ function envPositiveInteger(value: string | undefined, fallback: number): number
 
 /** Cap concurrent LLM compression calls to avoid starving the engine. */
 const compressSemaphore = new Semaphore(
-  envPositiveInteger(process.env["AGENTMEMORY_COMPRESS_CONCURRENCY"], 2),
+  envPositiveInteger(process.env["AGENTMEMORY_COMPRESS_CONCURRENCY"], 1),
 );
 const DEFAULT_COMPRESS_RETRY_SCAN_LIMIT = 25;
 const DEFAULT_COMPRESS_RETRY_BATCH_SIZE = 5;
