@@ -21,6 +21,7 @@
     "dev": "tsx src/index.ts",
     "start": "node dist/cli.mjs",
     "migrate": "node dist/functions/migrate.js",
+    "repair:retrieval-vectors": "node scripts/repair-retrieval-vectors.mjs",
     "test": "vitest run --exclude test/integration.test.ts",
     "eval:retrieval": "tsx src/eval/run-retrieval-quality.ts",
     "eval:retrieval-quality": "tsx src/eval/run-retrieval-quality.ts",
