@@ -47,7 +47,7 @@ function isCompressedObservation(value: unknown): value is CompressedObservation
   );
 }
 
-async function queueGraphExtractionRetry(
+export async function queueGraphExtractionRetry(
   kv: StateKV,
   observation: CompressedObservation,
   error: string,

@@ -20,6 +20,7 @@ import { CompressOutputSchema } from "../eval/schemas.js";
 import { validateOutput } from "../eval/validator.js";
 import { scoreCompression } from "../eval/quality.js";
 import { compressWithRetry } from "../eval/self-correct.js";
+import { queueGraphExtractionRetry } from "./graph.js";
 import type { MetricsStore } from "../eval/metrics-store.js";
 import { logger } from "../logger.js";
 import { getLlmWorkPauseReason } from "../health/write-gate.js";
@@ -31,8 +32,16 @@ import { upsertObservationRetrievalBlock } from "./retrieval-blocks.js";
 import { isAutoCompressEnabled } from "../config.js";
 import { buildSyntheticCompression } from "./compress-synthetic.js";
 
+function envPositiveInteger(value: string | undefined, fallback: number): number {
+  if (!value) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 /** Cap concurrent LLM compression calls to avoid starving the engine. */
-const compressSemaphore = new Semaphore(6);
+const compressSemaphore = new Semaphore(
+  envPositiveInteger(process.env["AGENTMEMORY_COMPRESS_CONCURRENCY"], 2),
+);
 const DEFAULT_COMPRESS_RETRY_SCAN_LIMIT = 25;
 const DEFAULT_COMPRESS_RETRY_BATCH_SIZE = 5;
 const DEFAULT_COMPRESS_RETRY_TIME_BUDGET_MS = 20_000;
@@ -377,12 +386,7 @@ export function registerCompressFunction(
             await kv.delete(KV.compressRetry, data.observationId).catch(() => {});
 
             if (graphEnabled) {
-              void sdk.trigger({
-                function_id: "mem::graph-extract",
-                payload: {
-                  observations: [compressed],
-                },
-              }).catch(() => {});
+              await queueGraphExtractionRetry(kv, compressed, "deferred_after_compress");
             }
 
             logger.info("Observation compressed", {
