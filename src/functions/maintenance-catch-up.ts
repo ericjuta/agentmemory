@@ -54,14 +54,26 @@ function adaptiveRetrievalBatch(cpu: number, maxBatchSize: number): number {
   return Math.min(maxBatchSize, 5);
 }
 
+function adaptiveCompressionBatch(
+  snapshot: Awaited<ReturnType<typeof getLatestHealth>>,
+  maxBatchSize: number,
+): number {
+  const cpu = cpuPercent(snapshot);
+  const lag = snapshot?.eventLoopLagMs ?? 0;
+  const kvLatency = snapshot?.kvConnectivity?.latencyMs ?? 0;
+  if (cpu < 15 && lag < 10 && kvLatency < 20) return Math.min(maxBatchSize, 5);
+  if (cpu < 25 && lag < 20 && kvLatency < 50) return Math.min(maxBatchSize, 3);
+  return 1;
+}
+
 function chooseLane(
   requested: MaintenanceLane | undefined,
   status: Awaited<ReturnType<typeof getDeferredWorkStatus>>,
 ): MaintenanceLane | undefined {
   if (requested) return requested;
   if (status.retrievalBlocks.queued > 0) return "retrieval";
-  if (status.compression.queued > 0) return "compression";
   if (status.graphExtraction.queued > 0) return "graph";
+  if (status.compression.queued > 0) return "compression";
   return undefined;
 }
 
@@ -131,6 +143,16 @@ export function registerMaintenanceCatchUpFunction(sdk: ISdk, kv: StateKV): void
           deferredWork,
         };
       }
+      if (lane === "compression" && deferredWork.graphExtraction.queued > 0) {
+        return {
+          success: true,
+          skipped: true,
+          lane,
+          reason: "graph_backlog_priority",
+          workDone: 0,
+          deferredWork,
+        };
+      }
       if (lane !== "retrieval" && cpu >= 35) {
         return {
           success: true,
@@ -145,7 +167,9 @@ export function registerMaintenanceCatchUpFunction(sdk: ISdk, kv: StateKV): void
       const batchSize =
         lane === "retrieval"
           ? adaptiveRetrievalBatch(cpu, maxBatchSize)
-          : Math.min(positiveInteger(data.maxBatchSize, lane === "graph" ? 1 : 5), lane === "graph" ? 1 : 5);
+          : lane === "compression"
+            ? adaptiveCompressionBatch(health, maxBatchSize)
+            : Math.min(positiveInteger(data.maxBatchSize, 1), 1);
       const timeBudgetMs =
         lane === "retrieval"
           ? Math.min(requestedBudgetMs, 8_000)

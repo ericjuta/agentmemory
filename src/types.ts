@@ -222,6 +222,9 @@ export interface CompressRetryEntry {
   sessionId: string;
   retries: number;
   failedAt: string;
+  firstFailedAt?: string;
+  lastFailedAt?: string;
+  lastAttemptAt?: string;
   lastError?: string;
 }
 

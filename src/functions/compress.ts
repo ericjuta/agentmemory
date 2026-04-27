@@ -47,6 +47,7 @@ const DEFAULT_COMPRESS_RETRY_BATCH_SIZE = 5;
 const DEFAULT_COMPRESS_RETRY_TIME_BUDGET_MS = 20_000;
 const MIN_COMPRESS_RETRY_WORK_MS = 250;
 const TIMEOUT = Symbol("timeout");
+let compressRetryInFlight = false;
 
 export function getCompressMetrics() {
   return { active: compressSemaphore.active, pending: compressSemaphore.pending };
@@ -93,6 +94,12 @@ function remainingBudgetMs(deadlineMs: number): number {
   return Math.max(0, deadlineMs - Date.now());
 }
 
+function timestampMs(value: string | undefined): number {
+  if (!value) return Number.POSITIVE_INFINITY;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
+}
+
 async function settleWithin<T>(
   work: Promise<T>,
   timeoutMs: number,
@@ -134,13 +141,17 @@ export async function enqueueCompressionRetry(
   const existing = await kv
     .get<CompressRetryEntry>(KV.compressRetry, data.observationId)
     .catch(() => null);
-  const failedAt = existing?.failedAt ?? new Date().toISOString();
+  const now = new Date().toISOString();
+  const failedAt = existing?.failedAt ?? now;
   await kv
     .set(KV.compressRetry, data.observationId, {
       obsId: data.observationId,
       sessionId: data.sessionId,
       retries: existing?.retries ?? 0,
       failedAt,
+      firstFailedAt: existing?.firstFailedAt ?? existing?.failedAt ?? now,
+      lastFailedAt: now,
+      lastAttemptAt: existing?.lastAttemptAt,
       lastError: data.error,
     } satisfies CompressRetryEntry)
     .catch((err) => {
@@ -180,6 +191,8 @@ async function enqueueRawCompressionBacklog(
         failedAt: new Date().toISOString(),
         lastError: "raw_uncompressed_backlog_scan",
       };
+      entry.firstFailedAt = entry.failedAt;
+      entry.lastFailedAt = entry.failedAt;
       existingEntries.set(entry.obsId, entry);
       await kv.set(KV.compressRetry, entry.obsId, entry).catch((err) => {
         logger.warn("Failed to persist compression backlog entry", {
@@ -436,6 +449,21 @@ export function registerCompressFunction(
   sdk.registerFunction(
     "mem::compress-retry",
     async (payload: unknown) => {
+      if (compressRetryInFlight) {
+        return {
+          retried: 0,
+          removed: 0,
+          succeeded: 0,
+          deferred: 0,
+          processed: 0,
+          queued: 0,
+          scanned: 0,
+          skipped: true,
+          reason: "compress_retry_in_flight",
+        };
+      }
+      compressRetryInFlight = true;
+      try {
       const data = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
       const autoCompress = isAutoCompressEnabled();
       const pauseReason = autoCompress ? await getLlmWorkPauseReason(kv) : null;
@@ -469,7 +497,9 @@ export function registerCompressFunction(
       const backlog = scan
         ? await enqueueRawCompressionBacklog(kv, entriesByObs, scanLimit)
         : { queued: 0, scanned: 0 };
-      const retryEntries = [...entriesByObs.values()];
+      const retryEntries = [...entriesByObs.values()].sort(
+        (a, b) => timestampMs(a.failedAt) - timestampMs(b.failedAt),
+      );
       let retried = 0;
       let removed = 0;
       let succeeded = 0;
@@ -555,10 +585,13 @@ export function registerCompressFunction(
           await kv.delete(KV.compressRetry, entry.obsId).catch(() => {});
           succeeded++;
         } else {
+          const lastAttemptAt = new Date().toISOString();
           await kv
             .set(KV.compressRetry, entry.obsId, {
               ...entry,
               retries: entry.retries + 1,
+              lastAttemptAt,
+              lastFailedAt: lastAttemptAt,
               lastError:
                 (result as { error?: string })?.error || entry.lastError,
             })
@@ -589,6 +622,9 @@ export function registerCompressFunction(
         scanned: backlog.scanned,
         ...(timedOut ? { timedOut: true, timeBudgetMs } : {}),
       };
+      } finally {
+        compressRetryInFlight = false;
+      }
     },
   );
 }

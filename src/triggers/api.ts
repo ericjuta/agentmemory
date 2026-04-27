@@ -1124,6 +1124,57 @@ export function registerApiTriggers(
     config: { api_path: "/agentmemory/compress-retry", http_method: "POST" },
   });
 
+  sdk.registerFunction("api::compression-drain",
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const maxBatchSize = parseOptionalPositiveInt(body.maxBatchSize ?? body.batchSize);
+      const timeBudgetMs = parseOptionalPositiveInt(body.timeBudgetMs);
+      if (maxBatchSize === null || timeBudgetMs === null) {
+        return {
+          status_code: 400,
+          body: {
+            error: "maxBatchSize, batchSize, and timeBudgetMs must be positive integers when provided",
+          },
+        };
+      }
+      const payload: Record<string, unknown> = { lane: "compression" };
+      if (maxBatchSize !== undefined) payload.maxBatchSize = maxBatchSize;
+      if (timeBudgetMs !== undefined) payload.timeBudgetMs = timeBudgetMs;
+      const result = await sdk.trigger({
+        function_id: "mem::maintenance-catch-up",
+        payload,
+      });
+      const remainingDeferredWork = await getDeferredWorkStatus(kv).catch((err) => ({
+        error: err instanceof Error ? err.message : String(err),
+      }));
+      const remainingCompressionQueued =
+        remainingDeferredWork &&
+        typeof remainingDeferredWork === "object" &&
+        "compression" in remainingDeferredWork &&
+        remainingDeferredWork.compression &&
+        typeof remainingDeferredWork.compression === "object" &&
+        "queued" in remainingDeferredWork.compression &&
+        typeof remainingDeferredWork.compression.queued === "number"
+          ? remainingDeferredWork.compression.queued
+          : null;
+      return {
+        status_code: 200,
+        body: {
+          result,
+          remainingCompressionQueued,
+          remainingDeferredWork,
+        },
+      };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::compression-drain",
+    config: { api_path: "/agentmemory/maintenance/compression-drain", http_method: "POST" },
+  });
+
   sdk.registerFunction("api::session::start",
     async (
       req: ApiRequest<{

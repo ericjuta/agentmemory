@@ -195,6 +195,104 @@ describe("compression retry catch-up", () => {
     expect(await kv.list(KV.compressRetry)).toHaveLength(1);
   });
 
+  it("retries oldest compression entries first and records attempt time", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    const provider = {
+      name: "test",
+      compress: vi.fn(async () => "not xml"),
+      summarize: vi.fn(),
+    };
+    await kv.set(KV.sessions, "ses_1", {
+      id: "ses_1",
+      project: "/project",
+      cwd: "/project",
+      startedAt: "2026-04-25T00:00:00.000Z",
+      status: "active",
+      observationCount: 2,
+    } satisfies Session);
+    for (const id of ["obs_old", "obs_new"]) {
+      await kv.set(KV.observations("ses_1"), id, rawObservation(id));
+    }
+    await kv.set(KV.compressRetry, "obs_new", {
+      obsId: "obs_new",
+      sessionId: "ses_1",
+      retries: 0,
+      failedAt: "2026-04-26T00:00:00.000Z",
+    });
+    await kv.set(KV.compressRetry, "obs_old", {
+      obsId: "obs_old",
+      sessionId: "ses_1",
+      retries: 0,
+      failedAt: "2026-04-25T00:00:00.000Z",
+    });
+    registerCompressFunction(sdk as never, kv as never, provider as never);
+
+    const result = await sdk.trigger("mem::compress-retry", {
+      batchSize: 1,
+      scanRaw: false,
+    });
+
+    expect(result).toMatchObject({ retried: 1, processed: 1, deferred: 1 });
+    const oldEntry = await kv.get<{ retries: number; lastAttemptAt?: string }>(
+      KV.compressRetry,
+      "obs_old",
+    );
+    const newEntry = await kv.get<{ retries: number; lastAttemptAt?: string }>(
+      KV.compressRetry,
+      "obs_new",
+    );
+    expect(oldEntry?.retries).toBe(1);
+    expect(oldEntry?.lastAttemptAt).toEqual(expect.any(String));
+    expect(newEntry?.retries).toBe(0);
+    expect(newEntry?.lastAttemptAt).toBeUndefined();
+  });
+
+  it("keeps compression retry single-flight", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    const provider = {
+      name: "test",
+      compress: vi.fn(
+        () =>
+          new Promise<string>((resolve) => {
+            setTimeout(() => resolve(compressionXml), 50);
+          }),
+      ),
+      summarize: vi.fn(),
+    };
+    await kv.set(KV.sessions, "ses_1", {
+      id: "ses_1",
+      project: "/project",
+      cwd: "/project",
+      startedAt: "2026-04-25T00:00:00.000Z",
+      status: "active",
+      observationCount: 1,
+    } satisfies Session);
+    const raw = rawObservation("obs_single_flight");
+    await kv.set(KV.observations("ses_1"), raw.id, raw);
+    await kv.set(KV.compressRetry, raw.id, {
+      obsId: raw.id,
+      sessionId: "ses_1",
+      retries: 0,
+      failedAt: "2026-04-25T00:00:00.000Z",
+    });
+    registerCompressFunction(sdk as never, kv as never, provider as never);
+
+    const [first, second] = await Promise.all([
+      sdk.trigger("mem::compress-retry", { batchSize: 1, scanRaw: false }),
+      sdk.trigger("mem::compress-retry", { batchSize: 1, scanRaw: false }),
+    ]);
+
+    expect([first, second]).toContainEqual(
+      expect.objectContaining({
+        skipped: true,
+        reason: "compress_retry_in_flight",
+      }),
+    );
+    expect(provider.compress).toHaveBeenCalledTimes(1);
+  });
+
   it("returns a bounded deferred result when retry work exceeds the time budget", async () => {
     const sdk = mockSdk();
     const kv = mockKV();

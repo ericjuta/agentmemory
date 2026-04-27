@@ -38,7 +38,7 @@ describe("operational hardening APIs", () => {
       status_code: number;
       body: {
         deferredWork: {
-          compression: { queued: number };
+          compression: { queued: number; oldestFailedAt?: string; oldestAgeMs?: number };
           retrievalBlocks: { queued: number };
           graphExtraction: { queued: number };
           totalQueued: number;
@@ -50,7 +50,11 @@ describe("operational hardening APIs", () => {
 
     expect(response.status_code).toBe(200);
     expect(response.body.deferredWork).toMatchObject({
-      compression: { queued: 1 },
+      compression: {
+        queued: 1,
+        oldestFailedAt: "2026-04-25T00:00:00.000Z",
+        oldestAgeMs: expect.any(Number),
+      },
       retrievalBlocks: { queued: 1 },
       graphExtraction: { queued: 1 },
       totalQueued: 3,
@@ -66,6 +70,62 @@ describe("operational hardening APIs", () => {
       graphExtraction: null,
       indexPersistence: null,
     });
+  });
+
+  it("runs one bounded compression drain wake through maintenance", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    let forwarded: unknown;
+    await kv.set(KV.compressRetry, "obs_1", {
+      obsId: "obs_1",
+      sessionId: "ses_1",
+      retries: 0,
+      failedAt: "2026-04-25T00:00:00.000Z",
+    });
+    sdk.registerFunction("mem::maintenance-catch-up", async (payload) => {
+      forwarded = payload;
+      await kv.delete(KV.compressRetry, "obs_1");
+      return { success: true, lane: "compression", workDone: 1 };
+    });
+    registerApiTriggers(sdk as never, kv as never, "secret");
+
+    const response = (await sdk.trigger("api::compression-drain", {
+      body: {
+        batchSize: "2",
+        timeBudgetMs: 1000,
+        ignored: "drop",
+      },
+      headers: { authorization: "Bearer secret" },
+    })) as {
+      status_code: number;
+      body: {
+        result: { workDone: number };
+        remainingCompressionQueued: number;
+      };
+    };
+
+    expect(response.status_code).toBe(200);
+    expect(response.body.result.workDone).toBe(1);
+    expect(response.body.remainingCompressionQueued).toBe(0);
+    expect(forwarded).toEqual({
+      lane: "compression",
+      maxBatchSize: 2,
+      timeBudgetMs: 1000,
+    });
+  });
+
+  it("validates compression drain options", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerApiTriggers(sdk as never, kv as never);
+
+    const response = (await sdk.trigger("api::compression-drain", {
+      body: { maxBatchSize: 0 },
+      headers: {},
+    })) as { status_code: number; body: { error: string } };
+
+    expect(response.status_code).toBe(400);
+    expect(response.body.error).toContain("maxBatchSize");
   });
 
   it("keeps serving health separate from CPU-paused maintenance", async () => {
