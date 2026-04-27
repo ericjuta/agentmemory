@@ -398,14 +398,17 @@ export class IndexPersistence {
     const generation = `${Date.parse(savedAt) || Date.now()}-${Math.random()
       .toString(36)
       .slice(2, 10)}`;
-    const previous = this.completeManifest;
-    const bm25 = await this.writePayloadShards(
-      "bm25",
-      this.bm25.serialize(),
-      this.bm25.size,
-      previous?.bm25,
-      generation,
-    );
+    const previous = this.completeManifest ?? (await this.loadStoredManifest());
+    const bm25 =
+      previous?.bm25 && this.bm25.size < previous.bm25.count
+        ? await this.preserveOrMigratePayload("bm25", previous.bm25, generation)
+        : await this.writePayloadShards(
+            "bm25",
+            this.bm25.serialize(),
+            this.bm25.size,
+            previous?.bm25,
+            generation,
+          );
     const vector = await this.resolveVectorPayload(previous, generation);
 
     const manifest: ShardedIndexManifestV2 = {
@@ -432,11 +435,11 @@ export class IndexPersistence {
   ): Promise<PayloadManifestV2 | null> {
     if (!this.vector || this.vector.size === 0) {
       if (!previous?.vector) return null;
-      return this.preserveOrMigratePayload(previous.vector, generation);
+      return this.preserveOrMigratePayload("vector", previous.vector, generation);
     }
 
     if (previous?.vector && this.vector.size < previous.vector.count) {
-      return this.preserveOrMigratePayload(previous.vector, generation);
+      return this.preserveOrMigratePayload("vector", previous.vector, generation);
     }
 
     return this.writePayloadShards(
@@ -449,6 +452,7 @@ export class IndexPersistence {
   }
 
   private async preserveOrMigratePayload(
+    kind: PayloadKind,
     payload: PayloadManifest,
     generation: string,
   ): Promise<PayloadManifestV2> {
@@ -456,16 +460,23 @@ export class IndexPersistence {
 
     const loaded = await this.loadPayload(payload);
     if (!loaded.complete || loaded.value === null) {
-      throw new Error("previous vector shards are missing or stale");
+      throw new Error(`previous ${kind} shards are missing or stale`);
     }
 
     return this.writePayloadShards(
-      "vector",
+      kind,
       loaded.value,
       payload.count,
       undefined,
       generation,
     );
+  }
+
+  private async loadStoredManifest(): Promise<ShardedIndexManifest | null> {
+    const manifest = await this.kv
+      .get<unknown>(this.scope, SHARDED_MANIFEST_KEY)
+      .catch(() => null);
+    return isShardedIndexManifest(manifest) ? manifest : null;
   }
 
   private async writePayloadShards(

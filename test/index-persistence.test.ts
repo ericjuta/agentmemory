@@ -524,6 +524,47 @@ describe("IndexPersistence", () => {
     expect(loaded.vector?.size).toBe(4);
   });
 
+  it("preserves a larger stored BM25 manifest over a partial in-memory index", async () => {
+    const fullBm25 = new SearchIndex();
+    for (let i = 0; i < 4; i++) {
+      fullBm25.addDocument("doc_" + i, "session_1", "retrieval block " + i);
+    }
+    const firstPersistence = new IndexPersistence(
+      kv as never,
+      fullBm25,
+      null,
+      KV.retrievalBlockIndex,
+      { mode: "sharded", shardSizeBytes: 80 },
+    );
+    await firstPersistence.save();
+    const firstManifest = await kv.get<any>(KV.retrievalBlockIndex, "manifest");
+
+    const partialBm25 = new SearchIndex();
+    partialBm25.addDocument("doc_0", "session_1", "retrieval block 0");
+    const startupPersistence = new IndexPersistence(
+      kv as never,
+      partialBm25,
+      null,
+      KV.retrievalBlockIndex,
+      { mode: "sharded", shardSizeBytes: 80 },
+    );
+    await startupPersistence.save();
+
+    const nextManifest = await kv.get<any>(KV.retrievalBlockIndex, "manifest");
+    expect(nextManifest.bm25.count).toBe(4);
+    expect(nextManifest.bm25.shards).toEqual(firstManifest.bm25.shards);
+
+    const loader = new IndexPersistence(
+      kv as never,
+      new SearchIndex(),
+      null,
+      KV.retrievalBlockIndex,
+      { mode: "sharded", shardSizeBytes: 80 },
+    );
+    const loaded = await loader.load();
+    expect(loaded.bm25?.size).toBe(4);
+  });
+
   it("marks sharded loads incomplete when a shard is missing", async () => {
     const bm25 = new SearchIndex();
     bm25.addDocument(

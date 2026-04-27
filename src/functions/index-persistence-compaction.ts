@@ -3,6 +3,7 @@ import type { ISdk } from "iii-sdk";
 import { getIndexPersistencePauseReason } from "../health/write-gate.js";
 import type { StateKV } from "../state/kv.js";
 import type { IndexPersistenceStatus } from "../state/index-persistence.js";
+import { rebuildIndex } from "./search.js";
 
 type CompactionTarget = "observation" | "retrieval";
 
@@ -16,6 +17,7 @@ type CompactionPayload = {
   force?: unknown;
   verify?: unknown;
   timeBudgetMs?: unknown;
+  rebuildObservation?: unknown;
 };
 
 type CompactionScopeResult = {
@@ -25,6 +27,7 @@ type CompactionScopeResult = {
   compacted: boolean;
   error?: string;
   durationMs?: number;
+  rebuilt?: number;
 };
 
 export type IndexPersistenceCompactionOptions = {
@@ -82,6 +85,7 @@ export function registerIndexPersistenceCompactionFunction(
 
       const force = data.force === true;
       const verify = data.verify !== false;
+      const rebuildObservation = data.rebuildObservation === true;
       const timeBudgetMs = parsePositiveInteger(data.timeBudgetMs);
       const startedAt = Date.now();
       const pauseReason = await getIndexPersistencePauseReason(kv);
@@ -121,6 +125,10 @@ export function registerIndexPersistenceCompactionFunction(
         const scopeStartedAt = Date.now();
         const scopeBefore = handles[target].status();
         try {
+          const rebuilt =
+            target === "observation" && rebuildObservation
+              ? await rebuildIndex(kv)
+              : undefined;
           await handles[target].save();
           const scopeAfter = handles[target].status();
           results.push({
@@ -129,6 +137,7 @@ export function registerIndexPersistenceCompactionFunction(
             after: scopeAfter,
             compacted: statusMode(scopeAfter) === "physical-scope",
             durationMs: Date.now() - scopeStartedAt,
+            rebuilt,
           });
         } catch (error) {
           results.push({
@@ -164,6 +173,7 @@ export function registerIndexPersistenceCompactionFunction(
         targets,
         forced: force,
         verify,
+        rebuildObservation,
         pauseReason,
         results,
         verification,

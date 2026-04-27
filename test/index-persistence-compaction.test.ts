@@ -131,6 +131,7 @@ describe("api::index-persistence-compact", () => {
         force: true,
         verify: false,
         timeBudgetMs: 1000,
+        rebuildObservation: true,
         ignored: true,
       },
       headers: { authorization: "Bearer secret" },
@@ -143,6 +144,7 @@ describe("api::index-persistence-compact", () => {
       force: true,
       verify: false,
       timeBudgetMs: 1000,
+      rebuildObservation: true,
     });
   });
 

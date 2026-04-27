@@ -3953,11 +3953,23 @@ export function registerApiTriggers(
         body: { error: "verify must be a boolean when provided" },
       };
     }
+    if (
+      body.rebuildObservation !== undefined &&
+      typeof body.rebuildObservation !== "boolean"
+    ) {
+      return {
+        status_code: 400,
+        body: { error: "rebuildObservation must be a boolean when provided" },
+      };
+    }
     const payload: Record<string, unknown> = {};
     if (target) payload.target = target;
     if (timeBudgetMs !== undefined) payload.timeBudgetMs = timeBudgetMs;
     if (typeof body.force === "boolean") payload.force = body.force;
     if (typeof body.verify === "boolean") payload.verify = body.verify;
+    if (typeof body.rebuildObservation === "boolean") {
+      payload.rebuildObservation = body.rebuildObservation;
+    }
     const result = await sdk.trigger({ function_id: "mem::index-persistence-compact", payload });
     return { status_code: 200, body: result };
   });
