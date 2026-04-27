@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 vi.mock("../src/logger.js", () => ({
@@ -29,7 +30,17 @@ function mockKV() {
       const entries = store.get(scope);
       return entries ? (Array.from(entries.values()) as T[]) : [];
     },
+    keys: (scope: string): string[] => Array.from(store.get(scope)?.keys() ?? []),
+    scopes: (): string[] => Array.from(store.keys()),
   };
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function byteLength(value: string): number {
+  return Buffer.byteLength(value, "utf8");
 }
 
 function makeObs(
@@ -262,11 +273,11 @@ describe("IndexPersistence", () => {
     }
 
     const baseKv = mockKV();
-    const writes: Array<{ key: string; data: unknown }> = [];
+    const writes: Array<{ scope: string; key: string; data: unknown }> = [];
     const recordingKv = {
       ...baseKv,
       set: vi.fn(async <T>(scope: string, key: string, data: T): Promise<T> => {
-        writes.push({ key, data });
+        writes.push({ scope, key, data });
         return baseKv.set(scope, key, data);
       }),
     };
@@ -290,19 +301,33 @@ describe("IndexPersistence", () => {
     );
     expect(manifest.bm25.shards.length).toBeGreaterThan(1);
     expect(manifest.vector.shards.length).toBeGreaterThan(1);
-    const shardWrites = writes.filter((write) => write.key.includes(":shard:"));
+    expect(manifest.schemaVersion).toBe(2);
+    const shardWrites = writes.filter((write) => write.scope.includes(":shard:"));
     expect(shardWrites.length).toBeGreaterThan(1);
     expect(
       shardWrites.every(
         (write) =>
+          write.scope !== KV.retrievalBlockIndex &&
+          write.key === "data" &&
           typeof write.data === "string" &&
           Buffer.byteLength(write.data, "utf8") <= 300,
       ),
     ).toBe(true);
+    expect(manifest.bm25.shards[0]).toMatchObject({
+      scope: expect.stringContaining(`${KV.retrievalBlockIndex}:shard:bm25:`),
+      key: "data",
+      kind: "bm25",
+    });
+    expect(await baseKv.get(manifest.bm25.shards[0].scope, "data")).not.toBeNull();
+    expect(baseKv.keys(KV.retrievalBlockIndex)).toEqual(["manifest"]);
     expect(await baseKv.get(KV.retrievalBlockIndex, "data")).toBeNull();
     expect(persistence.getStatus()).toMatchObject({
       status: "ok",
       manifest: {
+        manifestVersion: 2,
+        physicalScopeMode: "physical-scope",
+        legacyPayloadPresent: false,
+        legacySameScopeShardCount: 0,
         documentCount: 40,
         vectorCount: 12,
       },
@@ -333,8 +358,16 @@ describe("IndexPersistence", () => {
 
     const manifest = await kv.get<any>(KV.bm25Index, "manifest");
     expect(manifest.mode).toBe("sharded");
+    expect(manifest.schemaVersion).toBe(2);
     expect(manifest.bm25.shards.length).toBeGreaterThan(1);
     expect(manifest.vector.shards.length).toBeGreaterThan(0);
+    expect(
+      manifest.bm25.shards.every((shard: { scope: string; key: string }) =>
+        shard.scope.startsWith(`${KV.bm25Index}:shard:bm25:`) &&
+        shard.key === "data",
+      ),
+    ).toBe(true);
+    expect(kv.keys(KV.bm25Index)).toEqual(["manifest"]);
     expect(await kv.get(KV.bm25Index, "data")).toBeNull();
     expect(await kv.get(KV.bm25Index, "vectors")).toBeNull();
     expect(persistence.getStatus()).toMatchObject({
@@ -342,6 +375,8 @@ describe("IndexPersistence", () => {
       mode: "sharded",
       status: "ok",
       manifest: {
+        manifestVersion: 2,
+        physicalScopeMode: "physical-scope",
         documentCount: 30,
         vectorCount: 1,
       },
@@ -382,6 +417,67 @@ describe("IndexPersistence", () => {
         vectorCount: 1,
       },
     });
+  });
+
+  it("loads v1 same-scope manifests and migrates the next save to physical scopes", async () => {
+    const source = new SearchIndex();
+    source.addDocument("doc_1", "session_1", "auth middleware token validation");
+    const serialized = source.serialize();
+    const shardKey = "bm25:shard:legacy:00000";
+    await kv.set(KV.retrievalBlockIndex, shardKey, serialized);
+    await kv.set(KV.retrievalBlockIndex, "manifest", {
+      schemaVersion: 1,
+      mode: "sharded",
+      savedAt: "2026-04-24T12:00:00.000Z",
+      bm25: {
+        kind: "bm25",
+        byteLength: byteLength(serialized),
+        count: 1,
+        sha256: sha256(serialized),
+        shards: [
+          {
+            key: shardKey,
+            byteLength: byteLength(serialized),
+            sha256: sha256(serialized),
+          },
+        ],
+      },
+      vector: null,
+    });
+
+    const target = new SearchIndex();
+    const persistence = new IndexPersistence(
+      kv as never,
+      target,
+      null,
+      KV.retrievalBlockIndex,
+      { mode: "sharded", shardSizeBytes: 80 },
+    );
+    const loaded = await persistence.load();
+    target.restoreFrom(loaded.bm25!);
+
+    expect(loaded.bm25?.searchDocuments("auth")).toHaveLength(1);
+    expect(persistence.getStatus()).toMatchObject({
+      status: "ok",
+      manifest: {
+        manifestVersion: 1,
+        physicalScopeMode: "same-scope",
+        legacySameScopeShardCount: 1,
+        physicalShardScopeCount: 0,
+      },
+    });
+
+    await persistence.save();
+
+    const manifest = await kv.get<any>(KV.retrievalBlockIndex, "manifest");
+    expect(manifest.schemaVersion).toBe(2);
+    expect(manifest.bm25.shards[0]).toMatchObject({
+      scope: expect.stringContaining(`${KV.retrievalBlockIndex}:shard:bm25:`),
+      key: "data",
+      kind: "bm25",
+    });
+    expect(await kv.get(KV.retrievalBlockIndex, shardKey)).toBeNull();
+    expect(kv.keys(KV.retrievalBlockIndex)).toEqual(["manifest"]);
   });
 
   it("preserves a larger complete vector manifest over a partial in-memory vector index", async () => {
@@ -444,7 +540,7 @@ describe("IndexPersistence", () => {
     );
     await persistence.save();
     const manifest = await kv.get<any>(KV.retrievalBlockIndex, "manifest");
-    await kv.delete(KV.retrievalBlockIndex, manifest.bm25.shards[0].key);
+    await kv.delete(manifest.bm25.shards[0].scope, manifest.bm25.shards[0].key);
 
     const loader = new IndexPersistence(
       kv as never,
@@ -471,7 +567,7 @@ describe("IndexPersistence", () => {
     const failingKv = {
       ...baseKv,
       set: vi.fn(async <T>(scope: string, key: string, data: T): Promise<T> => {
-        if (failShardWrites && key.includes(":shard:")) {
+        if (failShardWrites && scope.includes(":shard:")) {
           throw new Error("state unavailable");
         }
         return baseKv.set(scope, key, data);
@@ -543,7 +639,7 @@ describe("IndexPersistence", () => {
 
     const shardWrites = vi
       .mocked(recordingKv.set)
-      .mock.calls.filter(([, key]) => key.includes(":shard:"));
+      .mock.calls.filter(([scope]) => scope.includes(":shard:"));
     expect(shardWrites).toHaveLength(0);
     expect(recordingKv.set).toHaveBeenCalledWith(
       KV.retrievalBlockIndex,

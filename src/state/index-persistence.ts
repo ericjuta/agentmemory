@@ -36,6 +36,11 @@ export interface IndexPersistenceStatus {
   lastDeferredAt?: string;
   deferReason?: string;
   manifest?: {
+    manifestVersion?: number;
+    physicalScopeMode?: "same-scope" | "physical-scope";
+    legacyPayloadPresent?: boolean;
+    legacySameScopeShardCount?: number;
+    physicalShardScopeCount?: number;
     savedAt: string;
     bm25Shards: number;
     vectorShards: number;
@@ -49,13 +54,22 @@ export interface IndexPersistenceStatus {
 
 type PayloadKind = "bm25" | "vector";
 
-interface ShardDescriptor {
+interface BaseShardDescriptor {
   key: string;
   byteLength: number;
   sha256: string;
 }
 
-interface PayloadManifest {
+interface PhysicalShardDescriptor extends BaseShardDescriptor {
+  scope: string;
+  kind: PayloadKind;
+  generation: string;
+  index: number;
+}
+
+type ShardDescriptor = BaseShardDescriptor | PhysicalShardDescriptor;
+
+interface BasePayloadManifest {
   kind: PayloadKind;
   byteLength: number;
   count: number;
@@ -63,13 +77,33 @@ interface PayloadManifest {
   shards: ShardDescriptor[];
 }
 
-interface ShardedIndexManifest {
+interface PayloadManifestV1 extends BasePayloadManifest {
+  shards: BaseShardDescriptor[];
+}
+
+interface PayloadManifestV2 extends BasePayloadManifest {
+  shards: PhysicalShardDescriptor[];
+}
+
+type PayloadManifest = PayloadManifestV1 | PayloadManifestV2;
+
+interface ShardedIndexManifestV1 {
   schemaVersion: 1;
   mode: "sharded";
   savedAt: string;
-  bm25: PayloadManifest;
-  vector: PayloadManifest | null;
+  bm25: PayloadManifestV1;
+  vector: PayloadManifestV1 | null;
 }
+
+interface ShardedIndexManifestV2 {
+  schemaVersion: 2;
+  mode: "sharded";
+  savedAt: string;
+  bm25: PayloadManifestV2;
+  vector: PayloadManifestV2 | null;
+}
+
+type ShardedIndexManifest = ShardedIndexManifestV1 | ShardedIndexManifestV2;
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -108,8 +142,8 @@ function chunkStringByBytes(value: string, maxBytes: number): string[] {
   return chunks;
 }
 
-function isShardDescriptor(value: unknown): value is ShardDescriptor {
-  const row = value as ShardDescriptor;
+function isBaseShardDescriptor(value: unknown): value is BaseShardDescriptor {
+  const row = value as BaseShardDescriptor;
   return (
     !!row &&
     typeof row.key === "string" &&
@@ -118,8 +152,25 @@ function isShardDescriptor(value: unknown): value is ShardDescriptor {
   );
 }
 
-function isPayloadManifest(value: unknown, kind: PayloadKind): value is PayloadManifest {
-  const row = value as PayloadManifest;
+function isPhysicalShardDescriptor(
+  value: unknown,
+  kind: PayloadKind,
+): value is PhysicalShardDescriptor {
+  const row = value as PhysicalShardDescriptor;
+  return (
+    isBaseShardDescriptor(value) &&
+    typeof row.scope === "string" &&
+    row.kind === kind &&
+    typeof row.generation === "string" &&
+    typeof row.index === "number"
+  );
+}
+
+function isPayloadManifestV1(
+  value: unknown,
+  kind: PayloadKind,
+): value is PayloadManifestV1 {
+  const row = value as PayloadManifestV1;
   return (
     !!row &&
     row.kind === kind &&
@@ -127,20 +178,62 @@ function isPayloadManifest(value: unknown, kind: PayloadKind): value is PayloadM
     typeof row.count === "number" &&
     typeof row.sha256 === "string" &&
     Array.isArray(row.shards) &&
-    row.shards.every(isShardDescriptor)
+    row.shards.every(isBaseShardDescriptor)
   );
 }
 
-function isShardedIndexManifest(value: unknown): value is ShardedIndexManifest {
-  const row = value as ShardedIndexManifest;
+function isPayloadManifestV2(
+  value: unknown,
+  kind: PayloadKind,
+): value is PayloadManifestV2 {
+  const row = value as PayloadManifestV2;
+  return (
+    !!row &&
+    row.kind === kind &&
+    typeof row.byteLength === "number" &&
+    typeof row.count === "number" &&
+    typeof row.sha256 === "string" &&
+    Array.isArray(row.shards) &&
+    row.shards.every((shard) => isPhysicalShardDescriptor(shard, kind))
+  );
+}
+
+function isShardedIndexManifestV1(
+  value: unknown,
+): value is ShardedIndexManifestV1 {
+  const row = value as ShardedIndexManifestV1;
   return (
     !!row &&
     row.schemaVersion === 1 &&
     row.mode === "sharded" &&
     typeof row.savedAt === "string" &&
-    isPayloadManifest(row.bm25, "bm25") &&
-    (row.vector === null || isPayloadManifest(row.vector, "vector"))
+    isPayloadManifestV1(row.bm25, "bm25") &&
+    (row.vector === null || isPayloadManifestV1(row.vector, "vector"))
   );
+}
+
+function isShardedIndexManifestV2(
+  value: unknown,
+): value is ShardedIndexManifestV2 {
+  const row = value as ShardedIndexManifestV2;
+  return (
+    !!row &&
+    row.schemaVersion === 2 &&
+    row.mode === "sharded" &&
+    typeof row.savedAt === "string" &&
+    isPayloadManifestV2(row.bm25, "bm25") &&
+    (row.vector === null || isPayloadManifestV2(row.vector, "vector"))
+  );
+}
+
+function isShardedIndexManifest(value: unknown): value is ShardedIndexManifest {
+  return isShardedIndexManifestV2(value) || isShardedIndexManifestV1(value);
+}
+
+function isPhysicalPayloadManifest(
+  payload: PayloadManifest,
+): payload is PayloadManifestV2 {
+  return payload.shards.every((shard) => "scope" in shard);
 }
 
 export class IndexPersistence {
@@ -313,21 +406,10 @@ export class IndexPersistence {
       previous?.bm25,
       generation,
     );
-    const vector =
-      this.vector && this.vector.size > 0
-        ? previous?.vector && this.vector.size < previous.vector.count
-          ? previous.vector
-          : await this.writePayloadShards(
-              "vector",
-              this.vector.serialize(),
-              this.vector.size,
-              previous?.vector ?? undefined,
-              generation,
-            )
-        : previous?.vector ?? null;
+    const vector = await this.resolveVectorPayload(previous, generation);
 
-    const manifest: ShardedIndexManifest = {
-      schemaVersion: 1,
+    const manifest: ShardedIndexManifestV2 = {
+      schemaVersion: 2,
       mode: "sharded",
       savedAt,
       bm25,
@@ -336,12 +418,54 @@ export class IndexPersistence {
 
     await this.kv.set(this.scope, SHARDED_MANIFEST_KEY, manifest);
     this.completeManifest = manifest;
-    this.recordSuccess(manifest);
     await this.deleteUnreferencedShards(previous, manifest);
     await Promise.all([
       this.kv.delete(this.scope, LEGACY_BM25_KEY).catch(() => {}),
       this.kv.delete(this.scope, LEGACY_VECTOR_KEY).catch(() => {}),
     ]);
+    this.recordSuccess(manifest, false);
+  }
+
+  private async resolveVectorPayload(
+    previous: ShardedIndexManifest | null,
+    generation: string,
+  ): Promise<PayloadManifestV2 | null> {
+    if (!this.vector || this.vector.size === 0) {
+      if (!previous?.vector) return null;
+      return this.preserveOrMigratePayload(previous.vector, generation);
+    }
+
+    if (previous?.vector && this.vector.size < previous.vector.count) {
+      return this.preserveOrMigratePayload(previous.vector, generation);
+    }
+
+    return this.writePayloadShards(
+      "vector",
+      this.vector.serialize(),
+      this.vector.size,
+      previous?.vector ?? undefined,
+      generation,
+    );
+  }
+
+  private async preserveOrMigratePayload(
+    payload: PayloadManifest,
+    generation: string,
+  ): Promise<PayloadManifestV2> {
+    if (isPhysicalPayloadManifest(payload)) return payload;
+
+    const loaded = await this.loadPayload(payload);
+    if (!loaded.complete || loaded.value === null) {
+      throw new Error("previous vector shards are missing or stale");
+    }
+
+    return this.writePayloadShards(
+      "vector",
+      loaded.value,
+      payload.count,
+      undefined,
+      generation,
+    );
   }
 
   private async writePayloadShards(
@@ -350,15 +474,14 @@ export class IndexPersistence {
     count: number,
     previous: PayloadManifest | undefined,
     generation: string,
-  ): Promise<PayloadManifest> {
+  ): Promise<PayloadManifestV2> {
     const chunks = chunkStringByBytes(serialized, this.shardSizeBytes);
     const previousByHash = new Map(
-      (previous?.shards ?? []).map((shard) => [
-        `${shard.sha256}:${shard.byteLength}`,
-        shard,
-      ]),
+      (previous && isPhysicalPayloadManifest(previous) ? previous.shards : []).map(
+        (shard) => [`${shard.sha256}:${shard.byteLength}`, shard],
+      ),
     );
-    const shards: ShardDescriptor[] = [];
+    const shards: PhysicalShardDescriptor[] = [];
 
     for (let index = 0; index < chunks.length; index++) {
       const chunk = chunks[index];
@@ -374,10 +497,22 @@ export class IndexPersistence {
         continue;
       }
 
-      const key = `${kind}:shard:${generation}:${String(index).padStart(5, "0")}`;
-      await this.kv.set(this.scope, key, chunk);
-      shards.push({ key, ...descriptor });
+      const key = "data";
+      const scope = KV.indexShard(this.scope, kind, generation, index);
+      const shard: PhysicalShardDescriptor = {
+        scope,
+        key,
+        kind,
+        generation,
+        index,
+        ...descriptor,
+      };
+      await this.kv.set(scope, key, chunk);
+      await this.verifyShard(shard);
+      shards.push(shard);
     }
+
+    await Promise.all(shards.map((shard) => this.verifyShard(shard)));
 
     return {
       kind,
@@ -388,24 +523,53 @@ export class IndexPersistence {
     };
   }
 
+  private async verifyShard(shard: PhysicalShardDescriptor): Promise<void> {
+    const chunk = await this.kv.get<string>(shard.scope, shard.key);
+    if (
+      typeof chunk !== "string" ||
+      byteLength(chunk) !== shard.byteLength ||
+      sha256(chunk) !== shard.sha256
+    ) {
+      throw new Error(`StateKV shard verification failed for ${shard.scope}`);
+    }
+  }
+
   private async deleteUnreferencedShards(
     previous: ShardedIndexManifest | null,
     next: ShardedIndexManifest,
   ): Promise<void> {
     if (!previous) return;
-    const nextKeys = new Set([
-      ...next.bm25.shards.map((shard) => shard.key),
-      ...(next.vector?.shards.map((shard) => shard.key) ?? []),
-    ]);
-    const previousKeys = [
-      ...previous.bm25.shards.map((shard) => shard.key),
-      ...(previous.vector?.shards.map((shard) => shard.key) ?? []),
+    const nextRefs = new Set(this.shardRefs(next));
+    const previousShards = [
+      ...previous.bm25.shards,
+      ...(previous.vector?.shards ?? []),
     ];
     await Promise.all(
-      previousKeys
-        .filter((key) => !nextKeys.has(key))
-        .map((key) => this.kv.delete(this.scope, key).catch(() => {})),
+      previousShards
+        .filter((shard) => !nextRefs.has(this.shardRef(shard)))
+        .map((shard) => {
+          const storage = this.shardStorage(shard);
+          return this.kv.delete(storage.scope, storage.key).catch(() => {});
+        }),
     );
+  }
+
+  private shardRefs(manifest: ShardedIndexManifest): string[] {
+    return [
+      ...manifest.bm25.shards.map((shard) => this.shardRef(shard)),
+      ...(manifest.vector?.shards.map((shard) => this.shardRef(shard)) ?? []),
+    ];
+  }
+
+  private shardRef(shard: ShardDescriptor): string {
+    const storage = this.shardStorage(shard);
+    return `${storage.scope}\0${storage.key}`;
+  }
+
+  private shardStorage(shard: ShardDescriptor): { scope: string; key: string } {
+    return "scope" in shard
+      ? { scope: shard.scope, key: shard.key }
+      : { scope: this.scope, key: shard.key };
   }
 
   private async loadSharded(): Promise<{
@@ -441,7 +605,11 @@ export class IndexPersistence {
         mode: this.mode,
         status: "incomplete",
         error: "persisted index shards are missing or stale",
-        manifest: this.statusFromManifest(manifest, true),
+        manifest: this.statusFromManifest(
+          manifest,
+          true,
+          await this.hasLegacyPayload(),
+        ),
       };
     } else {
       this.completeManifest = manifest;
@@ -450,7 +618,11 @@ export class IndexPersistence {
         mode: this.mode,
         status: "ok",
         lastSuccessfulSaveAt: manifest.savedAt,
-        manifest: this.statusFromManifest(manifest),
+        manifest: this.statusFromManifest(
+          manifest,
+          false,
+          await this.hasLegacyPayload(),
+        ),
       };
     }
 
@@ -462,8 +634,9 @@ export class IndexPersistence {
   ): Promise<{ complete: boolean; value: string | null }> {
     const chunks: string[] = [];
     for (const shard of payload.shards) {
+      const storage = this.shardStorage(shard);
       const chunk = await this.kv
-        .get<string>(this.scope, shard.key)
+        .get<string>(storage.scope, storage.key)
         .catch(() => null);
       if (
         typeof chunk !== "string" ||
@@ -512,14 +685,27 @@ export class IndexPersistence {
     return { bm25, vector };
   }
 
-  private recordSuccess(manifest: ShardedIndexManifest | null): void {
+  private async hasLegacyPayload(): Promise<boolean> {
+    const [bm25, vector] = await Promise.all([
+      this.kv.get(this.scope, LEGACY_BM25_KEY).catch(() => null),
+      this.kv.get(this.scope, LEGACY_VECTOR_KEY).catch(() => null),
+    ]);
+    return bm25 !== null || vector !== null;
+  }
+
+  private recordSuccess(
+    manifest: ShardedIndexManifest | null,
+    legacyPayloadPresent?: boolean,
+  ): void {
     const savedAt = manifest?.savedAt ?? this.now();
     this.status = {
       scope: this.scope,
       mode: this.mode,
       status: "ok",
       lastSuccessfulSaveAt: savedAt,
-      manifest: manifest ? this.statusFromManifest(manifest) : undefined,
+      manifest: manifest
+        ? this.statusFromManifest(manifest, false, legacyPayloadPresent)
+        : undefined,
     };
   }
 
@@ -537,8 +723,23 @@ export class IndexPersistence {
   private statusFromManifest(
     manifest: ShardedIndexManifest,
     incomplete = false,
+    legacyPayloadPresent?: boolean,
   ): NonNullable<IndexPersistenceStatus["manifest"]> {
+    const physicalScopes = new Set(
+      this.allShards(manifest)
+        .filter((shard): shard is PhysicalShardDescriptor => "scope" in shard)
+        .map((shard) => shard.scope),
+    );
+    const legacySameScopeShardCount = this.allShards(manifest).filter(
+      (shard) => !("scope" in shard),
+    ).length;
     return {
+      manifestVersion: manifest.schemaVersion,
+      physicalScopeMode:
+        manifest.schemaVersion === 2 ? "physical-scope" : "same-scope",
+      legacyPayloadPresent,
+      legacySameScopeShardCount,
+      physicalShardScopeCount: physicalScopes.size,
       savedAt: manifest.savedAt,
       bm25Shards: manifest.bm25.shards.length,
       vectorShards: manifest.vector?.shards.length ?? 0,
@@ -548,6 +749,13 @@ export class IndexPersistence {
       vectorCount: manifest.vector?.count ?? 0,
       incomplete: incomplete || undefined,
     };
+  }
+
+  private allShards(manifest: ShardedIndexManifest): ShardDescriptor[] {
+    return [
+      ...manifest.bm25.shards,
+      ...(manifest.vector?.shards ?? []),
+    ];
   }
 
   stop(): void {

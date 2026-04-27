@@ -12,6 +12,13 @@ export const KV = {
   health: "mem:health",
   embeddings: (obsId: string) => `mem:emb:${obsId}`,
   bm25Index: "mem:index:bm25",
+  indexShard: (
+    parentScope: string,
+    kind: "bm25" | "vector",
+    generation: string,
+    index: number,
+  ) =>
+    `${parentScope}:shard:${kind}:${generation}:${String(index).padStart(5, "0")}`,
   relations: "mem:relations",
   beliefs: "mem:beliefs",
   beliefEvidence: "mem:belief-evidence",
