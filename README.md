@@ -819,7 +819,7 @@ Create `.env.local` in the repo root:
 | `POST` | `/agentmemory/compress-retry` | Drain deferred observation compression work with bounded retry budgets |
 | `POST` | `/agentmemory/smart-search` | Hybrid search |
 | `POST` | `/agentmemory/retrieval-index/verify` | Verify retrieval index drift |
-| `POST` | `/agentmemory/index-persistence/compact` | Physically compact persisted index shards under health gates |
+| `POST` | `/agentmemory/index-persistence/compact` | Physically compact persisted index shards under health gates; pass `dryRun: true` for StateKV RSS diagnostics without writes |
 | `POST` | `/agentmemory/retrieval-vector/backfill` | Backfill missing retrieval vectors within bounded health-gated budgets |
 | `POST` | `/agentmemory/retrieval-blocks/diagnostics` | Inspect retrieval block scope/index state without full scans |
 | `POST` | `/agentmemory/retrieval-proof` | Gather a lightweight retrieval proof bundle without maintenance or retry side effects |

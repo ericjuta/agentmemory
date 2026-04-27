@@ -4039,6 +4039,12 @@ export function registerApiTriggers(
         body: { error: "verify must be a boolean when provided" },
       };
     }
+    if (body.dryRun !== undefined && typeof body.dryRun !== "boolean") {
+      return {
+        status_code: 400,
+        body: { error: "dryRun must be a boolean when provided" },
+      };
+    }
     if (
       body.rebuildObservation !== undefined &&
       typeof body.rebuildObservation !== "boolean"
@@ -4053,6 +4059,7 @@ export function registerApiTriggers(
     if (timeBudgetMs !== undefined) payload.timeBudgetMs = timeBudgetMs;
     if (typeof body.force === "boolean") payload.force = body.force;
     if (typeof body.verify === "boolean") payload.verify = body.verify;
+    if (typeof body.dryRun === "boolean") payload.dryRun = body.dryRun;
     if (typeof body.rebuildObservation === "boolean") {
       payload.rebuildObservation = body.rebuildObservation;
     }

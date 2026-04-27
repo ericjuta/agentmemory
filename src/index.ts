@@ -412,12 +412,24 @@ async function main() {
         indexPersistence?.save(options) ??
         Promise.reject(new Error("observation persistence unavailable")),
       status: () => indexPersistence?.getStatus(),
+      physicalScopeReferences: () =>
+        indexPersistence?.getPhysicalScopeReferences() ?? {
+          parentScope: KV.bm25Index,
+          manifestScope: KV.indexManifest(KV.bm25Index),
+          shardScopes: [],
+        },
     },
     retrieval: {
       save: (options) =>
         retrievalIndexPersistence?.save(options) ??
         Promise.reject(new Error("retrieval persistence unavailable")),
       status: () => retrievalIndexPersistence?.getStatus(),
+      physicalScopeReferences: () =>
+        retrievalIndexPersistence?.getPhysicalScopeReferences() ?? {
+          parentScope: KV.retrievalBlockIndex,
+          manifestScope: KV.indexManifest(KV.retrievalBlockIndex),
+          shardScopes: [],
+        },
     },
   });
 

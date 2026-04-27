@@ -94,6 +94,29 @@ Implementation:
    mutating anything.
 5. Keep compaction under existing write gates and maintenance pressure checks.
 
+Status:
+
+- Implemented in `/agentmemory/index-persistence/compact` with `dryRun: true`.
+- Dry-run reports StateKV data-dir total bytes, largest physical scope files,
+  scope classification, and removable orphan shard estimates without reading
+  payload values.
+- Mutating compaction refuses degraded or critical runtime health even when
+  `force: true`.
+
+Operator runbook:
+
+1. Confirm service health and maintenance posture:
+   `curl -fsS http://127.0.0.1:3111/agentmemory/health`.
+2. Compare worker and iii-engine RSS:
+   `docker stats --no-stream --format 'table {{.Name}}\\t{{.CPUPerc}}\\t{{.MemUsage}}\\t{{.PIDs}}' | rg 'agentmemory|iii'`.
+3. Run the non-mutating StateKV scope diagnostic:
+   `curl -fsS -X POST http://127.0.0.1:3111/agentmemory/index-persistence/compact -H 'content-type: application/json' -d '{"dryRun":true}'`.
+4. Compact only when health is healthy and dry-run reports cleanup candidates.
+5. Restart iii-engine only when scope diagnostics show little removable state
+   but RSS remains high after worker-side pressure has cleared.
+6. Leave the process alone when health is green, write gates are open, and the
+   dry-run shows active shard payloads rather than orphan cleanup candidates.
+
 Tests:
 
 - Diagnostics identify large physical scopes without loading their full

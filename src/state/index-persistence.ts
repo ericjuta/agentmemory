@@ -59,6 +59,19 @@ export interface IndexPersistenceSaveOptions {
   allowShrink?: boolean;
 }
 
+export interface IndexPersistencePhysicalScopeReferences {
+  parentScope: string;
+  manifestScope: string;
+  shardScopes: Array<{
+    scope: string;
+    key: string;
+    kind: PayloadKind;
+    generation: string;
+    index: number;
+    byteLength: number;
+  }>;
+}
+
 type PayloadKind = "bm25" | "vector";
 type StableShardGeneration = (typeof STABLE_SHARD_GENERATIONS)[number];
 
@@ -406,6 +419,27 @@ export class IndexPersistence {
       lastDeferredAt: this.lastDeferredAt,
       deferReason: this.deferReason,
       manifest: this.status.manifest ? { ...this.status.manifest } : undefined,
+    };
+  }
+
+  getPhysicalScopeReferences(): IndexPersistencePhysicalScopeReferences {
+    const shardScopes =
+      this.completeManifest === null
+        ? []
+        : this.allShards(this.completeManifest)
+            .filter((shard): shard is PhysicalShardDescriptor => "scope" in shard)
+            .map((shard) => ({
+              scope: shard.scope,
+              key: shard.key,
+              kind: shard.kind,
+              generation: shard.generation,
+              index: shard.index,
+              byteLength: shard.byteLength,
+            }));
+    return {
+      parentScope: this.scope,
+      manifestScope: this.manifestScope,
+      shardScopes,
     };
   }
 
