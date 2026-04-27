@@ -10,6 +10,8 @@ type RetrievalBlockScopeEntry = {
 const GLOBAL_SCOPE_KEY = "scope:global";
 const READY_SCOPE_KEY = "scope:index-ready";
 const BRANCH_SCOPE_PREFIX = "scope:branch:";
+const SCOPE_INDEX = KV.retrievalBlockScopeIndex;
+const LEGACY_SCOPE_INDEX = KV.retrievalBlockIndex;
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
@@ -66,9 +68,11 @@ async function readScopeEntry(
   kv: StateKV,
   key: string,
 ): Promise<RetrievalBlockScopeEntry | null> {
-  const entry = await kv
-    .get<RetrievalBlockScopeEntry>(KV.retrievalBlockIndex, key)
-    .catch(() => null);
+  const entry =
+    (await kv.get<RetrievalBlockScopeEntry>(SCOPE_INDEX, key).catch(() => null)) ??
+    (await kv
+      .get<RetrievalBlockScopeEntry>(LEGACY_SCOPE_INDEX, key)
+      .catch(() => null));
   if (!entry || !Array.isArray(entry.ids)) return null;
   return {
     ids: entry.ids.filter((id): id is string => typeof id === "string" && id.length > 0),
@@ -81,10 +85,26 @@ async function writeScopeEntry(
   key: string,
   ids: string[],
 ): Promise<void> {
-  await kv.set(KV.retrievalBlockIndex, key, {
+  await kv.set(SCOPE_INDEX, key, {
     ids: uniqueStrings(ids),
     updatedAt: new Date().toISOString(),
   } satisfies RetrievalBlockScopeEntry);
+}
+
+async function readReady(kv: StateKV): Promise<boolean> {
+  const ready =
+    (await kv.get<{ ready?: boolean }>(SCOPE_INDEX, READY_SCOPE_KEY).catch(() => null)) ??
+    (await kv
+      .get<{ ready?: boolean }>(LEGACY_SCOPE_INDEX, READY_SCOPE_KEY)
+      .catch(() => null));
+  return ready?.ready === true;
+}
+
+async function writeReady(kv: StateKV): Promise<void> {
+  await kv.set(SCOPE_INDEX, READY_SCOPE_KEY, {
+    ready: true,
+    updatedAt: new Date().toISOString(),
+  });
 }
 
 export async function upsertRetrievalBlockScopeMembership(
@@ -109,10 +129,7 @@ export async function upsertRetrievalBlockScopeMembership(
       await writeScopeEntry(kv, key, nextIds);
     }),
   );
-  await kv.set(KV.retrievalBlockIndex, READY_SCOPE_KEY, {
-    ready: true,
-    updatedAt: new Date().toISOString(),
-  });
+  await writeReady(kv);
 }
 
 export async function removeRetrievalBlockScopeMembership(
@@ -131,10 +148,7 @@ export async function removeRetrievalBlockScopeMembership(
       );
     }),
   );
-  await kv.set(KV.retrievalBlockIndex, READY_SCOPE_KEY, {
-    ready: true,
-    updatedAt: new Date().toISOString(),
-  });
+  await writeReady(kv);
 }
 
 export async function warmRetrievalBlockScopeMemberships(
@@ -153,10 +167,7 @@ export async function warmRetrievalBlockScopeMemberships(
   await Promise.all(
     [...grouped.entries()].map(([key, ids]) => writeScopeEntry(kv, key, ids)),
   );
-  await kv.set(KV.retrievalBlockIndex, READY_SCOPE_KEY, {
-    ready: true,
-    updatedAt: new Date().toISOString(),
-  });
+  await writeReady(kv);
 }
 
 export async function loadScopedRetrievalBlocks(
@@ -171,10 +182,7 @@ export async function loadScopedRetrievalBlocks(
   if (scopeKeys.length === 0) {
     return { blocks: [], complete: false };
   }
-  const ready = await kv
-    .get<{ ready?: boolean }>(KV.retrievalBlockIndex, READY_SCOPE_KEY)
-    .catch(() => null);
-  if (!ready?.ready) {
+  if (!(await readReady(kv))) {
     return { blocks: [], complete: false };
   }
 

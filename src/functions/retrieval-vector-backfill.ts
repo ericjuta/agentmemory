@@ -114,8 +114,11 @@ async function loadCandidateIds(kv: StateKV): Promise<{
   }
 
   const scopeEntriesResult = await kv
-    .list<ScopeEntry>(KV.retrievalBlockIndex)
-    .then((entries) => ({ entries }))
+    .list<ScopeEntry>(KV.retrievalBlockScopeIndex)
+    .then(async (entries) => {
+      if (entries.length > 0) return { entries };
+      return { entries: await kv.list<ScopeEntry>(KV.retrievalBlockIndex) };
+    })
     .catch((error: unknown) => ({ entries: [], error: errorMessage(error) }));
   if (scopeEntriesResult.error) {
     return {

@@ -136,7 +136,9 @@ async function readScopeEntry(
   key: string,
 ): Promise<{ key: string; count: number; updatedAt?: string; ids: string[]; error?: string }> {
   try {
-    const entry = await kv.get<ScopeEntry>(KV.retrievalBlockIndex, key);
+    const entry =
+      (await kv.get<ScopeEntry>(KV.retrievalBlockScopeIndex, key).catch(() => null)) ??
+      (await kv.get<ScopeEntry>(KV.retrievalBlockIndex, key));
     const ids = Array.isArray(entry?.ids)
       ? entry.ids.filter((id): id is string => typeof id === "string" && id.length > 0)
       : [];

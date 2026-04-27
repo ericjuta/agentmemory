@@ -185,9 +185,14 @@ async function loadActiveRetrievalBlockSet(
   options: { startedAt?: number; timeBudgetMs?: number } = {},
 ): Promise<ActiveRetrievalBlockLoadResult> {
   const startedAt = options.startedAt ?? Date.now();
-  const scopeEntries = await kv
-    .list<RetrievalBlockScopeEntry>(KV.retrievalBlockIndex)
+  let scopeEntries = await kv
+    .list<RetrievalBlockScopeEntry>(KV.retrievalBlockScopeIndex)
     .catch(() => []);
+  if (scopeEntries.length === 0) {
+    scopeEntries = await kv
+      .list<RetrievalBlockScopeEntry>(KV.retrievalBlockIndex)
+      .catch(() => []);
+  }
   const activeIds = uniqueStrings(
     scopeEntries.flatMap((entry) =>
       Array.isArray(entry?.ids)

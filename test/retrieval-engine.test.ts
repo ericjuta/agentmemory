@@ -96,6 +96,25 @@ describe("retrieveRelevantBlocks", () => {
     });
   });
 
+  it("stores retrieval scope memberships outside the parent index scope", async () => {
+    const kv = mockKV();
+    const block = makeRetrievalBlock({
+      id: "rblk_scope_storage",
+      canonicalText: "scope storage migration",
+    });
+
+    await warmRetrievalBlockScopeMemberships(kv as never, [block]);
+
+    expect(await kv.get(KV.retrievalBlockScopeIndex, "scope:index-ready")).toMatchObject({
+      ready: true,
+    });
+    expect(
+      await kv.get(KV.retrievalBlockScopeIndex, "scope:project:%2Fproject"),
+    ).toMatchObject({ ids: ["rblk_scope_storage"] });
+    expect(await kv.get(KV.retrievalBlockIndex, "scope:index-ready")).toBeNull();
+    expect(await kv.get(KV.retrievalBlockIndex, "scope:project:%2Fproject")).toBeNull();
+  });
+
   it("does not rebuild retrieval blocks when project is omitted and stored blocks exist", async () => {
     const kv = mockKV();
     const block: RetrievalBlock = {

@@ -181,7 +181,7 @@ describe("mem::retrieval-vector-backfill", () => {
     getRetrievalSearchIndex().clear();
     const rawList = kv.list.bind(kv);
     const listSpy = vi.fn(async <T>(scope: string): Promise<T[]> => {
-      if (scope === KV.retrievalBlockIndex) {
+      if (scope === KV.retrievalBlockScopeIndex) {
         throw new Error("scope index timeout");
       }
       if (scope === KV.retrievalBlocks) {

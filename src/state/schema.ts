@@ -32,6 +32,7 @@ export const KV = {
   retrievalBlocks: "mem:retrieval-blocks",
   retrievalBlockEmbeddings: (blockId: string) => `mem:retrieval-emb:${blockId}`,
   retrievalBlockIndex: "mem:index:retrieval-blocks",
+  retrievalBlockScopeIndex: "mem:index:retrieval-block-scopes",
   semantic: "mem:semantic",
   procedural: "mem:procedural",
   teamShared: (teamId: string) => `mem:team:${teamId}:shared`,
