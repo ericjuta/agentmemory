@@ -804,7 +804,7 @@ Create `.env.local` in the repo root:
 
 <h2 id="api"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/tags/light/section-api.svg"><img src="assets/tags/section-api.svg" alt="API" height="32" /></picture></h2>
 
-139 endpoints on port `3111`. The REST API binds to `127.0.0.1` by default. Protected endpoints require `Authorization: Bearer <secret>` when `AGENTMEMORY_SECRET` is set, and mesh sync endpoints require `AGENTMEMORY_SECRET` on both peers.
+140 endpoints on port `3111`. The REST API binds to `127.0.0.1` by default. Protected endpoints require `Authorization: Bearer <secret>` when `AGENTMEMORY_SECRET` is set, and mesh sync endpoints require `AGENTMEMORY_SECRET` on both peers.
 
 <details>
 <summary>Key endpoints</summary>
@@ -824,6 +824,7 @@ Create `.env.local` in the repo root:
 | `POST` | `/agentmemory/retrieval-blocks/diagnostics` | Inspect retrieval block scope/index state without full scans |
 | `POST` | `/agentmemory/retrieval-proof` | Gather a lightweight retrieval proof bundle without maintenance or retry side effects |
 | `POST` | `/agentmemory/retrieval-blocks/retry` | Drain deferred retrieval-block indexing work with bounded retry budgets |
+| `POST` | `/agentmemory/retrieval-blocks/migrate-shards` | Move legacy retrieval block payloads into deterministic StateKV shard scopes |
 | `POST` | `/agentmemory/retrieval-quality/summary` | Store compact retrieval eval summary |
 | `POST` | `/agentmemory/consolidated-memory/backfill` | Backfill legacy semantic/procedural project scope |
 | `POST` | `/agentmemory/context` | Generate context |

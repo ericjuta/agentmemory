@@ -83,6 +83,7 @@ const ACTIVE_KV_SCOPE_PREFIXES = [
   "mem:observe-receipts:",
   "mem:emb:",
   "mem:retrieval-emb:",
+  "mem:retrieval-blocks:shard:",
   "mem:team:",
   "mem:enriched:",
   "mem:latent:",

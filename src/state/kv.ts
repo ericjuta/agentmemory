@@ -1,6 +1,11 @@
 import type { ISdk } from 'iii-sdk'
 
 import { getEnvVar } from '../config.js'
+import {
+  KV,
+  retrievalBlockShardScope,
+  retrievalBlockShardScopes,
+} from './schema.js'
 
 const DEFAULT_TIMEOUT_MS = 5_000
 const DEFAULT_FAILURE_THRESHOLD = 2
@@ -69,6 +74,9 @@ export class StateKV {
   }
 
   async get<T = unknown>(scope: string, key: string): Promise<T | null> {
+    if (scope === KV.retrievalBlocks) {
+      return this.getRetrievalBlock<T>(key)
+    }
     return this.trigger<{ scope: string; key: string }, T | null>(
       'state::get',
       { scope, key },
@@ -76,6 +84,9 @@ export class StateKV {
   }
 
   async set<T = unknown>(scope: string, key: string, value: T): Promise<T> {
+    if (scope === KV.retrievalBlocks) {
+      return this.setRetrievalBlock(key, value)
+    }
     return this.trigger<{ scope: string; key: string; value: T }, T>(
       'state::set',
       { scope, key, value },
@@ -97,6 +108,9 @@ export class StateKV {
   }
 
   async delete(scope: string, key: string): Promise<void> {
+    if (scope === KV.retrievalBlocks) {
+      return this.deleteRetrievalBlock(key)
+    }
     return this.trigger<{ scope: string; key: string }, void>(
       'state::delete',
       { scope, key },
@@ -104,10 +118,100 @@ export class StateKV {
   }
 
   async list<T = unknown>(scope: string): Promise<T[]> {
+    if (scope === KV.retrievalBlocks) {
+      return this.listRetrievalBlocks<T>()
+    }
     return this.trigger<{ scope: string }, T[]>(
       'state::list',
       { scope },
     )
+  }
+
+  async getRaw<T = unknown>(scope: string, key: string): Promise<T | null> {
+    return this.trigger<{ scope: string; key: string }, T | null>(
+      'state::get',
+      { scope, key },
+    )
+  }
+
+  async setRaw<T = unknown>(scope: string, key: string, value: T): Promise<T> {
+    return this.trigger<{ scope: string; key: string; value: T }, T>(
+      'state::set',
+      { scope, key, value },
+    )
+  }
+
+  async deleteRaw(scope: string, key: string): Promise<void> {
+    return this.trigger<{ scope: string; key: string }, void>(
+      'state::delete',
+      { scope, key },
+    )
+  }
+
+  async listRaw<T = unknown>(scope: string): Promise<T[]> {
+    return this.trigger<{ scope: string }, T[]>(
+      'state::list',
+      { scope },
+    )
+  }
+
+  private async getRetrievalBlock<T = unknown>(key: string): Promise<T | null> {
+    const shardValue = await this.trigger<{ scope: string; key: string }, T | null>(
+      'state::get',
+      { scope: retrievalBlockShardScope(key), key },
+    )
+    if (shardValue !== null) return shardValue
+    return this.trigger<{ scope: string; key: string }, T | null>(
+      'state::get',
+      { scope: KV.retrievalBlocks, key },
+    )
+  }
+
+  private async setRetrievalBlock<T = unknown>(
+    key: string,
+    value: T,
+  ): Promise<T> {
+    return this.trigger<{ scope: string; key: string; value: T }, T>(
+      'state::set',
+      { scope: retrievalBlockShardScope(key), key, value },
+    )
+  }
+
+  private async deleteRetrievalBlock(key: string): Promise<void> {
+    await this.trigger<{ scope: string; key: string }, void>(
+      'state::delete',
+      { scope: retrievalBlockShardScope(key), key },
+    ).catch(() => {})
+    await this.trigger<{ scope: string; key: string }, void>(
+      'state::delete',
+      { scope: KV.retrievalBlocks, key },
+    ).catch(() => {})
+  }
+
+  private async listRetrievalBlocks<T = unknown>(): Promise<T[]> {
+    const scopes = [KV.retrievalBlocks, ...retrievalBlockShardScopes()]
+    const rows = await Promise.all(
+      scopes.map((scope) =>
+        this.trigger<{ scope: string }, T[]>(
+          'state::list',
+          { scope },
+        ),
+      ),
+    )
+    const byId = new Map<string, T>()
+    const anonymous: T[] = []
+    for (const row of rows.flat()) {
+      const id = this.rowId(row)
+      if (id) byId.set(id, row)
+      else anonymous.push(row)
+    }
+    return [...byId.values(), ...anonymous]
+  }
+
+  private rowId(row: unknown): string | null {
+    if (!row || typeof row !== 'object') return null
+    const id = (row as { id?: unknown }).id
+    return typeof id === 'string' && id ? id : null
   }
 
   private async trigger<TInput, TOutput>(

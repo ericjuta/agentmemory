@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { StateKV } from "../src/state/kv.js";
+import { KV, retrievalBlockShardScope } from "../src/state/schema.js";
 
 describe("StateKV", () => {
   afterEach(() => {
@@ -115,5 +116,55 @@ describe("StateKV", () => {
     await vi.advanceTimersByTimeAsync(100);
     await expect(kv.list("mem:test")).resolves.toEqual(["healthy"]);
     expect(sdk.trigger).toHaveBeenCalledTimes(4);
+  });
+
+  it("stores retrieval blocks in deterministic physical shard scopes with legacy fallback", async () => {
+    const store = new Map<string, Map<string, unknown>>();
+    const ensureScope = (scope: string) => {
+      let scopeStore = store.get(scope);
+      if (!scopeStore) {
+        scopeStore = new Map();
+        store.set(scope, scopeStore);
+      }
+      return scopeStore;
+    };
+    const sdk = {
+      trigger: vi.fn(async ({ function_id, payload }) => {
+        const data = payload as { scope: string; key?: string; value?: unknown };
+        if (function_id === "state::get") {
+          return ensureScope(data.scope).get(data.key!) ?? null;
+        }
+        if (function_id === "state::set") {
+          ensureScope(data.scope).set(data.key!, data.value);
+          return data.value;
+        }
+        if (function_id === "state::delete") {
+          ensureScope(data.scope).delete(data.key!);
+          return undefined;
+        }
+        if (function_id === "state::list") {
+          return Array.from(ensureScope(data.scope).values());
+        }
+        throw new Error("unexpected function");
+      }),
+    };
+    const kv = new StateKV(sdk as never);
+    const legacy = { id: "rblk_legacy", sourceType: "memory", sourceId: "mem_1" };
+    const current = { id: "rblk_current", sourceType: "memory", sourceId: "mem_2" };
+    ensureScope(KV.retrievalBlocks).set(legacy.id, legacy);
+
+    await kv.set(KV.retrievalBlocks, current.id, current);
+
+    expect(ensureScope(KV.retrievalBlocks).get(current.id)).toBeUndefined();
+    expect(ensureScope(retrievalBlockShardScope(current.id)).get(current.id)).toEqual(
+      current,
+    );
+    await expect(kv.get(KV.retrievalBlocks, legacy.id)).resolves.toEqual(legacy);
+    await expect(kv.list(KV.retrievalBlocks)).resolves.toEqual(
+      expect.arrayContaining([legacy, current]),
+    );
+
+    await kv.delete(KV.retrievalBlocks, legacy.id);
+    expect(ensureScope(KV.retrievalBlocks).get(legacy.id)).toBeUndefined();
   });
 });

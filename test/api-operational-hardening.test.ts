@@ -132,6 +132,37 @@ describe("operational hardening APIs", () => {
     expect(response.body.error).toContain("maxBatchSize");
   });
 
+  it("forwards whitelisted retrieval block shard migration options", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    let forwarded: unknown;
+    registerApiTriggers(sdk as never, kv as never, "secret");
+    sdk.registerFunction("mem::retrieval-blocks-migrate-shards", async (payload) => {
+      forwarded = payload;
+      return { success: true, migrated: 2 };
+    });
+
+    const response = (await sdk.trigger("api::retrieval-blocks-migrate-shards", {
+      body: {
+        batchSize: 2,
+        timeBudgetMs: "1000",
+        dryRun: true,
+        deleteLegacy: false,
+        ignored: "drop",
+      },
+      headers: { authorization: "Bearer secret" },
+    })) as { status_code: number; body: { success: boolean; migrated: number } };
+
+    expect(response.status_code).toBe(200);
+    expect(response.body).toMatchObject({ success: true, migrated: 2 });
+    expect(forwarded).toEqual({
+      batchSize: 2,
+      timeBudgetMs: 1000,
+      dryRun: true,
+      deleteLegacy: false,
+    });
+  });
+
   it("keeps serving health separate from CPU-paused maintenance", async () => {
     const sdk = mockSdk();
     const kv = mockKV();

@@ -30,6 +30,8 @@ export const KV = {
   turnCapsules: "mem:turn-capsules",
   workingSets: "mem:working-sets",
   retrievalBlocks: "mem:retrieval-blocks",
+  retrievalBlockShard: (shardId: string | number) =>
+    "mem:retrieval-blocks:shard:" + String(shardId).padStart(2, "0"),
   retrievalBlockEmbeddings: (blockId: string) => `mem:retrieval-emb:${blockId}`,
   retrievalBlockIndex: "mem:index:retrieval-blocks",
   retrievalBlockScopeIndex: "mem:index:retrieval-block-scopes",
@@ -72,6 +74,21 @@ export const KV = {
   graphExtractionRetry: "mem:graph-extraction-retry",
   contextInjections: "mem:context-injections",
 } as const;
+
+export const RETRIEVAL_BLOCK_SHARD_COUNT = 64;
+
+export function retrievalBlockShardScope(blockId: string): string {
+  const hash = createHash("sha256").update(blockId).digest("hex");
+  const shardId =
+    Number.parseInt(hash.slice(0, 2), 16) % RETRIEVAL_BLOCK_SHARD_COUNT;
+  return KV.retrievalBlockShard(shardId);
+}
+
+export function retrievalBlockShardScopes(): string[] {
+  return Array.from({ length: RETRIEVAL_BLOCK_SHARD_COUNT }, (_, index) =>
+    KV.retrievalBlockShard(index),
+  );
+}
 
 export const STREAM = {
   name: "mem-live",
