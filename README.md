@@ -572,7 +572,7 @@ Fused with Reciprocal Rank Fusion (RRF, k=60) and session-diversified (max 3 res
 
 ### Embedding providers
 
-agentmemory auto-detects your provider. For best results, install local embeddings (free):
+agentmemory auto-detects your provider. For best results, install local embeddings (free) when you want the optional local provider:
 
 ```bash
 npm install @xenova/transformers
