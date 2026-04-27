@@ -175,6 +175,33 @@ function classifyScope(
   return { classification: "unknown" };
 }
 
+function retainedStablePairScope(
+  shard: IndexPersistencePhysicalScopeReferences["shardScopes"][number],
+): string | null {
+  if (shard.generation !== "stable-a" && shard.generation !== "stable-b") {
+    return null;
+  }
+  const suffix =
+    ":shard:" +
+    shard.kind +
+    ":" +
+    shard.generation +
+    ":" +
+    String(shard.index).padStart(5, "0");
+  if (!shard.scope.endsWith(suffix)) return null;
+  const pairedGeneration =
+    shard.generation === "stable-a" ? "stable-b" : "stable-a";
+  return (
+    shard.scope.slice(0, -suffix.length) +
+    ":shard:" +
+    shard.kind +
+    ":" +
+    pairedGeneration +
+    ":" +
+    String(shard.index).padStart(5, "0")
+  );
+}
+
 function buildPhysicalScopeDiagnostics(
   handles: Record<CompactionTarget, PersistenceHandle>,
   targets: CompactionTarget[],
@@ -210,6 +237,8 @@ function buildPhysicalScopeDiagnostics(
       activeManifestScopes.set(refs.manifestScope, target);
       for (const shard of refs.shardScopes) {
         activeShardScopes.set(shard.scope, target);
+        const retainedPair = retainedStablePairScope(shard);
+        if (retainedPair) activeShardScopes.set(retainedPair, target);
       }
       continue;
     }

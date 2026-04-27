@@ -1,8 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { registerApiTriggers } from "../src/triggers/api.js";
 import { KV } from "../src/state/schema.js";
 import { mockKV, mockSdk } from "./helpers/mocks.js";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("operational hardening APIs", () => {
   it("exposes deferred work and write gates on health", async () => {
@@ -173,6 +177,34 @@ describe("operational hardening APIs", () => {
     expect(response.body.runtimeStatus).toBe("critical");
     expect(response.body.maintenanceStatus).toBe("paused");
     expect(response.body.writeGates.llmWork).toBe("cpu_critical_95%");
+  });
+
+  it("bounds slow health subcomponents instead of hanging the endpoint", async () => {
+    vi.useFakeTimers();
+    const sdk = mockSdk();
+    const kv = mockKV();
+    kv.list = vi.fn(async (scope: string) => {
+      if (scope === KV.compressRetry) {
+        return new Promise<unknown[]>(() => {});
+      }
+      return [];
+    });
+    registerApiTriggers(sdk as never, kv as never);
+
+    const pending = sdk.trigger("api::health", { headers: {} }) as Promise<{
+      status_code: number;
+      body: { deferredWork: { error: string }; healthTimeouts: unknown };
+    }>;
+    await vi.advanceTimersByTimeAsync(1600);
+    const response = await pending;
+
+    expect(response.status_code).toBe(200);
+    expect(response.body.deferredWork.error).toBe(
+      "health_deferred_work_timeout",
+    );
+    expect(response.body.healthTimeouts).toMatchObject({
+      componentTimeoutMs: 1500,
+    });
   });
 
   it("forwards whitelisted retrieval block diagnostic options", async () => {

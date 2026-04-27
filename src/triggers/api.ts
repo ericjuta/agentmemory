@@ -53,6 +53,12 @@ type SessionBootstrapOptions = {
 const SESSION_START_BRANCH_DETECTION_TIMEOUT_MS = 750;
 const SESSION_START_PERSIST_TIMEOUT_MS = 1000;
 const SESSION_START_BOOTSTRAP_TIMEOUT_MS = 1000;
+const HEALTH_COMPONENT_TIMEOUT_MS = readBoundedPositiveIntEnv(
+  "AGENTMEMORY_HEALTH_COMPONENT_TIMEOUT_MS",
+  1500,
+  250,
+  5000,
+);
 
 function readBoundedPositiveIntEnv(
   name: string,
@@ -646,27 +652,47 @@ export function registerApiTriggers(
 
   sdk.registerFunction("api::health", 
     async (req: ApiRequest): Promise<Response> => {
-      const health = await getLatestHealth(kv);
-      const functionMetrics = metricsStore ? await metricsStore.getAll() : [];
+      const healthResult = await settleWithin(
+        getLatestHealth(kv),
+        HEALTH_COMPONENT_TIMEOUT_MS,
+        () => null,
+      );
+      const health = healthResult.value;
+      const metricsResult = metricsStore
+        ? await settleWithin(
+            metricsStore.getAll(),
+            HEALTH_COMPONENT_TIMEOUT_MS,
+            () => [],
+          )
+        : { status: "ok" as const, value: [] };
+      const functionMetrics = metricsResult.value;
       const circuitBreaker =
         provider && "circuitState" in provider ? provider.circuitState : null;
       const [deferredWork, writeGates] = await Promise.all([
-        getDeferredWorkStatus(kv).catch((err) => ({
-          error: err instanceof Error ? err.message : String(err),
-        })),
-        Promise.all([
-          getLlmWorkPauseReason(kv),
-          getDerivedKvWritePauseReason(kv),
-          getGraphExtractionPauseReason(kv),
-          getIndexPersistencePauseReason(kv),
-        ]).then(([llmWork, derivedKvWrites, graphExtraction, indexPersistence]) => ({
-          llmWork,
-          derivedKvWrites,
-          graphExtraction,
-          indexPersistence,
-        })).catch((err) => ({
-          error: err instanceof Error ? err.message : String(err),
-        })),
+        settleWithin(
+          getDeferredWorkStatus(kv).catch((err) => ({
+            error: err instanceof Error ? err.message : String(err),
+          })),
+          HEALTH_COMPONENT_TIMEOUT_MS,
+          () => ({ error: "health_deferred_work_timeout" }),
+        ).then((result) => result.value),
+        settleWithin(
+          Promise.all([
+            getLlmWorkPauseReason(kv),
+            getDerivedKvWritePauseReason(kv),
+            getGraphExtractionPauseReason(kv),
+            getIndexPersistencePauseReason(kv),
+          ]).then(([llmWork, derivedKvWrites, graphExtraction, indexPersistence]) => ({
+            llmWork,
+            derivedKvWrites,
+            graphExtraction,
+            indexPersistence,
+          })).catch((err) => ({
+            error: err instanceof Error ? err.message : String(err),
+          })),
+          HEALTH_COMPONENT_TIMEOUT_MS,
+          () => ({ error: "health_write_gate_timeout" }),
+        ).then((result) => result.value),
       ]);
 
       const runtimeStatus = health?.status || "healthy";
@@ -707,6 +733,11 @@ export function registerApiTriggers(
           circuitBreaker,
           deferredWork,
           writeGates,
+          healthTimeouts: {
+            health: healthResult.status === "timeout",
+            functionMetrics: metricsResult.status === "timeout",
+            componentTimeoutMs: HEALTH_COMPONENT_TIMEOUT_MS,
+          },
           maintenance: {
             status: maintenanceStatus,
             totalQueued: deferredTotalQueued,

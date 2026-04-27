@@ -6,6 +6,8 @@ interface ThresholdConfig {
   eventLoopLagCriticalMs: number;
   cpuWarnPercent: number;
   cpuCriticalPercent: number;
+  cpuWarnConsecutiveSamples: number;
+  cpuCriticalConsecutiveSamples: number;
   memoryWarnPercent: number;
   memoryCriticalPercent: number;
 }
@@ -15,6 +17,8 @@ const DEFAULTS: ThresholdConfig = {
   eventLoopLagCriticalMs: 500,
   cpuWarnPercent: 80,
   cpuCriticalPercent: 90,
+  cpuWarnConsecutiveSamples: 1,
+  cpuCriticalConsecutiveSamples: 1,
   memoryWarnPercent: 80,
   memoryCriticalPercent: 95,
 };
@@ -75,10 +79,17 @@ export function evaluateHealth(
     degraded = true;
   }
 
-  if (snapshot.cpu.percent > cfg.cpuCriticalPercent) {
+  const consecutiveHighSamples = snapshot.cpu.consecutiveHighSamples ?? 1;
+  if (
+    snapshot.cpu.percent > cfg.cpuCriticalPercent &&
+    consecutiveHighSamples >= cfg.cpuCriticalConsecutiveSamples
+  ) {
     alerts.push(`cpu_critical_${Math.round(snapshot.cpu.percent)}%`);
     critical = true;
-  } else if (snapshot.cpu.percent > cfg.cpuWarnPercent) {
+  } else if (
+    snapshot.cpu.percent > cfg.cpuWarnPercent &&
+    consecutiveHighSamples >= cfg.cpuWarnConsecutiveSamples
+  ) {
     alerts.push(`cpu_warn_${Math.round(snapshot.cpu.percent)}%`);
     degraded = true;
   }

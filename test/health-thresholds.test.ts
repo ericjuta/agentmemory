@@ -90,4 +90,34 @@ describe("evaluateHealth", () => {
     expect(result.status).toBe("healthy");
     expect(result.alerts).toEqual([]);
   });
+
+  it("can require sustained cpu pressure before degrading runtime health", () => {
+    const firstSample = evaluateHealth(
+      makeSnapshot({
+        cpu: {
+          userMicros: 1,
+          systemMicros: 1,
+          percent: 97,
+          consecutiveHighSamples: 1,
+        },
+      }),
+      { cpuWarnConsecutiveSamples: 2, cpuCriticalConsecutiveSamples: 2 },
+    );
+    const secondSample = evaluateHealth(
+      makeSnapshot({
+        cpu: {
+          userMicros: 1,
+          systemMicros: 1,
+          percent: 97,
+          consecutiveHighSamples: 2,
+        },
+      }),
+      { cpuWarnConsecutiveSamples: 2, cpuCriticalConsecutiveSamples: 2 },
+    );
+
+    expect(firstSample.status).toBe("healthy");
+    expect(firstSample.alerts).toEqual([]);
+    expect(secondSample.status).toBe("critical");
+    expect(secondSample.alerts).toContain("cpu_critical_97%");
+  });
 });

@@ -138,6 +138,11 @@ describe("mem::index-persistence-compact", () => {
       KV.indexShard(KV.retrievalBlockIndex, "bm25", "stable-b", 0),
       60,
     );
+    writeScopeFile(
+      dataDir,
+      KV.indexShard(KV.retrievalBlockIndex, "bm25", "old-generation", 0),
+      40,
+    );
     writeScopeFile(dataDir, KV.retrievalBlocks, 70);
     writeScopeFile(dataDir, KV.retrievalBlockIndex, 20);
 
@@ -197,10 +202,10 @@ describe("mem::index-persistence-compact", () => {
       };
 
       expect(result.dryRun).toBe(true);
-      expect(result.scopeDiagnostics.totalBytes).toBe(210);
+      expect(result.scopeDiagnostics.totalBytes).toBe(250);
       expect(result.scopeDiagnostics.cleanupCandidates).toMatchObject({
         files: 1,
-        bytes: 60,
+        bytes: 40,
       });
       expect(result.scopeDiagnostics.largest).toEqual(
         expect.arrayContaining([
@@ -220,6 +225,15 @@ describe("mem::index-persistence-compact", () => {
               "stable-b",
               0,
             ),
+            classification: "active_shard_payload",
+          }),
+          expect.objectContaining({
+            scope: KV.indexShard(
+              KV.retrievalBlockIndex,
+              "bm25",
+              "old-generation",
+              0,
+            ),
             classification: "orphan_cleanup_candidate",
           }),
           expect.objectContaining({
@@ -236,7 +250,7 @@ describe("mem::index-persistence-compact", () => {
         expect.objectContaining({
           target: "retrieval",
           dryRun: true,
-          estimatedRemovableBytes: 60,
+          estimatedRemovableBytes: 40,
           estimatedRemovableFiles: 1,
         }),
       ]);

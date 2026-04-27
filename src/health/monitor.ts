@@ -66,6 +66,7 @@ export function registerHealthMonitor(
   let connectionState = "connected";
   let prevCpuUsage = process.cpuUsage();
   let prevCpuTime = Date.now();
+  let cpuHighSampleStreak = 0;
   let kvFailureStreak = 0;
   let kvLastSuccessAt: string | undefined;
   let kvLastFailureAt: string | undefined;
@@ -102,6 +103,7 @@ export function registerHealthMonitor(
     const systemDelta = currentCpu.system - prevCpuUsage.system;
     const cpuPercent =
       elapsedMs > 0 ? ((userDelta + systemDelta) / 1000 / elapsedMs) * 100 : 0;
+    cpuHighSampleStreak = cpuPercent > 80 ? cpuHighSampleStreak + 1 : 0;
     prevCpuUsage = currentCpu;
     prevCpuTime = now;
 
@@ -180,6 +182,7 @@ export function registerHealthMonitor(
         userMicros: currentCpu.user,
         systemMicros: currentCpu.system,
         percent: Math.round(cpuPercent * 100) / 100,
+        consecutiveHighSamples: cpuHighSampleStreak,
       },
       eventLoopLagMs,
       uptimeSeconds: uptime,
@@ -196,7 +199,10 @@ export function registerHealthMonitor(
       alerts: [],
     };
 
-    const evaluated = evaluateHealth(snapshot);
+    const evaluated = evaluateHealth(snapshot, {
+      cpuWarnConsecutiveSamples: 2,
+      cpuCriticalConsecutiveSamples: 2,
+    });
     snapshot.status = evaluated.status;
     snapshot.alerts = evaluated.alerts;
     latestHealthSnapshot = snapshot;
