@@ -31,6 +31,9 @@ export function registerEnrichFunction(sdk: ISdk, kv: StateKV): void {
         context: string;
         items?: RetrievalContextItem[];
         blocks: number;
+        skipped?: boolean;
+        reason?: string;
+        pressure?: unknown;
         trace: unknown;
       };
 
@@ -54,6 +57,9 @@ export function registerEnrichFunction(sdk: ISdk, kv: StateKV): void {
         truncated,
         items: result.items || [],
         blocks: result.blocks,
+        skipped: result.skipped,
+        reason: result.reason,
+        pressure: result.pressure,
         trace: result.trace,
       };
     },

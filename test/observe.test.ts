@@ -319,6 +319,156 @@ describe("observe freshness plumbing", () => {
     }
   });
 
+  it("defers derived observe work when retry queues are hot", async () => {
+    const previousAutoCompress = process.env["AGENTMEMORY_AUTO_COMPRESS"];
+    const previousQueueHigh =
+      process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_HIGH"];
+    const previousQueueCritical =
+      process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_CRITICAL"];
+    process.env["AGENTMEMORY_AUTO_COMPRESS"] = "false";
+    process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_HIGH"] = "1";
+    process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_CRITICAL"] = "99";
+
+    const sdk = mockSdk();
+    const kv = mockKV();
+    try {
+      await kv.set(KV.retrievalBlockRetry, "queued-block", {
+        id: "queued-block",
+      });
+      registerObserveFunction(sdk as never, kv as never);
+
+      const result = (await sdk.trigger("mem::observe", {
+        hookType: "post_tool_use",
+        sessionId: "session-pressure",
+        project: "/project",
+        cwd: "/project",
+        timestamp: "2026-03-29T12:01:00.000Z",
+        source: "codex-native",
+        payloadVersion: "1",
+        eventId: "evt-pressure-edit",
+        persistenceClass: "persistent",
+        capabilities: ["structured_post_tool_payload", "event_identity"],
+        data: {
+          session_id: "session-pressure",
+          turn_id: "turn-pressure",
+          cwd: "/project",
+          model: "gpt-5.4",
+          tool_name: "Edit",
+          tool_use_id: "toolu_pressure",
+          tool_input: { file_path: "/project/src/app.ts" },
+          tool_output: { changed_files: ["/project/src/app.ts"] },
+        },
+      })) as {
+        persisted: boolean;
+        deferred?: boolean;
+        reason?: string;
+      };
+
+      expect(result).toMatchObject({
+        persisted: true,
+        deferred: true,
+        reason: "hot_path_backpressure",
+      });
+      const observations = await kv.list<any>(KV.observations("session-pressure"));
+      expect(observations).toHaveLength(1);
+      expect(observations[0].hookType).toBe("post_tool_use");
+      expect(await kv.list<any>(KV.retrievalBlocks)).toHaveLength(0);
+      expect(await kv.list<any>(KV.compressRetry)).toHaveLength(1);
+      expect(
+        await kv.get<any>(KV.turnCapsules, "session-pressure:turn-pressure"),
+      ).toBeNull();
+    } finally {
+      if (previousAutoCompress === undefined) {
+        delete process.env["AGENTMEMORY_AUTO_COMPRESS"];
+      } else {
+        process.env["AGENTMEMORY_AUTO_COMPRESS"] = previousAutoCompress;
+      }
+      if (previousQueueHigh === undefined) {
+        delete process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_HIGH"];
+      } else {
+        process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_HIGH"] =
+          previousQueueHigh;
+      }
+      if (previousQueueCritical === undefined) {
+        delete process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_CRITICAL"];
+      } else {
+        process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_CRITICAL"] =
+          previousQueueCritical;
+      }
+    }
+  });
+
+  it("sheds non-persistent observations under critical backpressure", async () => {
+    const previousQueueHigh =
+      process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_HIGH"];
+    const previousQueueCritical =
+      process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_CRITICAL"];
+    process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_HIGH"] = "1";
+    process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_CRITICAL"] = "1";
+
+    const sdk = mockSdk();
+    const kv = mockKV();
+    try {
+      await kv.set(KV.retrievalBlockRetry, "queued-block", {
+        id: "queued-block",
+      });
+      registerObserveFunction(sdk as never, kv as never);
+
+      const result = (await sdk.trigger("mem::observe", {
+        hookType: "stop",
+        sessionId: "session-pressure-shed",
+        project: "/project",
+        cwd: "/project",
+        timestamp: "2026-03-29T12:02:00.000Z",
+        source: "codex-native",
+        payloadVersion: "1",
+        eventId: "evt-pressure-stop",
+        persistenceClass: "ephemeral",
+        capabilities: ["event_identity"],
+        data: {
+          session_id: "session-pressure-shed",
+          turn_id: "turn-pressure",
+          cwd: "/project",
+          model: "gpt-5.4",
+          last_assistant_message: "done",
+        },
+      })) as {
+        skipped?: boolean;
+        persisted: boolean;
+        reason?: string;
+      };
+
+      expect(result).toMatchObject({
+        skipped: true,
+        persisted: false,
+        reason: "hot_path_backpressure",
+      });
+      expect(await kv.list<any>(KV.observations("session-pressure-shed"))).toHaveLength(0);
+      expect(
+        await kv.get<any>(
+          KV.observeReceipts("session-pressure-shed"),
+          "evt-pressure-stop",
+        ),
+      ).toMatchObject({
+        eventId: "evt-pressure-stop",
+        persistenceClass: "ephemeral",
+      });
+    } finally {
+      if (previousQueueHigh === undefined) {
+        delete process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_HIGH"];
+      } else {
+        process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_HIGH"] =
+          previousQueueHigh;
+      }
+      if (previousQueueCritical === undefined) {
+        delete process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_CRITICAL"];
+      } else {
+        process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_CRITICAL"] =
+          previousQueueCritical;
+      }
+    }
+  });
+
   it("feeds synthetic compression signals back into the current turn capsule", async () => {
     const previousAutoCompress = process.env["AGENTMEMORY_AUTO_COMPRESS"];
     process.env["AGENTMEMORY_AUTO_COMPRESS"] = "false";

@@ -5,6 +5,10 @@ import type { StateKV } from "../state/kv.js";
 import { logger } from "../logger.js";
 import { retrieveRelevantBlocks } from "./retrieval-engine.js";
 import { resolveSessionBranch } from "./session-branch.js";
+import {
+  emptyContextForPressure,
+  getContextHotPathPressure,
+} from "./hot-path-pressure.js";
 
 export function registerContextFunction(
   sdk: ISdk,
@@ -23,6 +27,16 @@ export function registerContextFunction(
       terms?: string[];
       maxBlocks?: number;
     }) => {
+      const pressure = await getContextHotPathPressure(kv);
+      if (pressure) {
+        logger.warn("Context skipped under hot-path pressure", {
+          sessionId: data.sessionId,
+          intent: data.intent,
+          reason: pressure.reason,
+        });
+        return emptyContextForPressure(pressure);
+      }
+
       const budget = data.budget || tokenBudget;
       const session = await kv.get<Session>(KV.sessions, data.sessionId).catch(() => null);
       const project = data.project || session?.project || "";

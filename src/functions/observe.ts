@@ -25,6 +25,10 @@ import {
 import type { CompressionTracker } from "../state/compression-tracker.js";
 import { indexCompressedObservation } from "../state/observation-indexing.js";
 import { upsertObservationRetrievalBlock } from "./retrieval-blocks.js";
+import {
+  getObserveHotPathPressure,
+  type ObserveHotPathPressure,
+} from "./hot-path-pressure.js";
 
 const SUPPORTED_HOOK_TYPES = new Set<HookType>([
   "session_start",
@@ -372,6 +376,40 @@ function buildObserveReceipt(
   };
 }
 
+function readPositiveIntegerEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function compressionTrackerPauseReason(
+  tracker: CompressionTracker | undefined,
+): string | null {
+  if (!tracker) return null;
+  const limit = readPositiveIntegerEnv(
+    "AGENTMEMORY_OBSERVE_MAX_INFLIGHT_COMPRESSIONS",
+    2,
+  );
+  const inflight = tracker.totalInflight();
+  return inflight >= limit ? `compress_inflight_${inflight}_gte_${limit}` : null;
+}
+
+function shouldShedObservation(
+  payload: HookPayload,
+  metadata: ObserveMetadata,
+  pressure: ObserveHotPathPressure,
+): boolean {
+  if (metadata.persistenceClass !== "persistent") return true;
+  if (pressure.mode !== "shed") return false;
+  return (
+    payload.hookType === "pre_tool_use" ||
+    payload.hookType === "notification" ||
+    payload.hookType === "subagent_start" ||
+    payload.hookType === "subagent_stop"
+  );
+}
+
 export function registerObserveFunction(
   sdk: ISdk,
   kv: StateKV,
@@ -502,6 +540,33 @@ export function registerObserveFunction(
         };
       }
 
+      const hotPathPressure = await getObserveHotPathPressure(kv);
+      if (hotPathPressure && shouldShedObservation(payload, metadata, hotPathPressure)) {
+        const receipt = buildObserveReceipt(payload, metadata, obsId);
+        if (receipt) {
+          await kv.set(
+            KV.observeReceipts(payload.sessionId),
+            receipt.eventId,
+            receipt,
+          );
+        }
+        logger.warn("Observation skipped under hot-path pressure", {
+          obsId,
+          sessionId: payload.sessionId,
+          hook: payload.hookType,
+          persistenceClass: metadata.persistenceClass,
+          reason: hotPathPressure.reason,
+        });
+        return {
+          observationId: obsId,
+          persistenceClass: metadata.persistenceClass,
+          persisted: false,
+          skipped: true,
+          reason: "hot_path_backpressure",
+          pressure: hotPathPressure,
+        };
+      }
+
       if (
         metadata.persistenceClass === "persistent" &&
         maxObservationsPerSession &&
@@ -516,7 +581,8 @@ export function registerObserveFunction(
         }
       }
 
-      if (metadata.persistenceClass !== "diagnostics_only") {
+      const deferDerivedWork = Boolean(hotPathPressure);
+      if (metadata.persistenceClass !== "diagnostics_only" && !deferDerivedWork) {
         await upsertTurnCapsuleFromRaw(
           kv,
           payload.sessionId,
@@ -570,7 +636,10 @@ export function registerObserveFunction(
         }
 
         if (isAutoCompressEnabled()) {
-          const pauseReason = await getLlmWorkPauseReason(kv);
+          const pauseReason =
+            hotPathPressure?.reason ||
+            compressionTrackerPauseReason(tracker) ||
+            (await getLlmWorkPauseReason(kv));
           if (pauseReason) {
             compressionMode = "deferred";
             await enqueueCompressionRetry(kv, {
@@ -600,6 +669,19 @@ export function registerObserveFunction(
               });
           }
         } else {
+          if (hotPathPressure) {
+            compressionMode = "deferred";
+            await enqueueCompressionRetry(kv, {
+              observationId: obsId,
+              sessionId: payload.sessionId,
+              error: hotPathPressure.reason,
+            });
+            logger.warn("Synthetic compression deferred under hot-path pressure", {
+              obsId,
+              sessionId: payload.sessionId,
+              reason: hotPathPressure.reason,
+            });
+          } else {
           const synthetic = buildSyntheticCompression(raw);
           const storedSynthetic = {
             ...synthetic,
@@ -631,6 +713,7 @@ export function registerObserveFunction(
               sessionId: payload.sessionId,
             },
           });
+          }
         }
       }
 
@@ -661,6 +744,9 @@ export function registerObserveFunction(
         observationId: obsId,
         persistenceClass: metadata.persistenceClass,
         persisted: metadata.persistenceClass === "persistent",
+        deferred: deferDerivedWork || undefined,
+        reason: hotPathPressure ? "hot_path_backpressure" : undefined,
+        pressure: hotPathPressure || undefined,
       };
     });
   });

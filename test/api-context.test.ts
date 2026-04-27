@@ -119,4 +119,52 @@ describe("api::context", () => {
     expect(response.body.trace.query).toBe("3113");
     expect(response.body.trace.queryTerms).toContain("3113");
   });
+
+  it("returns an empty skipped context payload under hot-path pressure", async () => {
+    const previousQueueHigh =
+      process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_QUEUE_HIGH"];
+    process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_QUEUE_HIGH"] = "1";
+
+    const sdk = mockSdk();
+    const kv = mockKV();
+    try {
+      registerContextFunction(sdk as never, kv as never, 900);
+      registerApiTriggers(sdk as never, kv as never);
+      await kv.set(KV.retrievalBlockRetry, "queued-block", {
+        id: "queued-block",
+      });
+
+      const response = (await sdk.trigger("api::context", {
+        body: {
+          sessionId: "session-api-context-pressure",
+          project: "/project",
+          query: "retrieval trace",
+        },
+        headers: {},
+      })) as {
+        status_code: number;
+        body: {
+          context: string;
+          skipped?: boolean;
+          reason?: string;
+          pressure?: { reason?: string };
+        };
+      };
+
+      expect(response.status_code).toBe(200);
+      expect(response.body).toMatchObject({
+        context: "",
+        skipped: true,
+        reason: "hot_path_backpressure",
+      });
+      expect(response.body.pressure?.reason).toBe("deferred_queue_1_gte_1");
+    } finally {
+      if (previousQueueHigh === undefined) {
+        delete process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_QUEUE_HIGH"];
+      } else {
+        process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_QUEUE_HIGH"] =
+          previousQueueHigh;
+      }
+    }
+  });
 });
