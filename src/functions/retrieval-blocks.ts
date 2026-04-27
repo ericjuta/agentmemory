@@ -755,6 +755,7 @@ async function queueRetrievalBlockUpsert(
 export async function upsertRetrievalBlock(
   kv: StateKV,
   block: RetrievalBlock,
+  options: { skipEmbedding?: boolean } = {},
 ): Promise<RetrievalBlock> {
   const pauseReason = await getDerivedKvWritePauseReason(kv);
   if (pauseReason) {
@@ -769,7 +770,7 @@ export async function upsertRetrievalBlock(
   const previous = await kv.get<RetrievalBlock>(KV.retrievalBlocks, block.id).catch(() => null);
   await kv.set(KV.retrievalBlocks, block.id, block);
   await upsertRetrievalBlockScopeMembership(kv, block, previous);
-  await indexRetrievalBlock(kv, block);
+  await indexRetrievalBlock(kv, block, { skipEmbedding: options.skipEmbedding });
   invalidateContextResultCache();
   return block;
 }
@@ -827,9 +828,10 @@ export async function upsertObservationRetrievalBlock(
   kv: StateKV,
   observation: CompressedObservation,
   project: string,
+  options: { skipEmbedding?: boolean } = {},
 ): Promise<RetrievalBlock | null> {
   if (!shouldIndexObservation(observation)) return null;
-  return upsertRetrievalBlock(kv, buildObservationRetrievalBlock(observation, project));
+  return upsertRetrievalBlock(kv, buildObservationRetrievalBlock(observation, project), options);
 }
 
 export async function upsertSemanticRetrievalBlock(

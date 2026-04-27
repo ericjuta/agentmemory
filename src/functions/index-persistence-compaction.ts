@@ -2,13 +2,16 @@ import type { ISdk } from "iii-sdk";
 
 import { getIndexPersistencePauseReason } from "../health/write-gate.js";
 import type { StateKV } from "../state/kv.js";
-import type { IndexPersistenceStatus } from "../state/index-persistence.js";
+import type {
+  IndexPersistenceSaveOptions,
+  IndexPersistenceStatus,
+} from "../state/index-persistence.js";
 import { rebuildIndex } from "./search.js";
 
 type CompactionTarget = "observation" | "retrieval";
 
 type PersistenceHandle = {
-  save: () => Promise<void>;
+  save: (options?: IndexPersistenceSaveOptions) => Promise<void>;
   status: () => IndexPersistenceStatus | undefined;
 };
 
@@ -129,7 +132,7 @@ export function registerIndexPersistenceCompactionFunction(
             target === "observation" && rebuildObservation
               ? await rebuildIndex(kv)
               : undefined;
-          await handles[target].save();
+          await handles[target].save({ allowShrink: true });
           const scopeAfter = handles[target].status();
           results.push({
             target,

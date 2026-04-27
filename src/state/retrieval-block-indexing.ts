@@ -405,12 +405,14 @@ async function syncRetrievalBlockEmbedding(
 export async function indexRetrievalBlock(
   kv: StateKV,
   block: RetrievalBlock,
-  options?: { scheduleSave?: boolean; queueRetry?: boolean },
+  options?: { scheduleSave?: boolean; queueRetry?: boolean; skipEmbedding?: boolean },
 ): Promise<RetrievalBlockIndexResult> {
   const bm25 = getRetrievalSearchIndex();
   bm25.addDocument(block.id, block.sessionId || block.project, buildRetrievalBlockLexicalText(block));
   try {
-    await syncRetrievalBlockEmbedding(kv, block);
+    if (!options?.skipEmbedding) {
+      await syncRetrievalBlockEmbedding(kv, block);
+    }
     await Promise.resolve(kv.delete(KV.retrievalBlockRetry, block.id)).catch(() => {});
     return { success: true, retriable: false };
   } catch (err) {

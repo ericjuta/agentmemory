@@ -109,8 +109,8 @@ describe("mem::index-persistence-compact", () => {
       expect.objectContaining({ target: "retrieval", compacted: true }),
     ]);
     expect(result.verification).toMatchObject({ bm25Drift: 0, vectorDrift: 0 });
-    expect(observationSave).toHaveBeenCalledOnce();
-    expect(retrievalSave).toHaveBeenCalledOnce();
+    expect(observationSave).toHaveBeenCalledWith({ allowShrink: true });
+    expect(retrievalSave).toHaveBeenCalledWith({ allowShrink: true });
   });
 });
 

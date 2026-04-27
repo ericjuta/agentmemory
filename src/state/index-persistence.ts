@@ -55,6 +55,10 @@ export interface IndexPersistenceStatus {
   };
 }
 
+export interface IndexPersistenceSaveOptions {
+  allowShrink?: boolean;
+}
+
 type PayloadKind = "bm25" | "vector";
 type StableShardGeneration = (typeof STABLE_SHARD_GENERATIONS)[number];
 
@@ -298,7 +302,7 @@ export class IndexPersistence {
     this.armTimer(this.nextDelayMs);
   }
 
-  async save(): Promise<void> {
+  async save(options: IndexPersistenceSaveOptions = {}): Promise<void> {
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
@@ -308,7 +312,7 @@ export class IndexPersistence {
       await this.inFlight;
       return;
     }
-    await this.saveNow();
+    await this.saveNow(options);
     this.nextDelayMs = DEBOUNCE_MS;
   }
 
@@ -367,10 +371,10 @@ export class IndexPersistence {
     return "saved";
   }
 
-  private async saveNow(): Promise<void> {
+  private async saveNow(options: IndexPersistenceSaveOptions = {}): Promise<void> {
     try {
       if (this.mode === "sharded") {
-        await this.saveSharded();
+        await this.saveSharded(options);
       } else {
         await this.saveLegacy();
       }
@@ -413,11 +417,11 @@ export class IndexPersistence {
     this.recordSuccess(null);
   }
 
-  private async saveSharded(): Promise<void> {
+  private async saveSharded(options: IndexPersistenceSaveOptions = {}): Promise<void> {
     const savedAt = this.now();
     const previous = this.completeManifest ?? (await this.loadStoredManifest());
     const bm25 =
-      previous?.bm25 && this.bm25.size < previous.bm25.count
+      !options.allowShrink && previous?.bm25 && this.bm25.size < previous.bm25.count
         ? await this.preserveOrMigratePayload("bm25", previous.bm25)
         : await this.writePayloadShards(
             "bm25",
@@ -425,7 +429,7 @@ export class IndexPersistence {
             this.bm25.size,
             previous?.bm25,
           );
-    const vector = await this.resolveVectorPayload(previous);
+    const vector = await this.resolveVectorPayload(previous, options);
 
     const manifest: ShardedIndexManifestV2 = {
       schemaVersion: 2,
@@ -443,13 +447,18 @@ export class IndexPersistence {
 
   private async resolveVectorPayload(
     previous: ShardedIndexManifest | null,
+    options: IndexPersistenceSaveOptions = {},
   ): Promise<PayloadManifestV2 | null> {
     if (!this.vector || this.vector.size === 0) {
       if (!previous?.vector) return null;
       return this.preserveOrMigratePayload("vector", previous.vector);
     }
 
-    if (previous?.vector && this.vector.size < previous.vector.count) {
+    if (
+      !options.allowShrink &&
+      previous?.vector &&
+      this.vector.size < previous.vector.count
+    ) {
       return this.preserveOrMigratePayload("vector", previous.vector);
     }
 

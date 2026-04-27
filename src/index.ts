@@ -408,14 +408,14 @@ async function main() {
   });
   registerIndexPersistenceCompactionFunction(sdk, kv, {
     observation: {
-      save: () =>
-        indexPersistence?.save() ??
+      save: (options) =>
+        indexPersistence?.save(options) ??
         Promise.reject(new Error("observation persistence unavailable")),
       status: () => indexPersistence?.getStatus(),
     },
     retrieval: {
-      save: () =>
-        retrievalIndexPersistence?.save() ??
+      save: (options) =>
+        retrievalIndexPersistence?.save(options) ??
         Promise.reject(new Error("retrieval persistence unavailable")),
       status: () => retrievalIndexPersistence?.getStatus(),
     },

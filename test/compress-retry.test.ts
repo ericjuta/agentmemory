@@ -109,6 +109,49 @@ describe("compression retry catch-up", () => {
     expect(provider.compress).not.toHaveBeenCalled();
   });
 
+  it("synthetically compresses queued raw observations when auto compression is disabled", async () => {
+    process.env["AGENTMEMORY_AUTO_COMPRESS"] = "false";
+    const sdk = mockSdk();
+    const kv = mockKV();
+    const provider = {
+      name: "test",
+      compress: vi.fn(async () => compressionXml),
+      summarize: vi.fn(),
+    };
+    await kv.set(KV.sessions, "ses_1", {
+      id: "ses_1",
+      project: "/project",
+      cwd: "/project",
+      startedAt: "2026-04-25T00:00:00.000Z",
+      status: "active",
+      observationCount: 1,
+    } satisfies Session);
+    const raw = rawObservation("obs_synthetic_retry");
+    await kv.set(KV.observations("ses_1"), raw.id, raw);
+    await kv.set(KV.compressRetry, raw.id, {
+      obsId: raw.id,
+      sessionId: "ses_1",
+      retries: 0,
+      failedAt: "2026-04-25T00:00:00.000Z",
+    });
+    registerCompressFunction(sdk as never, kv as never, provider as never);
+
+    const result = (await sdk.trigger("mem::compress-retry", {
+      batchSize: 1,
+      scanRaw: false,
+    })) as { succeeded: number; processed: number };
+
+    expect(result).toMatchObject({ succeeded: 1, processed: 1 });
+    expect(provider.compress).not.toHaveBeenCalled();
+    const stored = await kv.get<{ title?: string; narrative?: string }>(
+      KV.observations("ses_1"),
+      raw.id,
+    );
+    expect(stored?.title).toBe("Read");
+    expect(stored?.narrative).toContain("auth contents");
+    expect(await kv.get(KV.compressRetry, raw.id)).toBeNull();
+  });
+
   it("processes no more than the configured retry batch cap", async () => {
     const sdk = mockSdk();
     const kv = mockKV();

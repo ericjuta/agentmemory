@@ -29,6 +29,7 @@ import type { CompressionTracker } from "../state/compression-tracker.js";
 import { indexCompressedObservation } from "../state/observation-indexing.js";
 import { upsertObservationRetrievalBlock } from "./retrieval-blocks.js";
 import { isAutoCompressEnabled } from "../config.js";
+import { buildSyntheticCompression } from "./compress-synthetic.js";
 
 /** Cap concurrent LLM compression calls to avoid starving the engine. */
 const compressSemaphore = new Semaphore(6);
@@ -432,7 +433,8 @@ export function registerCompressFunction(
     "mem::compress-retry",
     async (payload: unknown) => {
       const data = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
-      const pauseReason = await getLlmWorkPauseReason(kv);
+      const autoCompress = isAutoCompressEnabled();
+      const pauseReason = autoCompress ? await getLlmWorkPauseReason(kv) : null;
       if (pauseReason) {
         return {
           retried: 0,
@@ -459,7 +461,7 @@ export function registerCompressFunction(
       );
       const deadlineMs = Date.now() + timeBudgetMs;
       const scan =
-        typeof data.scanRaw === "boolean" ? data.scanRaw : isAutoCompressEnabled();
+        typeof data.scanRaw === "boolean" ? data.scanRaw : autoCompress;
       const backlog = scan
         ? await enqueueRawCompressionBacklog(kv, entriesByObs, scanLimit)
         : { queued: 0, scanned: 0 };
@@ -495,6 +497,32 @@ export function registerCompressFunction(
           // Already compressed or missing
           await kv.delete(KV.compressRetry, entry.obsId).catch(() => {});
           removed++;
+          continue;
+        }
+
+        if (!autoCompress) {
+          const synthetic = buildSyntheticCompression(raw as RawObservation);
+          const storedSynthetic = {
+            ...synthetic,
+            turnId: (raw as RawObservation).turnId,
+            userPrompt: (raw as RawObservation).userPrompt,
+            assistantResponse: (raw as RawObservation).assistantResponse,
+          };
+          await kv.set(KV.observations(entry.sessionId), entry.obsId, storedSynthetic);
+          await indexCompressedObservation(kv, getSearchIndex(), storedSynthetic, {
+            syncEmbedding: false,
+          });
+          const sessionProject =
+            (await kv.get<{ project?: string }>(KV.sessions, entry.sessionId).catch(() => null))
+              ?.project || "";
+          if (sessionProject) {
+            await upsertObservationRetrievalBlock(kv, storedSynthetic, sessionProject, {
+              skipEmbedding: true,
+            });
+          }
+          await upsertTurnCapsuleFromCompressed(kv, storedSynthetic);
+          await kv.delete(KV.compressRetry, entry.obsId).catch(() => {});
+          succeeded++;
           continue;
         }
 
