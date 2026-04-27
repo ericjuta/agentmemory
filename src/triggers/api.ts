@@ -793,6 +793,17 @@ export function registerApiTriggers(
         capabilities,
         persistenceClass,
       };
+      if (process.env["AGENTMEMORY_INGEST_ENABLED"] === "false") {
+        return {
+          status_code: 202,
+          body: {
+            success: true,
+            skipped: true,
+            reason: "ingest_disabled",
+            obsId: eventId || null,
+          },
+        };
+      }
       const result = await sdk.trigger({ function_id: "mem::observe", payload });
       if (
         typeof result === "object" &&
@@ -1500,6 +1511,20 @@ export function registerApiTriggers(
         return {
           status_code: 400,
           body: { error: "terms must be an array of strings" },
+        };
+      }
+      if (process.env["AGENTMEMORY_INJECT_CONTEXT"] === "false") {
+        return {
+          status_code: 200,
+          body: {
+            context: "",
+            truncated: false,
+            items: [],
+            blocks: 0,
+            trace: undefined,
+            skipped: true,
+            reason: "context_injection_disabled",
+          },
         };
       }
       const result = await sdk.trigger({ function_id: "mem::enrich", payload: req.body });
