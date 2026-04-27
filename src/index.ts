@@ -98,6 +98,7 @@ import { registerRetrievalBlockRetryFunction } from "./functions/retrieval-block
 import { registerRetrievalIndexVerifyFunction } from "./functions/retrieval-index-verify.js";
 import { registerRetrievalBlockDiagnosticsFunction } from "./functions/retrieval-block-diagnostics.js";
 import { registerRetrievalVectorBackfillFunction } from "./functions/retrieval-vector-backfill.js";
+import { registerRetrievalVectorRepairWorkerFunction } from "./functions/retrieval-vector-repair-worker.js";
 import { registerRetrievalQualitySummaryFunction } from "./functions/retrieval-quality-summary.js";
 import { registerRetrievalProofFunction } from "./functions/retrieval-proof.js";
 import { registerConsolidatedMemoryBackfillFunction } from "./functions/consolidated-memory-backfill.js";
@@ -243,6 +244,7 @@ async function main() {
   });
   registerRetrievalBlockDiagnosticsFunction(sdk, kv);
   registerRetrievalVectorBackfillFunction(sdk, kv);
+  registerRetrievalVectorRepairWorkerFunction(sdk, kv);
   registerRetrievalQualitySummaryFunction(sdk, kv);
   registerRetrievalProofFunction(sdk, kv);
   registerConsolidatedMemoryBackfillFunction(sdk, kv);
@@ -716,33 +718,17 @@ async function main() {
     if (process.env.RETRIEVAL_VECTOR_BACKFILL_ENABLED !== "false") {
       retrievalVectorBackfillHandle = createAdaptiveTimer(
         async () =>
-          runMaintenanceTask("Retrieval vector backfill", async () => {
-            const deferredWork = await getDeferredWorkStatus(kv).catch(() => null);
-            if (
-              (deferredWork?.retrievalBlocks.queued ?? 0) > 0 ||
-              (deferredWork?.compression.queued ?? 0) > 0 ||
-              (deferredWork?.graphExtraction.queued ?? 0) > 0
-            ) {
-              return 0;
-            }
+          runMaintenanceTask("Retrieval vector repair", async () => {
             const result = await sdk.trigger<
               Record<string, unknown>,
-              { backfilled?: number; failed?: number; attempted?: number }
+              { workDone?: number }
             >({
-              function_id: "mem::retrieval-vector-backfill",
+              function_id: "mem::retrieval-vector-repair-worker",
               payload: {
-                batchSize: 4,
-                candidateScanLimit: 80,
-                timeBudgetMs: 8_000,
-                concurrency: 1,
-                scheduleSave: false,
+                workerId: "agentmemory-timer",
               },
             });
-            return (
-              (result?.backfilled || 0) +
-              (result?.failed || 0) +
-              (result?.attempted || 0)
-            );
+            return result?.workDone || 0;
           }),
         {
           baseMs: parseInt(
@@ -751,11 +737,11 @@ async function main() {
           ),
           minMs: 300_000,
           maxMs: 900_000,
-          label: "Retrieval vector backfill",
+          label: "Retrieval vector repair",
         },
       );
       console.log(
-        `[agentmemory] Retrieval vector backfill: enabled (adaptive, every 5m base)`,
+        `[agentmemory] Retrieval vector repair: enabled (adaptive, every 5m base)`,
       );
     }
     if (process.env.RETRIEVAL_INDEX_STARTUP_VERIFY_ENABLED !== "false") {
