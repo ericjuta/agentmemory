@@ -6,6 +6,17 @@ import {
   type ServerResponse,
 } from "node:http";
 import { renderViewerDocument } from "./document.js";
+import { getDeferredWorkStatus } from "../functions/deferred-work.js";
+import {
+  getDerivedKvWritePauseReason,
+  getGraphExtractionPauseReason,
+  getIndexPersistencePauseReason,
+  getLlmWorkPauseReason,
+} from "../health/write-gate.js";
+import { getLatestHealth } from "../health/monitor.js";
+import type { StateKV } from "../state/kv.js";
+import type { HealthSnapshot } from "../types.js";
+import { VERSION } from "../version.js";
 
 const ALLOWED_ORIGINS = (
   process.env.VIEWER_ALLOWED_ORIGINS ||
@@ -18,8 +29,166 @@ const VIEWER_PROXY_TIMEOUT_MS = Number.parseInt(
   10,
 );
 
+type ServingStatus = "healthy" | "degraded" | "critical";
+
+type BoundedResult<T> = {
+  status: "ok" | "timeout" | "error";
+  value: T;
+};
+
 function getViewerListenHost(): string {
   return process.env["VIEWER_HOST"] || "127.0.0.1";
+}
+
+function servingStatusFromHealth(
+  health: HealthSnapshot | null | undefined,
+): ServingStatus {
+  if (!health) return "healthy";
+  if (
+    health.connectionState === "disconnected" ||
+    health.connectionState === "failed"
+  ) {
+    return "critical";
+  }
+  if (health.connectionState === "reconnecting") return "degraded";
+  if (health.kvConnectivity?.status === "error") {
+    return (health.kvConnectivity.consecutiveFailures ?? 1) >= 3
+      ? "critical"
+      : "degraded";
+  }
+  if (health.snapshotPersistence?.status === "error") {
+    return (health.snapshotPersistence.consecutiveFailures ?? 1) >= 3
+      ? "critical"
+      : "degraded";
+  }
+  const alerts = health.alerts ?? [];
+  if (
+    alerts.some(
+      (alert) =>
+        alert.startsWith("event_loop_lag_critical_") ||
+        alert.startsWith("memory_critical_"),
+    )
+  ) {
+    return "critical";
+  }
+  if (
+    alerts.some(
+      (alert) =>
+        alert.startsWith("event_loop_lag_warn_") ||
+        alert.startsWith("memory_warn_"),
+    )
+  ) {
+    return "degraded";
+  }
+  return "healthy";
+}
+
+function settleWithin<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  fallback: () => T,
+): Promise<BoundedResult<T>> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resolve({ status: "timeout", value: fallback() });
+    }, timeoutMs);
+    promise.then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({ status: "ok", value });
+      },
+      () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({ status: "error", value: fallback() });
+      },
+    );
+  });
+}
+
+async function buildViewerHealth(kv: StateKV): Promise<{ status: number; body: unknown }> {
+  const health = (
+    await settleWithin(getLatestHealth(kv), 1000, () => null)
+  ).value;
+  const [deferredResult, writeGateResult] = await Promise.all([
+    settleWithin(
+      getDeferredWorkStatus(kv),
+      1500,
+      () => ({
+        error: "viewer_health_deferred_work_timeout",
+      }),
+    ),
+    settleWithin(
+      Promise.all([
+        getLlmWorkPauseReason(kv),
+        getDerivedKvWritePauseReason(kv),
+        getGraphExtractionPauseReason(kv),
+        getIndexPersistencePauseReason(kv),
+      ]).then(([llmWork, derivedKvWrites, graphExtraction, indexPersistence]) => ({
+        llmWork,
+        derivedKvWrites,
+        graphExtraction,
+        indexPersistence,
+      })),
+      1500,
+      () => ({
+        error: "viewer_health_write_gate_timeout",
+      }),
+    ),
+  ]);
+
+  const deferredWork = deferredResult.value;
+  const writeGates = writeGateResult.value;
+  const deferredTotalQueued =
+    deferredWork &&
+    typeof deferredWork === "object" &&
+    "totalQueued" in deferredWork &&
+    typeof deferredWork.totalQueued === "number"
+      ? deferredWork.totalQueued
+      : null;
+  const writeGateValues =
+    writeGates && typeof writeGates === "object" && !("error" in writeGates)
+      ? Object.values(writeGates)
+      : [];
+  const maintenancePaused = writeGateValues.some(Boolean);
+  const maintenanceStatus = maintenancePaused
+    ? "paused"
+    : deferredTotalQueued && deferredTotalQueued > 0
+      ? "behind"
+      : deferredTotalQueued === 0
+        ? "caught_up"
+        : "unknown";
+  const servingStatus = servingStatusFromHealth(health);
+  const runtimeStatus = health?.status || "healthy";
+
+  return {
+    status: servingStatus === "critical" ? 503 : 200,
+    body: {
+      status: servingStatus,
+      runtimeStatus,
+      servingStatus,
+      maintenanceStatus,
+      service: "agentmemory",
+      version: VERSION,
+      health: health || null,
+      functionMetrics: [],
+      circuitBreaker: null,
+      deferredWork,
+      writeGates,
+      maintenance: {
+        status: maintenanceStatus,
+        totalQueued: deferredTotalQueued,
+        paused: maintenancePaused,
+      },
+      source: "viewer-direct",
+    },
+  };
 }
 
 function corsHeaders(req: IncomingMessage): Record<string, string> {
@@ -102,6 +271,12 @@ export function startViewerServer(
 
     if (method === "GET" && pathname === "/agentmemory/livez") {
       json(res, 200, { status: "ok", service: "agentmemory" }, req);
+      return;
+    }
+
+    if (method === "GET" && pathname === "/agentmemory/health" && _kv) {
+      const health = await buildViewerHealth(_kv as StateKV);
+      json(res, health.status, health.body, req);
       return;
     }
 

@@ -7,6 +7,7 @@ const servers: Server[] = [];
 
 afterEach(async () => {
   delete process.env["VIEWER_HOST"];
+  delete process.env["VIEWER_UPSTREAM_URL"];
   await Promise.all(
     servers.splice(0).map(
       (server) =>
@@ -24,6 +25,17 @@ async function startServer(host?: string): Promise<Server> {
   if (host) process.env["VIEWER_HOST"] = host;
   else delete process.env["VIEWER_HOST"];
   const server = startViewerServer(0, null, null);
+  servers.push(server);
+  if (!server.listening) {
+    await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+  }
+  return server;
+}
+
+async function startServerWithKv(kv: unknown, host?: string): Promise<Server> {
+  if (host) process.env["VIEWER_HOST"] = host;
+  else delete process.env["VIEWER_HOST"];
+  const server = startViewerServer(0, kv, null);
   servers.push(server);
   if (!server.listening) {
     await new Promise<void>((resolve) => server.once("listening", () => resolve()));
@@ -69,6 +81,31 @@ describe("viewer server listen host", () => {
     await expect(response.json()).resolves.toEqual({
       service: "agentmemory",
       status: "ok",
+    });
+  });
+
+  it("answers health directly on the viewer port", async () => {
+    process.env["VIEWER_UPSTREAM_URL"] = "http://127.0.0.1:1";
+    const kv = {
+      get: async () => null,
+      list: async () => [],
+    };
+    const server = await startServerWithKv(kv);
+    const address = addressInfo(server);
+
+    const response = await fetch(
+      `http://127.0.0.1:${address.port}/agentmemory/health`,
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      service: "agentmemory",
+      source: "viewer-direct",
+      status: "healthy",
+      maintenance: {
+        status: "caught_up",
+        totalQueued: 0,
+        paused: false,
+      },
     });
   });
 });
