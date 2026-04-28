@@ -28,22 +28,37 @@ This spec does not cover:
 - changing Codex-side caller behavior except where MCP tool contracts need
   better backend arguments
 
-## Current Audit Summary
+## Current Status
 
 The unified retrieval architecture is the right direction: `mem::context`,
 `mem::search`, `mem::smart-search`, and `mem::enrich` now use
 `retrieveRelevantBlocks()` over canonical retrieval blocks.
 
-The remaining gaps are mostly not conceptual. They are correctness and
-operational hardening issues:
+As of the 2026-04-28 live checkpoint, the original correctness and operational
+hardening work is implemented enough for the current A+ retrieval gate:
 
-- stale retrieval blocks can outlive source truth
-- scope membership can be partial while reported complete
-- retrieval-block indexes are not drift-verified
-- MCP recall/search omit scoping fields
-- graph and vector retrieval are still global scans
-- fallback and retry paths can burst KV/provider load
-- some relevance rules are too permissive
+- `npm run eval:retrieval` returned grade `A+` with top1 precision `1.0`,
+  recall@3 `1.0`, MRR `1.0`, duplicate rate `0`, leakage `0`, and p95
+  latency `240ms`
+- `POST /agentmemory/retrieval-proof` returned `pass: true`, health
+  `healthy`, and maintenance status `caught_up`
+- retrieval diagnostics reported BM25 coverage `1.0`, vector coverage `1.0`,
+  vector missing count `0`, and deferred retrieval-block queue `0`
+
+The remaining gaps are now long-term proof and operating-maturity issues, not
+core ranking blockers:
+
+- degraded-mode proof still needs repeated burn-in under CPU, event-loop, and
+  StateKV pressure
+- the golden eval suite is small and should be expanded with real traffic,
+  negative/noise cases, branch-local cases, and output-budget assertions
+- context and refresh responses need continued budget discipline so retrieval
+  quality does not produce oversized handoff packets
+- maintenance writers must stay paused during pressure while proof endpoints are
+  running
+
+The historical audit items below remain in this document as implementation
+evidence and regression guardrails.
 
 ## Implementation Priorities
 

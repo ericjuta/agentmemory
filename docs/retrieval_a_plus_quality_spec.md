@@ -26,7 +26,7 @@ A+ means the right evidence appears near the top, is current, scoped, non-duplic
 
 ## Implementation Status
 
-Status: implemented on `main`; final live-proof hardening remains for bounded degraded-mode proof under worker pressure.
+Status: implemented on `main`; current normal-load proof is A+. Remaining work is degraded-mode burn-in, broader eval coverage, and continued output-budget discipline under worker pressure.
 
 The A+ path now has:
 
@@ -43,11 +43,18 @@ The A+ path now has:
 - optional reranking behind `RERANKER_ENABLED=true` or legacy `RERANK_ENABLED=true`
 - operator diagnostics for BM25/vector coverage, freshness lag, duplicate rate, eval grade, recall, and leakage
 
-Remaining live-proof hardening found on 2026-04-26:
+Live proof checkpoint on 2026-04-28:
 
-- exact verification and smart-search proof calls must stay bounded when the worker is under CPU, event-loop, or StateKV pressure
-- scoped retrieval must not fall back to full `KV.retrievalBlocks` scans when scope membership is incomplete
-- exact verification with `scanBlocks: true` must accept a time budget and return `partial: true` instead of causing iii-engine invocation timeout or worker OOM
+- `npm run eval:retrieval` returned grade `A+` with top1 precision `1.0`, recall@3 `1.0`, MRR `1.0`, duplicate rate `0`, leakage `0`, p95 latency `240ms`, and published the compact summary
+- `POST /agentmemory/retrieval-proof` returned `pass: true`, health `healthy`, and maintenance status `caught_up`
+- retrieval diagnostics reported `2204` manifest documents, BM25 size `2204`, vector coverage `1.0`, vector missing count `0`, and deferred retrieval-block queue `0`
+- index persistence was healthy and saved successfully, but the runtime still recorded recent CPU pressure, so degraded-mode proof stays open
+
+Remaining long-term ideal gaps:
+
+- live degraded-mode proof must repeatedly return bounded partial/degraded traces instead of full-scope scans, endpoint timeouts, or worker OOM
+- the eval suite needs a broader real-traffic corpus beyond the current seeded golden cases before the grade represents full long-term retrieval quality
+- context and refresh payloads need continued budget enforcement so useful retrieval does not become oversized handoff output
 - maintenance backfill, graph catch-up, compression catch-up, and index persistence must remain paused during warning-level pressure while proof endpoints are running
 
 Required proof bundle:
