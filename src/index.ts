@@ -139,6 +139,13 @@ function hasGetMeter(
   );
 }
 
+function positiveIntegerEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 async function main() {
   const config = loadConfig();
   const embeddingConfig = loadEmbeddingConfig();
@@ -498,8 +505,25 @@ async function main() {
     config.restPort,
   );
 
-  const autoForgetIntervalMs = parseInt(process.env.AUTO_FORGET_INTERVAL_MS || "3600000", 10);
-  const consolidationIntervalMs = parseInt(process.env.CONSOLIDATION_INTERVAL_MS || "7200000", 10);
+  const autoForgetIntervalMs = positiveIntegerEnv("AUTO_FORGET_INTERVAL_MS", 3600000);
+  const consolidationIntervalMs = positiveIntegerEnv("CONSOLIDATION_INTERVAL_MS", 7200000);
+  const compressRetryIntervalMs = positiveIntegerEnv("COMPRESS_RETRY_INTERVAL_MS", 300_000);
+  const compressRetryMinIntervalMs = positiveIntegerEnv(
+    "COMPRESS_RETRY_MIN_INTERVAL_MS",
+    60_000,
+  );
+  const compressRetryMaxIntervalMs = positiveIntegerEnv(
+    "COMPRESS_RETRY_MAX_INTERVAL_MS",
+    900_000,
+  );
+  const compressRetryMaintenanceMaxBatchSize = positiveIntegerEnv(
+    "COMPRESS_RETRY_MAINTENANCE_MAX_BATCH_SIZE",
+    40,
+  );
+  const compressRetryMaintenanceTimeBudgetMs = positiveIntegerEnv(
+    "COMPRESS_RETRY_MAINTENANCE_TIME_BUDGET_MS",
+    8_000,
+  );
   const lastMaintenancePauseLog = new Map<string, string>();
 
   const runMaintenanceTask = async (
@@ -596,14 +620,34 @@ async function main() {
       async () =>
        runMaintenanceTask("Compress retry", async () => {
          const result = await sdk.trigger<
-            { lane: "compression" },
+            {
+              lane: "compression";
+              maxBatchSize: number;
+              timeBudgetMs: number;
+            },
             { workDone?: number }
-          >({ function_id: "mem::maintenance-catch-up", payload: { lane: "compression" } });
+          >({
+            function_id: "mem::maintenance-catch-up",
+            payload: {
+              lane: "compression",
+              maxBatchSize: compressRetryMaintenanceMaxBatchSize,
+              timeBudgetMs: compressRetryMaintenanceTimeBudgetMs,
+            },
+          });
           return result?.workDone || 0;
        }),
-      { baseMs: 300_000, minMs: 60_000, maxMs: 900_000, label: "Compress retry" },
+      {
+        baseMs: compressRetryIntervalMs,
+        minMs: compressRetryMinIntervalMs,
+        maxMs: compressRetryMaxIntervalMs,
+        label: "Compress retry",
+      },
     );
-    console.log(`[agentmemory] Compress retry: enabled (every 5m, adaptive)`);
+    console.log(
+      "[agentmemory] Compress retry: enabled (base " +
+        Math.round(compressRetryIntervalMs / 1000) +
+        "s, adaptive)",
+    );
   }
 
   let retrievalBlockRetryHandle: AdaptiveTimerHandle | undefined;

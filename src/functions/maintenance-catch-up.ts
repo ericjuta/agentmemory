@@ -43,6 +43,20 @@ function parseLane(value: unknown): MaintenanceLane | undefined {
   return undefined;
 }
 
+function envFlagDisabled(name: string): boolean {
+  return process.env[name] === "false";
+}
+
+function laneEnabled(lane: MaintenanceLane): boolean {
+  if (lane === "retrieval") {
+    return !envFlagDisabled("RETRIEVAL_BLOCK_RETRY_ENABLED");
+  }
+  if (lane === "graph") {
+    return !envFlagDisabled("GRAPH_CATCH_UP_ENABLED");
+  }
+  return !envFlagDisabled("COMPRESS_RETRY_ENABLED");
+}
+
 function cpuPercent(snapshot: Awaited<ReturnType<typeof getLatestHealth>>): number {
   return snapshot?.cpu?.percent ?? 0;
 }
@@ -66,14 +80,50 @@ function adaptiveCompressionBatch(
   return 1;
 }
 
+function compressionIdlePauseReason(
+  snapshot: Awaited<ReturnType<typeof getLatestHealth>>,
+): string | null {
+  const cpu = cpuPercent(snapshot);
+  const lag = snapshot?.eventLoopLagMs ?? 0;
+  const kvLatency = snapshot?.kvConnectivity?.latencyMs ?? 0;
+  const maxCpu = positiveInteger(
+    process.env.COMPRESS_RETRY_IDLE_MAX_CPU_PERCENT,
+    25,
+  );
+  const maxLag = positiveInteger(
+    process.env.COMPRESS_RETRY_IDLE_MAX_EVENT_LOOP_LAG_MS,
+    40,
+  );
+  const maxKvLatency = positiveInteger(
+    process.env.COMPRESS_RETRY_IDLE_MAX_KV_LATENCY_MS,
+    200,
+  );
+  if (cpu >= maxCpu) {
+    return `idle_required_cpu_${Math.round(cpu)}_gte_${maxCpu}`;
+  }
+  if (lag >= maxLag) {
+    return `idle_required_event_loop_lag_${Math.round(lag)}_gte_${maxLag}`;
+  }
+  if (kvLatency >= maxKvLatency) {
+    return `idle_required_kv_latency_${Math.round(kvLatency)}_gte_${maxKvLatency}`;
+  }
+  return null;
+}
+
 function chooseLane(
   requested: MaintenanceLane | undefined,
   status: Awaited<ReturnType<typeof getDeferredWorkStatus>>,
 ): MaintenanceLane | undefined {
   if (requested) return requested;
-  if (status.retrievalBlocks.queued > 0) return "retrieval";
-  if (status.graphExtraction.queued > 0) return "graph";
-  if (status.compression.queued > 0) return "compression";
+  if (status.retrievalBlocks.queued > 0 && laneEnabled("retrieval")) {
+    return "retrieval";
+  }
+  if (status.graphExtraction.queued > 0 && laneEnabled("graph")) {
+    return "graph";
+  }
+  if (status.compression.queued > 0 && laneEnabled("compression")) {
+    return "compression";
+  }
   return undefined;
 }
 
@@ -132,26 +182,18 @@ export function registerMaintenanceCatchUpFunction(sdk: ISdk, kv: StateKV): void
       const cpu = cpuPercent(health);
       const maxBatchSize = positiveInteger(data.maxBatchSize, 40);
       const requestedBudgetMs = positiveInteger(data.timeBudgetMs, 8_000);
-
-      if (lane !== "retrieval" && deferredWork.retrievalBlocks.queued > 0) {
-        return {
-          success: true,
-          skipped: true,
-          lane,
-          reason: "retrieval_backlog_priority",
-          workDone: 0,
-          deferredWork,
-        };
-      }
-      if (lane === "compression" && deferredWork.graphExtraction.queued > 0) {
-        return {
-          success: true,
-          skipped: true,
-          lane,
-          reason: "graph_backlog_priority",
-          workDone: 0,
-          deferredWork,
-        };
+      if (lane === "compression") {
+        const idlePauseReason = compressionIdlePauseReason(health);
+        if (idlePauseReason) {
+          return {
+            success: true,
+            skipped: true,
+            lane,
+            reason: idlePauseReason,
+            workDone: 0,
+            deferredWork,
+          };
+        }
       }
       if (lane !== "retrieval" && cpu >= 35) {
         return {
