@@ -399,6 +399,57 @@ function shouldCompressInlineOnObserve(): boolean {
   return process.env["AGENTMEMORY_OBSERVE_INLINE_COMPRESS"] === "true";
 }
 
+function shouldSyncEmbeddingsOnObserve(): boolean {
+  return process.env["AGENTMEMORY_OBSERVE_SYNC_EMBEDDINGS"] === "true";
+}
+
+function isQueuePressure(reason: string | undefined): boolean {
+  return reason?.startsWith("deferred_queue_") ?? false;
+}
+
+async function storeSyntheticObservation(
+  sdk: ISdk,
+  kv: StateKV,
+  payload: HookPayload,
+  obsId: string,
+  raw: RawObservation,
+  options: { syncEmbedding?: boolean } = {},
+): Promise<void> {
+  const syncEmbedding =
+    options.syncEmbedding ?? shouldSyncEmbeddingsOnObserve();
+  const synthetic = buildSyntheticCompression(raw);
+  const storedSynthetic = {
+    ...synthetic,
+    turnId: raw.turnId,
+    userPrompt: raw.userPrompt,
+    assistantResponse: raw.assistantResponse,
+  };
+  await kv.set(KV.observations(payload.sessionId), obsId, storedSynthetic);
+  await indexCompressedObservation(kv, getSearchIndex(), storedSynthetic, {
+    syncEmbedding,
+  });
+  await upsertObservationRetrievalBlock(kv, storedSynthetic, payload.project, {
+    skipEmbedding: !syncEmbedding,
+  });
+  await upsertTurnCapsuleFromCompressed(kv, storedSynthetic);
+  bestEffortTrigger(sdk, "stream::set", {
+    stream_name: STREAM.name,
+    group_id: STREAM.group(payload.sessionId),
+    item_id: obsId,
+    data: { type: "compressed", observation: synthetic },
+  });
+  bestEffortTrigger(sdk, "stream::set", {
+    stream_name: STREAM.name,
+    group_id: STREAM.viewerGroup,
+    item_id: obsId,
+    data: {
+      type: "compressed",
+      observation: synthetic,
+      sessionId: payload.sessionId,
+    },
+  });
+}
+
 function shouldShedObservation(
   payload: HookPayload,
   metadata: ObserveMetadata,
@@ -644,7 +695,17 @@ export function registerObserveFunction(
             hotPathPressure?.reason ||
             compressionTrackerPauseReason(tracker) ||
             (await getLlmWorkPauseReason(kv));
-          if (pauseReason || !shouldCompressInlineOnObserve()) {
+          if (hotPathPressure && isQueuePressure(hotPathPressure.reason)) {
+            compressionMode = "synthetic";
+            await storeSyntheticObservation(sdk, kv, payload, obsId, raw, {
+              syncEmbedding: false,
+            });
+            logger.warn("Auto compression downgraded under hot-path pressure", {
+              obsId,
+              sessionId: payload.sessionId,
+              reason: hotPathPressure.reason,
+            });
+          } else if (pauseReason || !shouldCompressInlineOnObserve()) {
             compressionMode = "deferred";
             await enqueueCompressionRetry(kv, {
               observationId: obsId,
@@ -674,49 +735,31 @@ export function registerObserveFunction(
           }
         } else {
           if (hotPathPressure) {
-            compressionMode = "deferred";
-            await enqueueCompressionRetry(kv, {
-              observationId: obsId,
-              sessionId: payload.sessionId,
-              error: hotPathPressure.reason,
-            });
-            logger.warn("Synthetic compression deferred under hot-path pressure", {
-              obsId,
-              sessionId: payload.sessionId,
-              reason: hotPathPressure.reason,
-            });
+            if (isQueuePressure(hotPathPressure.reason)) {
+              compressionMode = "synthetic";
+              await storeSyntheticObservation(sdk, kv, payload, obsId, raw, {
+                syncEmbedding: false,
+              });
+              logger.warn("Synthetic compression stored under hot-path pressure", {
+                obsId,
+                sessionId: payload.sessionId,
+                reason: hotPathPressure.reason,
+              });
+            } else {
+              compressionMode = "deferred";
+              await enqueueCompressionRetry(kv, {
+                observationId: obsId,
+                sessionId: payload.sessionId,
+                error: hotPathPressure.reason,
+              });
+              logger.warn("Synthetic compression deferred under hot-path pressure", {
+                obsId,
+                sessionId: payload.sessionId,
+                reason: hotPathPressure.reason,
+              });
+            }
           } else {
-          const synthetic = buildSyntheticCompression(raw);
-          const storedSynthetic = {
-            ...synthetic,
-            turnId: raw.turnId,
-            userPrompt: raw.userPrompt,
-            assistantResponse: raw.assistantResponse,
-          };
-          await kv.set(
-            KV.observations(payload.sessionId),
-            obsId,
-            storedSynthetic,
-          );
-          await indexCompressedObservation(kv, getSearchIndex(), storedSynthetic);
-          await upsertObservationRetrievalBlock(kv, storedSynthetic, payload.project);
-          await upsertTurnCapsuleFromCompressed(kv, storedSynthetic);
-          bestEffortTrigger(sdk, "stream::set", {
-            stream_name: STREAM.name,
-            group_id: STREAM.group(payload.sessionId),
-            item_id: obsId,
-            data: { type: "compressed", observation: synthetic },
-          });
-          bestEffortTrigger(sdk, "stream::set", {
-            stream_name: STREAM.name,
-            group_id: STREAM.viewerGroup,
-            item_id: obsId,
-            data: {
-              type: "compressed",
-              observation: synthetic,
-              sessionId: payload.sessionId,
-            },
-          });
+          await storeSyntheticObservation(sdk, kv, payload, obsId, raw);
           }
         }
       }

@@ -319,7 +319,7 @@ describe("observe freshness plumbing", () => {
     }
   });
 
-  it("defers derived observe work when retry queues are hot", async () => {
+  it("stores synthetic derived observe work when retry queues are hot", async () => {
     const previousAutoCompress = process.env["AGENTMEMORY_AUTO_COMPRESS"];
     const previousQueueHigh =
       process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_HIGH"];
@@ -371,12 +371,10 @@ describe("observe freshness plumbing", () => {
       });
       const observations = await kv.list<any>(KV.observations("session-pressure"));
       expect(observations).toHaveLength(1);
-      expect(observations[0].hookType).toBe("post_tool_use");
-      expect(await kv.list<any>(KV.retrievalBlocks)).toHaveLength(0);
-      expect(await kv.list<any>(KV.compressRetry)).toHaveLength(1);
-      expect(
-        await kv.get<any>(KV.turnCapsules, "session-pressure:turn-pressure"),
-      ).toBeNull();
+      expect(observations[0].type).toBe("file_edit");
+      expect(observations[0].title).toBeTruthy();
+      expect(await kv.list<any>(KV.retrievalBlocks)).toHaveLength(1);
+      expect(await kv.list<any>(KV.compressRetry)).toHaveLength(0);
     } finally {
       if (previousAutoCompress === undefined) {
         delete process.env["AGENTMEMORY_AUTO_COMPRESS"];
@@ -394,6 +392,131 @@ describe("observe freshness plumbing", () => {
       } else {
         process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_CRITICAL"] =
           previousQueueCritical;
+      }
+    }
+  });
+
+  it("does not shed observations because of compression retry backlog alone", async () => {
+    const previousQueueHigh =
+      process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_HIGH"];
+    const previousQueueCritical =
+      process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_CRITICAL"];
+    const previousIncludeCompression =
+      process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_INCLUDE_COMPRESSION"];
+    process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_HIGH"] = "1";
+    process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_CRITICAL"] = "1";
+    delete process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_INCLUDE_COMPRESSION"];
+
+    const sdk = mockSdk();
+    const kv = mockKV();
+    try {
+      await kv.set(KV.compressRetry, "queued-compress", {
+        obsId: "queued-compress",
+      });
+      registerObserveFunction(sdk as never, kv as never);
+
+      const result = (await sdk.trigger("mem::observe", {
+        hookType: "post_tool_use",
+        sessionId: "session-compression-backlog",
+        project: "/project",
+        cwd: "/project",
+        timestamp: "2026-03-29T12:01:30.000Z",
+        source: "codex-native",
+        payloadVersion: "1",
+        eventId: "evt-compression-backlog-stop",
+        persistenceClass: "persistent",
+        capabilities: ["structured_post_tool_payload", "event_identity"],
+        data: {
+          session_id: "session-compression-backlog",
+          turn_id: "turn-pressure",
+          cwd: "/project",
+          model: "gpt-5.4",
+          tool_name: "Edit",
+          tool_use_id: "toolu_compression_backlog",
+          tool_input: { file_path: "/project/src/app.ts" },
+          tool_output: { changed_files: ["/project/src/app.ts"] },
+        },
+      })) as {
+        skipped?: boolean;
+        persisted: boolean;
+        reason?: string;
+      };
+
+      expect(result.skipped).toBeUndefined();
+      expect(result.reason).toBeUndefined();
+      expect(result.persisted).toBe(true);
+    } finally {
+      if (previousQueueHigh === undefined) {
+        delete process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_HIGH"];
+      } else {
+        process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_HIGH"] =
+          previousQueueHigh;
+      }
+      if (previousQueueCritical === undefined) {
+        delete process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_CRITICAL"];
+      } else {
+        process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_CRITICAL"] =
+          previousQueueCritical;
+      }
+      if (previousIncludeCompression === undefined) {
+        delete process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_INCLUDE_COMPRESSION"];
+      } else {
+        process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_INCLUDE_COMPRESSION"] =
+          previousIncludeCompression;
+      }
+    }
+  });
+
+  it("defers derived indexing for persistent observations under critical health", async () => {
+    const previousAutoCompress = process.env["AGENTMEMORY_AUTO_COMPRESS"];
+    process.env["AGENTMEMORY_AUTO_COMPRESS"] = "false";
+
+    const sdk = mockSdk();
+    const kv = mockKV();
+    try {
+      await kv.set(KV.health, "latest", { status: "critical" });
+      registerObserveFunction(sdk as never, kv as never);
+
+      const result = (await sdk.trigger("mem::observe", {
+        hookType: "post_tool_use",
+        sessionId: "session-critical-health",
+        project: "/project",
+        cwd: "/project",
+        timestamp: "2026-03-29T12:01:45.000Z",
+        source: "codex-native",
+        payloadVersion: "1",
+        eventId: "evt-critical-health-edit",
+        persistenceClass: "persistent",
+        capabilities: ["structured_post_tool_payload", "event_identity"],
+        data: {
+          session_id: "session-critical-health",
+          turn_id: "turn-pressure",
+          cwd: "/project",
+          model: "gpt-5.4",
+          tool_name: "Edit",
+          tool_use_id: "toolu_critical_health",
+          tool_input: { file_path: "/project/src/app.ts" },
+          tool_output: { changed_files: ["/project/src/app.ts"] },
+        },
+      })) as {
+        persisted: boolean;
+        deferred?: boolean;
+        reason?: string;
+      };
+
+      expect(result).toMatchObject({
+        persisted: true,
+        deferred: true,
+        reason: "hot_path_backpressure",
+      });
+      expect(await kv.list<any>(KV.observations("session-critical-health"))).toHaveLength(1);
+      expect(await kv.list<any>(KV.compressRetry)).toHaveLength(1);
+      expect(await kv.list<any>(KV.retrievalBlocks)).toHaveLength(0);
+    } finally {
+      if (previousAutoCompress === undefined) {
+        delete process.env["AGENTMEMORY_AUTO_COMPRESS"];
+      } else {
+        process.env["AGENTMEMORY_AUTO_COMPRESS"] = previousAutoCompress;
       }
     }
   });

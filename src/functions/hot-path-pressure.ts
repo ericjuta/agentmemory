@@ -14,6 +14,11 @@ export interface ObserveHotPathPressure extends HotPathPressure {
   mode: "defer_derived" | "shed";
 }
 
+export interface ContextHotPathPressureOptions {
+  ignoreDeferredQueue?: boolean;
+  includeCompressionQueue?: boolean;
+}
+
 const DEFAULT_CONTEXT_QUEUE_THRESHOLD = 300;
 const DEFAULT_OBSERVE_DERIVED_QUEUE_THRESHOLD = 300;
 const DEFAULT_OBSERVE_SHED_QUEUE_THRESHOLD = 1000;
@@ -72,10 +77,33 @@ function queuePressure(
   };
 }
 
+function envFlagEnabled(name: string): boolean {
+  const raw = process.env[name];
+  return raw === "1" || raw === "true" || raw === "yes";
+}
+
+function retrievalContextQueued(
+  deferredWork: Awaited<ReturnType<typeof getDeferredWorkStatus>>,
+  includeCompressionQueue: boolean,
+): number {
+  return includeCompressionQueue
+    ? deferredWork.totalQueued
+    : deferredWork.retrievalBlocks.queued + deferredWork.graphExtraction.queued;
+}
+
 export async function getContextHotPathPressure(
   kv: StateKV,
+  options: ContextHotPathPressureOptions = {},
 ): Promise<HotPathPressure | null> {
-  return cachedPressure(kv, "context", async () => {
+  const includeCompressionQueue =
+    options.includeCompressionQueue ||
+    envFlagEnabled("AGENTMEMORY_CONTEXT_BACKPRESSURE_INCLUDE_COMPRESSION");
+  const pressureKey = [
+    "context",
+    options.ignoreDeferredQueue ? "ignore-deferred" : "deferred",
+    includeCompressionQueue ? "include-compression" : "default",
+  ].join(":");
+  return cachedPressure(kv, pressureKey, async () => {
     const health = await getLatestHealth(kv).catch(() => null);
     const pauseReason = getMaintenancePauseReason(health);
     if (pauseReason) {
@@ -84,8 +112,13 @@ export async function getContextHotPathPressure(
 
     const deferredWork = await getDeferredWorkStatus(kv).catch(() => null);
     if (!deferredWork) return null;
+    if (options.ignoreDeferredQueue) return null;
+    const contextQueued = retrievalContextQueued(
+      deferredWork,
+      includeCompressionQueue,
+    );
     return queuePressure(
-      deferredWork.totalQueued,
+      contextQueued,
       readPositiveIntegerEnv(
         "AGENTMEMORY_CONTEXT_BACKPRESSURE_QUEUE_HIGH",
         DEFAULT_CONTEXT_QUEUE_THRESHOLD,
@@ -110,19 +143,23 @@ export async function getObserveHotPathPressure(
 
     const deferredWork = await getDeferredWorkStatus(kv).catch(() => null);
     if (!deferredWork) return null;
+    const observeQueued = retrievalContextQueued(
+      deferredWork,
+      envFlagEnabled("AGENTMEMORY_OBSERVE_BACKPRESSURE_INCLUDE_COMPRESSION"),
+    );
 
     const shedThreshold = readPositiveIntegerEnv(
       "AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_CRITICAL",
       DEFAULT_OBSERVE_SHED_QUEUE_THRESHOLD,
     );
-    const shedPressure = queuePressure(deferredWork.totalQueued, shedThreshold);
+    const shedPressure = queuePressure(observeQueued, shedThreshold);
     if (shedPressure) return { ...shedPressure, mode: "shed" };
 
     const derivedThreshold = readPositiveIntegerEnv(
       "AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_HIGH",
       DEFAULT_OBSERVE_DERIVED_QUEUE_THRESHOLD,
     );
-    const derivedPressure = queuePressure(deferredWork.totalQueued, derivedThreshold);
+    const derivedPressure = queuePressure(observeQueued, derivedThreshold);
     if (derivedPressure) return { ...derivedPressure, mode: "defer_derived" };
 
     return null;

@@ -5,7 +5,17 @@ import type { StateKV } from "./kv.js";
 import { KV } from "./schema.js";
 import { logger } from "../logger.js";
 
-const DEBOUNCE_MS = 5000;
+function readPositiveIntegerEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const DEBOUNCE_MS = readPositiveIntegerEnv(
+  "AGENTMEMORY_INDEX_PERSISTENCE_DEBOUNCE_MS",
+  5000,
+);
 const RETRY_BACKOFF_MS = 15000;
 const MAX_RETRY_BACKOFF_MS = 60000;
 const DEFAULT_SHARD_BYTES = 256 * 1024;

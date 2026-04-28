@@ -1,14 +1,12 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname } from "node:path";
 
 import {
   compactRetrievalQualitySummary,
+  DEFAULT_RETRIEVAL_QUALITY_CASES,
   evaluateRetrievalQuality,
   type RetrievalQualityEvalCase,
 } from "./retrieval-quality.js";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
 
 function envFlag(name: string, fallback: boolean): boolean {
   const value = process.env[name];
@@ -57,15 +55,14 @@ async function publishSummary(summary: unknown): Promise<{
   }
 }
 
-const fixturePath =
-  process.env.RETRIEVAL_QUALITY_FIXTURE ||
-  join(__dirname, "..", "..", "test", "fixtures", "retrieval-quality-cases.json");
 const artifactPath =
   process.env.RETRIEVAL_QUALITY_ARTIFACT ||
   "/tmp/agentmemory-retrieval-quality-latest.json";
-const fixtureCases = JSON.parse(
-  readFileSync(fixturePath, "utf8"),
-) as RetrievalQualityEvalCase[];
+const fixtureCases = process.env.RETRIEVAL_QUALITY_FIXTURE
+  ? (JSON.parse(
+      readFileSync(process.env.RETRIEVAL_QUALITY_FIXTURE, "utf8"),
+    ) as RetrievalQualityEvalCase[])
+  : DEFAULT_RETRIEVAL_QUALITY_CASES;
 const result = evaluateRetrievalQuality(fixtureCases);
 const summary = compactRetrievalQualitySummary(result);
 mkdirSync(dirname(artifactPath), { recursive: true });

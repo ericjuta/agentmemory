@@ -1,12 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
 import {
   compactRetrievalQualitySummary,
+  DEFAULT_RETRIEVAL_QUALITY_CASES,
   evaluateRetrievalQuality,
   evaluateRetrievalQualityCase,
-  type RetrievalQualityEvalCase,
 } from "../src/eval/retrieval-quality.js";
 import { retrieveRelevantBlocks, resetRetrievalEngineStateForTests } from "../src/functions/retrieval-engine.js";
 import { warmRetrievalBlockScopeMemberships } from "../src/functions/retrieval-block-scope-index.js";
@@ -18,8 +15,6 @@ import {
 import { KV } from "../src/state/schema.js";
 import type { RetrievalBlock } from "../src/types.js";
 import { mockKV } from "./helpers/mocks.js";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
 
 function makeBlock(overrides: Partial<RetrievalBlock>): RetrievalBlock {
   return {
@@ -74,12 +69,8 @@ describe("retrieval quality eval harness", () => {
     resetRetrievalEngineStateForTests();
   });
 
-  it("passes a deterministic fixture with strong relevance and low duplication", () => {
-    const fixturePath = join(__dirname, "fixtures", "retrieval-quality-cases.json");
-    const fixtureCases = JSON.parse(
-      readFileSync(fixturePath, "utf8"),
-    ) as RetrievalQualityEvalCase[];
-    const result = evaluateRetrievalQuality(fixtureCases);
+  it("passes the built-in deterministic fixture with strong relevance and low duplication", () => {
+    const result = evaluateRetrievalQuality(DEFAULT_RETRIEVAL_QUALITY_CASES);
 
     expect(result.passed).toBe(true);
     expect(result.grade).toBe("A+");

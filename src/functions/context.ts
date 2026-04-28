@@ -27,7 +27,9 @@ export function registerContextFunction(
       terms?: string[];
       maxBlocks?: number;
     }) => {
-      const pressure = await getContextHotPathPressure(kv);
+      const pressure = await getContextHotPathPressure(kv, {
+        ignoreDeferredQueue: data.intent === "manual_recall",
+      });
       if (pressure) {
         logger.warn("Context skipped under hot-path pressure", {
           sessionId: data.sessionId,

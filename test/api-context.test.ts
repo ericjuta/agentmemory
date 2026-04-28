@@ -190,6 +190,102 @@ describe("api::context", () => {
     }
   });
 
+  it("does not let compression retry backlog silence context reads", async () => {
+    const previousQueueHigh =
+      process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_QUEUE_HIGH"];
+    const previousIncludeCompression =
+      process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_INCLUDE_COMPRESSION"];
+    process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_QUEUE_HIGH"] = "1";
+    delete process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_INCLUDE_COMPRESSION"];
+
+    const sdk = mockSdk();
+    const kv = mockKV();
+    try {
+      registerContextFunction(sdk as never, kv as never, 900);
+      registerApiTriggers(sdk as never, kv as never);
+      for (let i = 0; i < 50; i++) {
+        await kv.set(KV.compressRetry, `queued-compress-${i}`, {
+          obsId: `queued-compress-${i}`,
+        });
+      }
+
+      const response = (await sdk.trigger("api::context", {
+        body: {
+          sessionId: "session-api-context-compression-backlog",
+          project: "/project",
+          query: "retrieval trace",
+        },
+        headers: {},
+      })) as {
+        status_code: number;
+        body: {
+          skipped?: boolean;
+          reason?: string;
+        };
+      };
+
+      expect(response.status_code).toBe(200);
+      expect(response.body.skipped).toBeUndefined();
+      expect(response.body.reason).toBeUndefined();
+    } finally {
+      if (previousQueueHigh === undefined) {
+        delete process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_QUEUE_HIGH"];
+      } else {
+        process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_QUEUE_HIGH"] =
+          previousQueueHigh;
+      }
+      if (previousIncludeCompression === undefined) {
+        delete process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_INCLUDE_COMPRESSION"];
+      } else {
+        process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_INCLUDE_COMPRESSION"] =
+          previousIncludeCompression;
+      }
+    }
+  });
+
+  it("keeps explicit manual recall available during deferred queue pressure", async () => {
+    const previousQueueHigh =
+      process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_QUEUE_HIGH"];
+    process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_QUEUE_HIGH"] = "1";
+
+    const sdk = mockSdk();
+    const kv = mockKV();
+    try {
+      registerContextFunction(sdk as never, kv as never, 900);
+      registerApiTriggers(sdk as never, kv as never);
+      await kv.set(KV.retrievalBlockRetry, "queued-block", {
+        id: "queued-block",
+      });
+
+      const response = (await sdk.trigger("api::context", {
+        body: {
+          sessionId: "session-api-context-manual-recall",
+          project: "/project",
+          query: "retrieval trace",
+          intent: "manual_recall",
+        },
+        headers: {},
+      })) as {
+        status_code: number;
+        body: {
+          skipped?: boolean;
+          reason?: string;
+        };
+      };
+
+      expect(response.status_code).toBe(200);
+      expect(response.body.skipped).toBeUndefined();
+      expect(response.body.reason).toBeUndefined();
+    } finally {
+      if (previousQueueHigh === undefined) {
+        delete process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_QUEUE_HIGH"];
+      } else {
+        process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_QUEUE_HIGH"] =
+          previousQueueHigh;
+      }
+    }
+  });
+
   it("returns an empty skipped context payload under hot-path pressure", async () => {
     const previousQueueHigh =
       process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_QUEUE_HIGH"];

@@ -13,6 +13,39 @@ export interface RetrievalQualityEvalCase {
   traceReasons?: string[];
 }
 
+export const DEFAULT_RETRIEVAL_QUALITY_CASES: RetrievalQualityEvalCase[] = [
+  {
+    id: "context-injection-parity",
+    query: "codex context injection session start parity",
+    resultIds: [
+      "rblk_context_injection_parity",
+      "rblk_session_start_bootstrap",
+    ],
+    relevantIds: [
+      "rblk_context_injection_parity",
+      "rblk_session_start_bootstrap",
+    ],
+    forbiddenIds: ["rblk_other_project_context"],
+    latencyMs: 120,
+    k: 3,
+  },
+  {
+    id: "hot-path-backpressure",
+    query: "context recall hot path pressure deferred queue",
+    resultIds: [
+      "rblk_hot_path_backpressure",
+      "rblk_manual_recall_context",
+    ],
+    relevantIds: [
+      "rblk_hot_path_backpressure",
+      "rblk_manual_recall_context",
+    ],
+    forbiddenIds: ["rblk_unrelated_ui_note"],
+    latencyMs: 140,
+    k: 3,
+  },
+];
+
 export interface RetrievalQualityGates {
   minPrecisionAtK?: number;
   minRecallAtK?: number;

@@ -4,7 +4,7 @@ vi.mock("../src/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-import { registerSearchFunction } from "../src/functions/search.js";
+import { rebuildIndex, registerSearchFunction } from "../src/functions/search.js";
 import { KV } from "../src/state/schema.js";
 import type { CompressedObservation, Session } from "../src/types.js";
 
@@ -139,6 +139,40 @@ describe("mem::search", () => {
     expect(result.tokens_used).toBeLessThanOrEqual(20);
     expect(typeof result.text).toBe("string");
     expect(result.results.length).toBeLessThanOrEqual(2);
+    expect(result.truncated).toBe(true);
+  });
+
+  it("trims oversized full results instead of returning empty under a token budget", async () => {
+    const longDetail = "oversized recall detail ".repeat(100);
+    const obsC: CompressedObservation = {
+      id: "obs_c",
+      sessionId: "ses_1",
+      timestamp: "2026-01-03T00:00:00Z",
+      type: "decision",
+      title: "Oversized recall packet",
+      facts: ["Use rotating refresh tokens", longDetail],
+      narrative: `Implemented auth middleware with JWT refresh rotation. ${longDetail}`,
+      concepts: ["auth", "oversized", "recall"],
+      files: ["src/auth.ts", "src/large-context.ts"],
+      importance: 9,
+    };
+    await kv.set(KV.observations("ses_1"), obsC.id, obsC);
+    await rebuildIndex(kv as never);
+
+    const result = (await sdk.trigger("mem::search", {
+      query: "oversized recall",
+      format: "full",
+      token_budget: 500,
+    })) as {
+      results: Array<{ content: string; title: string }>;
+      tokens_used: number;
+      truncated: boolean;
+    };
+
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0]?.title).toBe("Oversized recall packet");
+    expect(result.results[0]?.content).toContain("[truncated]");
+    expect(result.tokens_used).toBeLessThanOrEqual(500);
     expect(result.truncated).toBe(true);
   });
 
