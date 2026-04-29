@@ -493,7 +493,7 @@ async function main() {
     `[agentmemory] Ready. ${embeddingProvider ? "Triple-stream (BM25+Vector+Graph)" : "BM25+Graph"} search active.`,
   );
   console.log(
-    `[agentmemory] Endpoints: 140 REST + 44 MCP tools + 6 MCP resources + 3 MCP prompts`,
+    `[agentmemory] Endpoints: 141 REST + 44 MCP tools + 6 MCP resources + 3 MCP prompts`,
   );
 
   const viewerPort = config.restPort + 2;
@@ -580,6 +580,7 @@ async function main() {
       } catch {}
     }, 86400000);
     insightDecayTimer.unref();
+    console.log(`[agentmemory] Insight decay sweep: enabled (every 24h)`);
   }
 
   if (isConsolidationEnabled()) {

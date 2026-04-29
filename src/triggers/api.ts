@@ -4701,4 +4701,39 @@ export function registerApiTriggers(
     return { status_code: 200, body: result };
   });
   sdk.registerTrigger({ type: "http", function_id: "api::insight-search", config: { api_path: "/agentmemory/insights/search", http_method: "POST" } });
+
+  sdk.registerFunction("api::insight-decay-sweep",  async (req: ApiRequest) => {
+    const denied = checkAuth(req, secret);
+    if (denied) return denied;
+    const body = (req.body || {}) as Record<string, unknown>;
+    const pruneDeletedAfterDays = parseOptionalPositiveInt(body.pruneDeletedAfterDays);
+    const pruneBatchSize = parseOptionalPositiveInt(body.pruneBatchSize);
+    if (pruneDeletedAfterDays === null) {
+      return {
+        status_code: 400,
+        body: { error: "pruneDeletedAfterDays must be a positive integer when provided" },
+      };
+    }
+    if (pruneBatchSize === null) {
+      return {
+        status_code: 400,
+        body: { error: "pruneBatchSize must be a positive integer when provided" },
+      };
+    }
+    if (body.dryRun !== undefined && typeof body.dryRun !== "boolean") {
+      return {
+        status_code: 400,
+        body: { error: "dryRun must be a boolean when provided" },
+      };
+    }
+    const payload: Record<string, unknown> = {};
+    if (pruneDeletedAfterDays !== undefined) {
+      payload.pruneDeletedAfterDays = pruneDeletedAfterDays;
+    }
+    if (pruneBatchSize !== undefined) payload.pruneBatchSize = pruneBatchSize;
+    if (typeof body.dryRun === "boolean") payload.dryRun = body.dryRun;
+    const result = await sdk.trigger({ function_id: "mem::insight-decay-sweep", payload });
+    return { status_code: 200, body: result };
+  });
+  sdk.registerTrigger({ type: "http", function_id: "api::insight-decay-sweep", config: { api_path: "/agentmemory/insights/decay-sweep", http_method: "POST" } });
 }

@@ -388,6 +388,49 @@ describe("operational hardening APIs", () => {
     });
   });
 
+  it("forwards whitelisted insight decay sweep options", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    let forwarded: unknown;
+    registerApiTriggers(sdk as never, kv as never, "secret");
+    sdk.registerFunction("mem::insight-decay-sweep", async (payload) => {
+      forwarded = payload;
+      return { success: true, dryRun: true };
+    });
+
+    const response = (await sdk.trigger("api::insight-decay-sweep", {
+      body: {
+        dryRun: true,
+        pruneDeletedAfterDays: 30,
+        pruneBatchSize: "25",
+        ignored: "drop",
+      },
+      headers: { authorization: "Bearer secret" },
+    })) as { status_code: number; body: { success: boolean } };
+
+    expect(response.status_code).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(forwarded).toEqual({
+      dryRun: true,
+      pruneDeletedAfterDays: 30,
+      pruneBatchSize: 25,
+    });
+  });
+
+  it("validates insight decay sweep API options", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerApiTriggers(sdk as never, kv as never, "secret");
+
+    const response = (await sdk.trigger("api::insight-decay-sweep", {
+      body: { dryRun: "yes" },
+      headers: { authorization: "Bearer secret" },
+    })) as { status_code: number; body: { error: string } };
+
+    expect(response.status_code).toBe(400);
+    expect(response.body.error).toContain("dryRun");
+  });
+
   it("validates retrieval proof API options", async () => {
     const sdk = mockSdk();
     const kv = mockKV();
