@@ -8,6 +8,7 @@ async function setHealth(
   kv: ReturnType<typeof mockKV>,
   status: "healthy" | "degraded" | "critical",
   cpuPercent: number,
+  consecutiveHighSamples = 0,
 ) {
   await kv.set(KV.health, "latest", {
     status,
@@ -16,7 +17,7 @@ async function setHealth(
     kvConnectivity: { status: "ok", consecutiveFailures: 0 },
     snapshotPersistence: { status: "ok", consecutiveFailures: 0 },
     eventLoopLagMs: 0,
-    cpu: { percent: cpuPercent, userMicros: 0, systemMicros: 0 },
+    cpu: { percent: cpuPercent, consecutiveHighSamples, userMicros: 0, systemMicros: 0 },
     memory: { heapUsed: 0, heapTotal: 1, heapLimit: 1, external: 0, rss: 0 },
     pipeline: { compressActive: 0, compressPending: 0, totalInflight: 0 },
     workers: [],
@@ -226,13 +227,48 @@ describe("mem::maintenance-catch-up", () => {
     }
   });
 
-  it("pauses compression when idle headroom is not available", async () => {
+  it("does not pause compression for a single high CPU sample", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    let forwarded: unknown;
+    registerMaintenanceCatchUpFunction(sdk as never, kv as never);
+    sdk.registerFunction("mem::compress-retry", async (payload) => {
+      forwarded = payload;
+      return { succeeded: 1 };
+    });
+
+    await setHealth(kv, "healthy", 30);
+    await kv.set(KV.compressRetry, "obs_1", {
+      obsId: "obs_1",
+      sessionId: "ses_1",
+      retries: 0,
+      failedAt: "2026-04-27T00:00:00.000Z",
+    });
+
+    const result = await sdk.trigger("mem::maintenance-catch-up", {
+      lane: "compression",
+    });
+
+    expect(result).toMatchObject({
+      lane: "compression",
+      workDone: 1,
+    });
+    expect(forwarded).toMatchObject({ scanRaw: false });
+    const laneState = await kv.get(KV.maintenanceLaneState, "compression");
+    expect(laneState).toMatchObject({
+      lane: "compression",
+      lastWorkDone: 1,
+      lastQueued: 1,
+    });
+  });
+
+  it("pauses compression when CPU pressure persists", async () => {
     const sdk = mockSdk();
     const kv = mockKV();
     registerMaintenanceCatchUpFunction(sdk as never, kv as never);
     sdk.registerFunction("mem::compress-retry", async () => ({ succeeded: 1 }));
 
-    await setHealth(kv, "healthy", 30);
+    await setHealth(kv, "healthy", 30, 2);
     await kv.set(KV.compressRetry, "obs_1", {
       obsId: "obs_1",
       sessionId: "ses_1",
@@ -249,13 +285,6 @@ describe("mem::maintenance-catch-up", () => {
       lane: "compression",
       reason: "idle_required_cpu_30_gte_25",
       workDone: 0,
-    });
-    const laneState = await kv.get(KV.maintenanceLaneState, "compression");
-    expect(laneState).toMatchObject({
-      lane: "compression",
-      lastSkippedReason: "idle_required_cpu_30_gte_25",
-      lastWorkDone: 0,
-      lastQueued: 1,
     });
   });
 

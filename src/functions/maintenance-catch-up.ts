@@ -213,6 +213,7 @@ function compressionIdlePauseReason(
   snapshot: Awaited<ReturnType<typeof getLatestHealth>>,
 ): string | null {
   const cpu = cpuPercent(snapshot);
+  const consecutiveHighCpuSamples = snapshot?.cpu?.consecutiveHighSamples ?? 0;
   const lag = snapshot?.eventLoopLagMs ?? 0;
   const kvLatency = snapshot?.kvConnectivity?.latencyMs ?? 0;
   const maxCpu = positiveInteger(
@@ -227,7 +228,7 @@ function compressionIdlePauseReason(
     process.env.COMPRESS_RETRY_IDLE_MAX_KV_LATENCY_MS,
     200,
   );
-  if (cpu >= maxCpu) {
+  if (cpu >= maxCpu && consecutiveHighCpuSamples >= 2) {
     return `idle_required_cpu_${Math.round(cpu)}_gte_${maxCpu}`;
   }
   if (lag >= maxLag) {
