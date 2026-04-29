@@ -52,10 +52,17 @@ type ScopeSummary = {
   archivedBytes: number;
 };
 
+type CollectorState = {
+  selected: Candidate[];
+  projectTotals: Map<string, { candidates: number; estimatedBytes: number }>;
+  candidates: number;
+  estimatedBytes: number;
+};
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_STALE_AFTER_DAYS = 14;
-const DEFAULT_BATCH_SIZE = 250;
-const MAX_BATCH_SIZE = 2_000;
+const DEFAULT_BATCH_SIZE = 100;
+const MAX_BATCH_SIZE = 500;
 const DEFAULT_TIME_BUDGET_MS = 20_000;
 const MAX_TIME_BUDGET_MS = 120_000;
 const ARCHIVE_SCOPE = "mem:codex-prune-archive";
@@ -127,11 +134,25 @@ function makeSummary(): ScopeSummary {
 
 function addCandidate(
   summaries: Record<PrunableScope, ScopeSummary>,
+  state: CollectorState,
+  maxSelected: number,
   candidate: Candidate,
 ): void {
   const summary = summaries[candidate.scope];
   summary.candidates += 1;
   summary.estimatedBytes += candidate.estimatedBytes;
+  state.candidates += 1;
+  state.estimatedBytes += candidate.estimatedBytes;
+  const project = state.projectTotals.get(candidate.project) || {
+    candidates: 0,
+    estimatedBytes: 0,
+  };
+  project.candidates += 1;
+  project.estimatedBytes += candidate.estimatedBytes;
+  state.projectTotals.set(candidate.project, project);
+  if (state.selected.length < maxSelected) {
+    state.selected.push(candidate);
+  }
 }
 
 function sortCandidates(candidates: Candidate[]): Candidate[] {
@@ -149,8 +170,14 @@ async function collectCandidates(
   allowProjects: string[],
   staleCutoffMs: number,
   summaries: Record<PrunableScope, ScopeSummary>,
-): Promise<Candidate[]> {
-  const candidates: Candidate[] = [];
+  maxSelected: number,
+): Promise<CollectorState> {
+  const state: CollectorState = {
+    selected: [],
+    projectTotals: new Map(),
+    candidates: 0,
+    estimatedBytes: 0,
+  };
 
   if (includeScopes.includes("turnCapsules")) {
     const items = await kv.list<TurnCapsule>(KV.turnCapsules).catch(() => []);
@@ -170,8 +197,7 @@ async function collectCandidates(
         retrievalBlockId: retrievalBlockId("turn_capsule", item.id),
         value: item,
       };
-      addCandidate(summaries, candidate);
-      candidates.push(candidate);
+      addCandidate(summaries, state, maxSelected, candidate);
     }
   }
 
@@ -193,8 +219,7 @@ async function collectCandidates(
         retrievalBlockId: retrievalBlockId("working_set", item.sessionId),
         value: item,
       };
-      addCandidate(summaries, candidate);
-      candidates.push(candidate);
+      addCandidate(summaries, state, maxSelected, candidate);
     }
   }
 
@@ -221,29 +246,21 @@ async function collectCandidates(
           retrievalBlockId: retrievalBlockId("observation", observation.id),
           value: observation,
         };
-        addCandidate(summaries, candidate);
-        candidates.push(candidate);
+        addCandidate(summaries, state, maxSelected, candidate);
       }
     }
   }
 
-  return sortCandidates(candidates);
+  state.selected = sortCandidates(state.selected);
+  return state;
 }
 
-function projectSummary(candidates: Candidate[]): Array<{
+function projectSummary(projectTotals: CollectorState["projectTotals"]): Array<{
   project: string;
   candidates: number;
   estimatedBytes: number;
 }> {
-  const byProject = new Map<string, { candidates: number; estimatedBytes: number }>();
-  for (const candidate of candidates) {
-    const current =
-      byProject.get(candidate.project) || { candidates: 0, estimatedBytes: 0 };
-    current.candidates += 1;
-    current.estimatedBytes += candidate.estimatedBytes;
-    byProject.set(candidate.project, current);
-  }
-  return [...byProject.entries()]
+  return [...projectTotals.entries()]
     .map(([project, summary]) => ({ project, ...summary }))
     .sort((a, b) => b.estimatedBytes - a.estimatedBytes)
     .slice(0, 30);
@@ -304,14 +321,15 @@ export function registerCodexPruneFunction(sdk: ISdk, kv: StateKV): void {
       workingSets: makeSummary(),
       observations: makeSummary(),
     };
-    let candidates: Candidate[];
+    let collector: CollectorState;
     try {
-      candidates = await collectCandidates(
+      collector = await collectCandidates(
         kv,
         includeScopes,
         allowProjects,
         staleCutoffMs,
         summaries,
+        batchSize,
       );
     } catch (err) {
       return {
@@ -328,7 +346,7 @@ export function registerCodexPruneFunction(sdk: ISdk, kv: StateKV): void {
       };
     }
 
-    const selected = candidates.slice(0, batchSize);
+    const selected = collector.selected;
     let timedOut = false;
     const errors: Array<{ id: string; scope: PrunableScope; error: string }> = [];
 
@@ -338,8 +356,8 @@ export function registerCodexPruneFunction(sdk: ISdk, kv: StateKV): void {
           success: false,
           error: "force must be true when dryRun is false",
           dryRun,
-          candidates: candidates.length,
-          estimatedBytes: candidates.reduce((sum, item) => sum + item.estimatedBytes, 0),
+          candidates: collector.candidates,
+          estimatedBytes: collector.estimatedBytes,
         };
       }
 
@@ -377,7 +395,7 @@ export function registerCodexPruneFunction(sdk: ISdk, kv: StateKV): void {
           staleAfterDays,
           allowProjects,
           includeScopes,
-          candidates: candidates.length,
+          candidates: collector.candidates,
           selected: selected.length,
           deleted: Object.values(summaries).reduce((sum, scope) => sum + scope.deleted, 0),
           deletedBytes: Object.values(summaries).reduce(
@@ -390,10 +408,6 @@ export function registerCodexPruneFunction(sdk: ISdk, kv: StateKV): void {
       );
     }
 
-    const totalEstimatedBytes = candidates.reduce(
-      (sum, candidate) => sum + candidate.estimatedBytes,
-      0,
-    );
     const totalDeleted = Object.values(summaries).reduce(
       (sum, scope) => sum + scope.deleted,
       0,
@@ -415,15 +429,15 @@ export function registerCodexPruneFunction(sdk: ISdk, kv: StateKV): void {
       timeBudgetMs,
       allowProjects,
       includeScopes,
-      candidates: candidates.length,
+      candidates: collector.candidates,
       selected: selected.length,
-      remainingAfterBatch: Math.max(0, candidates.length - selected.length),
-      estimatedBytes: totalEstimatedBytes,
+      remainingAfterBatch: Math.max(0, collector.candidates - selected.length),
+      estimatedBytes: collector.estimatedBytes,
       deleted: totalDeleted,
       deletedBytes: totalDeletedBytes,
       timedOut,
       scopes: summaries,
-      projects: projectSummary(candidates),
+      projects: projectSummary(collector.projectTotals),
       errors,
       ...(includeSamples
         ? {

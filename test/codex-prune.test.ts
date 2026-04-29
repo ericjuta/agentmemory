@@ -145,6 +145,36 @@ describe("mem::codex-prune", () => {
     expect(await kv.list("mem:codex-prune-archive")).toHaveLength(1);
     expect(await kv.list(KV.audit)).toHaveLength(1);
   });
+
+  it("counts all candidates while bounding selected rows to the batch size", async () => {
+    vi.setSystemTime(new Date("2026-04-29T00:00:00.000Z"));
+    const sdk = mockSdk();
+    const kv = mockKV();
+    for (let index = 0; index < 12; index += 1) {
+      const id = "ses-old:turn-" + index;
+      await kv.set(KV.turnCapsules, id, turnCapsule(id, OLD_PROJECT, OLD));
+    }
+    registerCodexPruneFunction(sdk as never, kv as never);
+
+    const result = (await sdk.trigger("mem::codex-prune", {
+      dryRun: true,
+      staleAfterDays: 14,
+      batchSize: 5,
+      includeSamples: true,
+    })) as {
+      candidates: number;
+      selected: number;
+      remainingAfterBatch: number;
+      samples: unknown[];
+      projects: Array<{ project: string; candidates: number }>;
+    };
+
+    expect(result.candidates).toBe(12);
+    expect(result.selected).toBe(5);
+    expect(result.remainingAfterBatch).toBe(7);
+    expect(result.samples).toHaveLength(5);
+    expect(result.projects[0]).toMatchObject({ project: OLD_PROJECT, candidates: 12 });
+  });
 });
 
 describe("api::codex-prune", () => {
