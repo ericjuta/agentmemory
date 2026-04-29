@@ -38,6 +38,23 @@ As of the closeout check on 2026-04-27:
   can still pause on CPU critical or StateKV timeout pressure. That pause is
   correct; the remaining work is smoother pacing and clearer operator readback.
 
+2026-04-29 closeout update:
+
+- main is aligned with origin/main at `5e0ad40 fix: ignore transient
+  compression CPU spikes`.
+- The deployed worker exposes compression lane state in health/deferred-work
+  readback and records wake timestamps, work done, skip/error reasons,
+  batch/interval settings, success and pressure streaks, drain rate, and ETA.
+- Compression CPU gating now follows the runtime health model: one transient or
+  stale high CPU sample no longer stalls compression; repeated high CPU samples
+  still pause the lane.
+- Live burn-in is acceptable for serving: health 200, runtime and serving
+  healthy, write gates open, KV latency low, retrieval queue clear, context and
+  smart search working, pressureStreak 0, and compression backlog draining as
+  maintenance debt.
+- Remaining work is passive watch until compression reaches zero plus optional
+  SLO/FSM polish; not another hot-path recovery fix.
+
 ## P1. Predictable Compression Backlog Drain
 
 Problem:
@@ -96,6 +113,9 @@ Status:
   results, and memory_recall returning parsed results.
 - Current remaining debt is backlog burn-down and StateKV/RSS smoothness, not
   recall/context correctness.
+- 2026-04-29 proof: deployed current main, health 200, serving healthy, write
+  gates open, retrieval queue 0, compression queue draining under the explicit
+  compression lane.
 
 ## P1. Compression Burn-In Pacing And Visibility
 
@@ -166,6 +186,23 @@ Acceptance:
   repeated timeout bursts.
 - An operator can inspect health or the dashboard and see whether compression
   is draining, paused with reason, or stuck past the alert window.
+
+Status:
+
+- Implemented and deployed in `bae914d fix: expose compression maintenance
+  state` and `5e0ad40 fix: ignore transient compression CPU spikes`.
+- Health/deferred-work now includes compression laneState plus
+  queuedDeltaSinceLastWake, drainRatePerHour, estimatedDrainEtaMs, oldestAgeMs,
+  and newestAgeMs.
+- StateKV pressure records lastErrorReason, increments pressureStreak, reduces
+  the next batch, and backs off the interval.
+- Successful wakes record lastSuccessAt, lastWorkDone, lastDurationMs,
+  successStreak, currentBatchSize, and lastQueued.
+- CPU pause behavior now requires repeated high CPU samples, preventing stale
+  one-off samples from pinning the lane in skipped state while still preserving
+  pressure safety.
+- Live burn-in after deploy showed compression draining, retrieval retry
+  clearing, pressureStreak 0, open write gates, and fast health after idle.
 
 ## P1. Compression Backlog SLO And Alerting
 
