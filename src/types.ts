@@ -237,6 +237,25 @@ export interface GraphExtractionRetryEntry {
   lastError: string;
 }
 
+export interface MaintenanceLaneState {
+  lane: "compression";
+  lastWakeAt?: string;
+  lastSuccessAt?: string;
+  lastWorkDone?: number;
+  lastDurationMs?: number;
+  lastSkippedReason?: string;
+  lastErrorReason?: string;
+  currentIntervalMs?: number;
+  currentBatchSize?: number;
+  successStreak: number;
+  pressureStreak: number;
+  lastQueued?: number;
+  queuedDeltaSinceLastWake?: number;
+  drainRatePerHour?: number;
+  estimatedDrainEtaMs?: number | null;
+  updatedAt: string;
+}
+
 export interface HookPayload {
   hookType: HookType;
   sessionId: string;

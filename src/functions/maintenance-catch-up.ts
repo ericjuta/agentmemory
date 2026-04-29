@@ -3,6 +3,8 @@ import type { ISdk } from "iii-sdk";
 import { shouldPauseMaintenance, getMaintenancePauseReason } from "../health/maintenance-gate.js";
 import { getLatestHealth } from "../health/monitor.js";
 import type { StateKV } from "../state/kv.js";
+import { KV } from "../state/schema.js";
+import type { MaintenanceLaneState } from "../types.js";
 import { getDeferredWorkStatus } from "./deferred-work.js";
 
 type MaintenanceLane = "retrieval" | "compression" | "graph";
@@ -78,6 +80,133 @@ function adaptiveCompressionBatch(
   if (cpu < 15 && lag < 10 && kvLatency < 20) return Math.min(maxBatchSize, 5);
   if (cpu < 25 && lag < 20 && kvLatency < 50) return Math.min(maxBatchSize, 3);
   return 1;
+}
+
+function defaultCompressionBatchFloor(): number {
+  return positiveInteger(process.env.COMPRESS_RETRY_MIN_BATCH_SIZE, 1);
+}
+
+function defaultCompressionIntervalMs(): number {
+  return positiveInteger(process.env.COMPRESS_RETRY_INTERVAL_MS, 60_000);
+}
+
+function maxCompressionIntervalMs(): number {
+  return positiveInteger(process.env.COMPRESS_RETRY_MAX_INTERVAL_MS, 10 * 60_000);
+}
+
+function isStateKvPressure(reason: string | undefined): boolean {
+  if (!reason) return false;
+  return /statekv|state::|StateKV temporarily unavailable/i.test(reason);
+}
+
+async function readCompressionLaneState(kv: StateKV): Promise<MaintenanceLaneState | null> {
+  return kv.get<MaintenanceLaneState>(KV.maintenanceLaneState, "compression").catch(() => null);
+}
+
+async function writeCompressionLaneState(
+  kv: StateKV,
+  previous: MaintenanceLaneState | null,
+  patch: Partial<MaintenanceLaneState>,
+): Promise<MaintenanceLaneState> {
+  const now = new Date().toISOString();
+  const next: MaintenanceLaneState = {
+    successStreak: previous?.successStreak ?? 0,
+    pressureStreak: previous?.pressureStreak ?? 0,
+    currentIntervalMs: previous?.currentIntervalMs ?? defaultCompressionIntervalMs(),
+    currentBatchSize: previous?.currentBatchSize ?? defaultCompressionBatchFloor(),
+    ...previous,
+    ...patch,
+    lane: "compression",
+    updatedAt: now,
+  };
+  await kv.set(KV.maintenanceLaneState, "compression", next);
+  return next;
+}
+
+async function recordCompressionSkip(
+  kv: StateKV,
+  reason: string,
+  queued?: number,
+): Promise<MaintenanceLaneState | null> {
+  const previous = await readCompressionLaneState(kv);
+  const pressure = isStateKvPressure(reason);
+  const currentBatchSize = previous?.currentBatchSize ?? defaultCompressionBatchFloor();
+  const currentIntervalMs = previous?.currentIntervalMs ?? defaultCompressionIntervalMs();
+  const now = new Date().toISOString();
+  return writeCompressionLaneState(kv, previous, {
+    lastWakeAt: now,
+    lastWorkDone: 0,
+    lastSkippedReason: reason,
+    currentBatchSize: pressure
+      ? Math.max(defaultCompressionBatchFloor(), Math.floor(currentBatchSize / 2))
+      : currentBatchSize,
+    currentIntervalMs: pressure
+      ? Math.min(maxCompressionIntervalMs(), Math.max(currentIntervalMs * 2, defaultCompressionIntervalMs()))
+      : currentIntervalMs,
+    successStreak: pressure ? 0 : previous?.successStreak ?? 0,
+    pressureStreak: pressure ? (previous?.pressureStreak ?? 0) + 1 : previous?.pressureStreak ?? 0,
+    ...(typeof queued === "number" ? { lastQueued: queued } : {}),
+  }).catch(() => null);
+}
+
+function compressionBatchFromState(
+  health: Awaited<ReturnType<typeof getLatestHealth>>,
+  maxBatchSize: number,
+  laneState: MaintenanceLaneState | null,
+): number {
+  const adaptive = adaptiveCompressionBatch(health, maxBatchSize);
+  const stateBatch = laneState?.currentBatchSize;
+  if (typeof stateBatch !== "number" || stateBatch <= 0) return adaptive;
+  return Math.min(adaptive, maxBatchSize, Math.max(defaultCompressionBatchFloor(), stateBatch));
+}
+
+function stateAfterCompressionWake(input: {
+  previous: MaintenanceLaneState | null;
+  queuedBefore: number;
+  queuedAfter: number;
+  workDone: number;
+  durationMs: number;
+  batchSize: number;
+  errorReason?: string;
+}): Partial<MaintenanceLaneState> {
+  const now = new Date().toISOString();
+  const queuedDelta = input.queuedAfter - input.queuedBefore;
+  const drained = Math.max(0, input.queuedBefore - input.queuedAfter);
+  const drainRatePerHour =
+    input.durationMs > 0 && drained > 0
+      ? Math.round((drained * 3_600_000) / input.durationMs)
+      : input.previous?.drainRatePerHour;
+  const estimatedDrainEtaMs =
+    drainRatePerHour && drainRatePerHour > 0
+      ? Math.ceil((input.queuedAfter / drainRatePerHour) * 3_600_000)
+      : null;
+  const pressure = isStateKvPressure(input.errorReason);
+  const floor = defaultCompressionBatchFloor();
+  const currentIntervalMs = input.previous?.currentIntervalMs ?? defaultCompressionIntervalMs();
+  const nextBatchSize = pressure
+    ? Math.max(floor, Math.floor(input.batchSize / 2))
+    : input.workDone > 0 && (input.previous?.successStreak ?? 0) >= 2
+      ? Math.min(input.batchSize + 1, positiveInteger(process.env.COMPRESS_RETRY_MAX_BATCH_SIZE, 40))
+      : input.batchSize;
+  const nextIntervalMs = pressure
+    ? Math.min(maxCompressionIntervalMs(), Math.max(currentIntervalMs * 2, defaultCompressionIntervalMs()))
+    : defaultCompressionIntervalMs();
+  return {
+    lastWakeAt: now,
+    ...(input.workDone > 0 && !pressure ? { lastSuccessAt: now } : {}),
+    lastWorkDone: input.workDone,
+    lastDurationMs: input.durationMs,
+    lastSkippedReason: undefined,
+    lastErrorReason: input.errorReason,
+    currentBatchSize: nextBatchSize,
+    currentIntervalMs: nextIntervalMs,
+    successStreak: input.workDone > 0 && !pressure ? (input.previous?.successStreak ?? 0) + 1 : 0,
+    pressureStreak: pressure ? (input.previous?.pressureStreak ?? 0) + 1 : 0,
+    lastQueued: input.queuedAfter,
+    queuedDeltaSinceLastWake: queuedDelta,
+    ...(typeof drainRatePerHour === "number" ? { drainRatePerHour } : {}),
+    estimatedDrainEtaMs,
+  };
 }
 
 function compressionIdlePauseReason(
@@ -185,17 +314,22 @@ export function registerMaintenanceCatchUpFunction(sdk: ISdk, kv: StateKV): void
       if (lane === "compression") {
         const idlePauseReason = compressionIdlePauseReason(health);
         if (idlePauseReason) {
+          const laneState = await recordCompressionSkip(kv, idlePauseReason, deferredWork.compression.queued);
           return {
             success: true,
             skipped: true,
             lane,
             reason: idlePauseReason,
             workDone: 0,
+            result: laneState ? { laneState } : undefined,
             deferredWork,
           };
         }
       }
       if (lane !== "retrieval" && cpu >= 35) {
+        if (lane === "compression") {
+          await recordCompressionSkip(kv, `idle_required_cpu_${Math.round(cpu)}%`, deferredWork.compression.queued);
+        }
         return {
           success: true,
           skipped: true,
@@ -210,50 +344,96 @@ export function registerMaintenanceCatchUpFunction(sdk: ISdk, kv: StateKV): void
         lane === "retrieval"
           ? adaptiveRetrievalBatch(cpu, maxBatchSize)
           : lane === "compression"
-            ? adaptiveCompressionBatch(health, maxBatchSize)
+            ? compressionBatchFromState(
+                health,
+                maxBatchSize,
+                await readCompressionLaneState(kv),
+              )
             : Math.min(positiveInteger(data.maxBatchSize, 1), 1);
       const timeBudgetMs =
         lane === "retrieval"
           ? Math.min(requestedBudgetMs, 8_000)
           : Math.min(requestedBudgetMs, 5_000);
 
-      const result =
-        lane === "retrieval"
-          ? await sdk.trigger({
-              function_id: "mem::retrieval-block-retry",
-              payload: {
-                batchSize,
-                timeBudgetMs,
-                ignoreBackoff: true,
-                refreshFromState: false,
-              },
-            })
-          : lane === "compression"
+      const startedAt = Date.now();
+      let result: unknown;
+      try {
+        result =
+          lane === "retrieval"
             ? await sdk.trigger({
-                function_id: "mem::compress-retry",
+                function_id: "mem::retrieval-block-retry",
                 payload: {
                   batchSize,
                   timeBudgetMs,
-                  scanRaw: false,
+                  ignoreBackoff: true,
+                  refreshFromState: false,
                 },
               })
-            : await sdk.trigger({
-                function_id: "mem::graph-catch-up",
-                payload: {
-                  batchSize,
-                  scanLimit: batchSize,
-                  scanObservations: false,
-                },
-              });
+            : lane === "compression"
+              ? await sdk.trigger({
+                  function_id: "mem::compress-retry",
+                  payload: {
+                    batchSize,
+                    timeBudgetMs,
+                    scanRaw: false,
+                  },
+                })
+              : await sdk.trigger({
+                  function_id: "mem::graph-catch-up",
+                  payload: {
+                    batchSize,
+                    scanLimit: batchSize,
+                    scanObservations: false,
+                  },
+                });
+      } catch (err) {
+        if (lane === "compression") {
+          const errorReason = err instanceof Error ? err.message : String(err);
+          const previous = await readCompressionLaneState(kv);
+          await writeCompressionLaneState(
+            kv,
+            previous,
+            stateAfterCompressionWake({
+              previous,
+              queuedBefore: deferredWork.compression.queued,
+              queuedAfter: deferredWork.compression.queued,
+              workDone: 0,
+              durationMs: Math.max(1, Date.now() - startedAt),
+              batchSize,
+              errorReason,
+            }),
+          ).catch(() => null);
+        }
+        throw err;
+      }
+
+      const workDone = workDoneFromResult(lane, result);
+      let laneState: MaintenanceLaneState | undefined;
+      if (lane === "compression") {
+        const afterWork = await getDeferredWorkStatus(kv).catch(() => deferredWork);
+        const previous = await readCompressionLaneState(kv);
+        laneState = await writeCompressionLaneState(
+          kv,
+          previous,
+          stateAfterCompressionWake({
+            previous,
+            queuedBefore: deferredWork.compression.queued,
+            queuedAfter: afterWork.compression.queued,
+            workDone,
+            durationMs: Math.max(1, Date.now() - startedAt),
+            batchSize,
+          }),
+        ).catch(() => undefined);
+      }
 
       return {
         success: true,
         lane,
-        workDone: workDoneFromResult(lane, result),
+        workDone,
         batchSize,
         timeBudgetMs,
         deferredWork,
-        result,
+        result: laneState ? { result, laneState } : result,
       };
     },
   );

@@ -2,7 +2,7 @@ import type { ISdk } from "iii-sdk";
 
 import type { StateKV } from "../state/kv.js";
 import { KV } from "../state/schema.js";
-import type { CompressRetryEntry } from "../types.js";
+import type { CompressRetryEntry, MaintenanceLaneState } from "../types.js";
 
 export interface DeferredWorkStatus {
   generatedAt: string;
@@ -12,6 +12,10 @@ export interface DeferredWorkStatus {
     newestFailedAt?: string;
     oldestAgeMs?: number;
     newestAgeMs?: number;
+    laneState?: MaintenanceLaneState;
+    queuedDeltaSinceLastWake?: number;
+    drainRatePerHour?: number;
+    estimatedDrainEtaMs?: number | null;
     error?: string;
   };
   retrievalBlocks: {
@@ -36,7 +40,10 @@ async function compressionStatus(
   nowMs: number,
 ): Promise<DeferredWorkStatus["compression"]> {
   try {
-    const entries = await kv.list<CompressRetryEntry>(KV.compressRetry);
+    const [entries, laneState] = await Promise.all([
+      kv.list<CompressRetryEntry>(KV.compressRetry),
+      kv.get<MaintenanceLaneState>(KV.maintenanceLaneState, "compression").catch(() => null),
+    ]);
     let oldestMs: number | null = null;
     let newestMs: number | null = null;
     let oldestFailedAt: string | undefined;
@@ -63,6 +70,20 @@ async function compressionStatus(
       queued: entries.length,
       ...(oldestFailedAt ? { oldestFailedAt, oldestAgeMs: Math.max(0, nowMs - (oldestMs ?? nowMs)) } : {}),
       ...(newestFailedAt ? { newestFailedAt, newestAgeMs: Math.max(0, nowMs - (newestMs ?? nowMs)) } : {}),
+      ...(laneState
+        ? {
+            laneState,
+            ...(typeof laneState.queuedDeltaSinceLastWake === "number"
+              ? { queuedDeltaSinceLastWake: laneState.queuedDeltaSinceLastWake }
+              : {}),
+            ...(typeof laneState.drainRatePerHour === "number"
+              ? { drainRatePerHour: laneState.drainRatePerHour }
+              : {}),
+            ...("estimatedDrainEtaMs" in laneState
+              ? { estimatedDrainEtaMs: laneState.estimatedDrainEtaMs ?? null }
+              : {}),
+          }
+        : {}),
     };
   } catch (err) {
     return {

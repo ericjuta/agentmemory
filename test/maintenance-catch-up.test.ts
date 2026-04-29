@@ -250,6 +250,13 @@ describe("mem::maintenance-catch-up", () => {
       reason: "idle_required_cpu_30_gte_25",
       workDone: 0,
     });
+    const laneState = await kv.get(KV.maintenanceLaneState, "compression");
+    expect(laneState).toMatchObject({
+      lane: "compression",
+      lastSkippedReason: "idle_required_cpu_30_gte_25",
+      lastWorkDone: 0,
+      lastQueued: 1,
+    });
   });
 
   it("forwards adaptive compression batch size under healthy idle headroom", async () => {
@@ -286,6 +293,94 @@ describe("mem::maintenance-catch-up", () => {
       batchSize: 5,
       timeBudgetMs: 5000,
       scanRaw: false,
+    });
+    const laneState = await kv.get(KV.maintenanceLaneState, "compression");
+    expect(laneState).toMatchObject({
+      lane: "compression",
+      lastWorkDone: 5,
+      successStreak: 1,
+      pressureStreak: 0,
+      queuedDeltaSinceLastWake: 0,
+    });
+  });
+
+  it("records compression drain trend after a successful wake", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerMaintenanceCatchUpFunction(sdk as never, kv as never);
+    sdk.registerFunction("mem::compress-retry", async () => {
+      await kv.delete(KV.compressRetry, "obs_1");
+      await kv.delete(KV.compressRetry, "obs_2");
+      return { succeeded: 2 };
+    });
+
+    await setHealth(kv, "healthy", 10);
+    for (const obsId of ["obs_1", "obs_2", "obs_3"]) {
+      await kv.set(KV.compressRetry, obsId, {
+        obsId,
+        sessionId: "ses_1",
+        retries: 0,
+        failedAt: "2026-04-27T00:00:00.000Z",
+      });
+    }
+
+    const result = await sdk.trigger("mem::maintenance-catch-up", {
+      lane: "compression",
+    });
+
+    expect(result).toMatchObject({
+      lane: "compression",
+      workDone: 2,
+    });
+    const laneState = await kv.get<{
+      queuedDeltaSinceLastWake: number;
+      drainRatePerHour: number;
+      estimatedDrainEtaMs: number;
+      lastQueued: number;
+    }>(KV.maintenanceLaneState, "compression");
+    expect(laneState).toMatchObject({
+      queuedDeltaSinceLastWake: -2,
+      lastQueued: 1,
+    });
+    expect(laneState?.drainRatePerHour).toBeGreaterThan(0);
+    expect(laneState?.estimatedDrainEtaMs).toBeGreaterThan(0);
+  });
+
+  it("backs off compression after a StateKV timeout", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerMaintenanceCatchUpFunction(sdk as never, kv as never);
+    sdk.registerFunction("mem::compress-retry", async () => {
+      throw new Error("StateKV state::set timed out after 5000ms");
+    });
+
+    await setHealth(kv, "healthy", 10);
+    await kv.set(KV.maintenanceLaneState, "compression", {
+      lane: "compression",
+      currentBatchSize: 4,
+      currentIntervalMs: 60_000,
+      successStreak: 2,
+      pressureStreak: 0,
+      updatedAt: "2026-04-27T00:00:00.000Z",
+    });
+    await kv.set(KV.compressRetry, "obs_1", {
+      obsId: "obs_1",
+      sessionId: "ses_1",
+      retries: 0,
+      failedAt: "2026-04-27T00:00:00.000Z",
+    });
+
+    await expect(
+      sdk.trigger("mem::maintenance-catch-up", { lane: "compression" }),
+    ).rejects.toThrow("StateKV state::set timed out");
+    const laneState = await kv.get(KV.maintenanceLaneState, "compression");
+    expect(laneState).toMatchObject({
+      lane: "compression",
+      lastErrorReason: "StateKV state::set timed out after 5000ms",
+      currentBatchSize: 2,
+      currentIntervalMs: 120_000,
+      successStreak: 0,
+      pressureStreak: 1,
     });
   });
 
