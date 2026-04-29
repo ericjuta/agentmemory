@@ -351,6 +351,88 @@ describe("operational hardening APIs", () => {
     });
   });
 
+  it("forwards whitelisted active scope diagnostic options", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    let forwarded: unknown;
+    registerApiTriggers(sdk as never, kv as never, "secret");
+    sdk.registerFunction("mem::active-scope-diagnostics", async (payload) => {
+      forwarded = payload;
+      return { success: true };
+    });
+
+    const response = (await sdk.trigger("api::active-scope-diagnostics", {
+      body: {
+        staleAfterDays: "45",
+        sampleLimit: 5,
+        ignored: true,
+      },
+      headers: { authorization: "Bearer secret" },
+    })) as { status_code: number; body: { success: boolean } };
+
+    expect(response.status_code).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(forwarded).toEqual({
+      staleAfterDays: 45,
+      sampleLimit: 5,
+    });
+  });
+
+  it("validates active scope diagnostic API options", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerApiTriggers(sdk as never, kv as never);
+
+    const response = (await sdk.trigger("api::active-scope-diagnostics", {
+      body: { staleAfterDays: 0 },
+      headers: {},
+    })) as { status_code: number; body: { error: string } };
+
+    expect(response.status_code).toBe(400);
+    expect(response.body.error).toContain("staleAfterDays");
+  });
+
+  it("forwards whitelisted active scope diagnostic options", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    let forwarded: unknown;
+    registerApiTriggers(sdk as never, kv as never, "secret");
+    sdk.registerFunction("mem::active-scope-diagnostics", async (payload) => {
+      forwarded = payload;
+      return { success: true };
+    });
+
+    const response = (await sdk.trigger("api::active-scope-diagnostics", {
+      body: {
+        staleAfterDays: "45",
+        sampleLimit: 5,
+        ignored: true,
+      },
+      headers: { authorization: "Bearer secret" },
+    })) as { status_code: number; body: { success: boolean } };
+
+    expect(response.status_code).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(forwarded).toEqual({
+      staleAfterDays: 45,
+      sampleLimit: 5,
+    });
+  });
+
+  it("validates active scope diagnostic options", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerApiTriggers(sdk as never, kv as never, "secret");
+
+    const response = (await sdk.trigger("api::active-scope-diagnostics", {
+      body: { sampleLimit: 0 },
+      headers: { authorization: "Bearer secret" },
+    })) as { status_code: number; body: { error: string } };
+
+    expect(response.status_code).toBe(400);
+    expect(response.body.error).toContain("sampleLimit");
+  });
+
   it("forwards whitelisted retrieval proof options", async () => {
     const sdk = mockSdk();
     const kv = mockKV();

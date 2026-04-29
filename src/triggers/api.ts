@@ -4198,6 +4198,28 @@ export function registerApiTriggers(
   });
   sdk.registerTrigger({ type: "http", function_id: "api::retrieval-blocks-diagnostics", config: { api_path: "/agentmemory/retrieval-blocks/diagnostics", http_method: "POST" } });
 
+  sdk.registerFunction("api::active-scope-diagnostics",  async (req: ApiRequest) => {
+    const denied = checkAuth(req, secret);
+    if (denied) return denied;
+    const body = (req.body || {}) as Record<string, unknown>;
+    const staleAfterDays = parseOptionalPositiveInt(body.staleAfterDays);
+    const sampleLimit = parseOptionalPositiveInt(body.sampleLimit);
+    if (staleAfterDays === null || sampleLimit === null) {
+      return {
+        status_code: 400,
+        body: {
+          error: "staleAfterDays and sampleLimit must be positive integers when provided",
+        },
+      };
+    }
+    const payload: Record<string, unknown> = {};
+    if (staleAfterDays !== undefined) payload.staleAfterDays = staleAfterDays;
+    if (sampleLimit !== undefined) payload.sampleLimit = sampleLimit;
+    const result = await sdk.trigger({ function_id: "mem::active-scope-diagnostics", payload });
+    return { status_code: 200, body: result };
+  });
+  sdk.registerTrigger({ type: "http", function_id: "api::active-scope-diagnostics", config: { api_path: "/agentmemory/active-scopes/diagnostics", http_method: "POST" } });
+
   sdk.registerFunction("api::retrieval-proof",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
     if (denied) return denied;

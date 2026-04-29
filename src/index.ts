@@ -98,6 +98,7 @@ import { registerRetrievalBlockRetryFunction } from "./functions/retrieval-block
 import { registerRetrievalBlockStorageMigrationFunction } from "./functions/retrieval-block-storage-migration.js";
 import { registerRetrievalIndexVerifyFunction } from "./functions/retrieval-index-verify.js";
 import { registerRetrievalBlockDiagnosticsFunction } from "./functions/retrieval-block-diagnostics.js";
+import { registerActiveScopeDiagnosticsFunction } from "./functions/active-scope-diagnostics.js";
 import { registerRetrievalVectorBackfillFunction } from "./functions/retrieval-vector-backfill.js";
 import { registerRetrievalVectorRepairWorkerFunction } from "./functions/retrieval-vector-repair-worker.js";
 import { registerRetrievalQualitySummaryFunction } from "./functions/retrieval-quality-summary.js";
@@ -255,6 +256,7 @@ async function main() {
     observationPersistenceStatus: () => indexPersistence?.getStatus(),
   });
   registerRetrievalBlockDiagnosticsFunction(sdk, kv);
+  registerActiveScopeDiagnosticsFunction(sdk, kv);
   registerRetrievalVectorBackfillFunction(sdk, kv);
   registerRetrievalVectorRepairWorkerFunction(sdk, kv);
   registerRetrievalQualitySummaryFunction(sdk, kv);
@@ -493,7 +495,7 @@ async function main() {
     `[agentmemory] Ready. ${embeddingProvider ? "Triple-stream (BM25+Vector+Graph)" : "BM25+Graph"} search active.`,
   );
   console.log(
-    `[agentmemory] Endpoints: 141 REST + 44 MCP tools + 6 MCP resources + 3 MCP prompts`,
+    `[agentmemory] Endpoints: 142 REST + 44 MCP tools + 6 MCP resources + 3 MCP prompts`,
   );
 
   const viewerPort = config.restPort + 2;
