@@ -392,6 +392,61 @@ describe("operational hardening APIs", () => {
     expect(response.body.error).toContain("staleAfterDays");
   });
 
+  it("forwards whitelisted Codex prune options", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    let forwarded: unknown;
+    registerApiTriggers(sdk as never, kv as never, "secret");
+    sdk.registerFunction("mem::codex-prune", async (payload) => {
+      forwarded = payload;
+      return { success: true, dryRun: true };
+    });
+
+    const response = (await sdk.trigger("api::codex-prune", {
+      body: {
+        allowProjects: ["/keep"],
+        includeScopes: ["turnCapsules"],
+        dryRun: false,
+        force: true,
+        archive: true,
+        includeSamples: true,
+        staleAfterDays: 45,
+        batchSize: 25,
+        timeBudgetMs: 1000,
+        ignored: true,
+      },
+      headers: { authorization: "Bearer secret" },
+    })) as { status_code: number; body: { success: boolean } };
+
+    expect(response.status_code).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(forwarded).toEqual({
+      allowProjects: ["/keep"],
+      includeScopes: ["turnCapsules"],
+      dryRun: false,
+      force: true,
+      archive: true,
+      includeSamples: true,
+      staleAfterDays: 45,
+      batchSize: 25,
+      timeBudgetMs: 1000,
+    });
+  });
+
+  it("validates Codex prune API options", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerApiTriggers(sdk as never, kv as never);
+
+    const response = (await sdk.trigger("api::codex-prune", {
+      body: { dryRun: "false" },
+      headers: {},
+    })) as { status_code: number; body: { error: string } };
+
+    expect(response.status_code).toBe(400);
+    expect(response.body.error).toContain("dryRun");
+  });
+
   it("forwards whitelisted retrieval proof options", async () => {
     const sdk = mockSdk();
     const kv = mockKV();

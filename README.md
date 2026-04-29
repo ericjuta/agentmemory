@@ -110,7 +110,7 @@ When bumping version, update:
 
 ## Current Surface
 
-- 147 REST endpoints
+- 148 REST endpoints
 - 50+ iii functions
 - Codex integration proof CLI and REST endpoint
 

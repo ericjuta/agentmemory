@@ -4192,6 +4192,74 @@ export function registerApiTriggers(
   });
   sdk.registerTrigger({ type: "http", function_id: "api::active-scope-diagnostics", config: { api_path: "/agentmemory/active-scopes/diagnostics", http_method: "POST" } });
 
+  sdk.registerFunction("api::codex-prune",  async (req: ApiRequest) => {
+    const denied = checkAuth(req, secret);
+    if (denied) return denied;
+    const body = (req.body || {}) as Record<string, unknown>;
+    for (const field of ["dryRun", "force", "archive", "includeSamples"] as const) {
+      if (body[field] !== undefined && typeof body[field] !== "boolean") {
+        return {
+          status_code: 400,
+          body: { error: field + " must be a boolean when provided" },
+        };
+      }
+    }
+    const staleAfterDays = parseOptionalPositiveInt(body.staleAfterDays);
+    const batchSize = parseOptionalPositiveInt(body.batchSize);
+    const timeBudgetMs = parseOptionalPositiveInt(body.timeBudgetMs);
+    const allowProjects = parseOptionalStringArray(body.allowProjects);
+    const projectAllowlist = parseOptionalStringArray(body.projectAllowlist);
+    if (
+      staleAfterDays === null ||
+      batchSize === null ||
+      timeBudgetMs === null ||
+      allowProjects === null ||
+      projectAllowlist === null
+    ) {
+      return {
+        status_code: 400,
+        body: {
+          error:
+            "staleAfterDays, batchSize, and timeBudgetMs must be positive integers; allowProjects/projectAllowlist must be string arrays when provided",
+        },
+      };
+    }
+    if (
+      body.includeScopes !== undefined &&
+      (!Array.isArray(body.includeScopes) ||
+        !body.includeScopes.every((scope) =>
+          scope === "turnCapsules" || scope === "workingSets" || scope === "observations"
+        ))
+    ) {
+      return {
+        status_code: 400,
+        body: { error: "includeScopes must contain only turnCapsules, workingSets, and observations" },
+      };
+    }
+    const payload: Record<string, unknown> = {};
+    for (const field of ["dryRun", "force", "archive", "includeSamples"] as const) {
+      if (typeof body[field] === "boolean") payload[field] = body[field];
+    }
+    if (staleAfterDays !== undefined) payload.staleAfterDays = staleAfterDays;
+    if (batchSize !== undefined) payload.batchSize = batchSize;
+    if (timeBudgetMs !== undefined) payload.timeBudgetMs = timeBudgetMs;
+    if (allowProjects !== undefined) payload.allowProjects = allowProjects;
+    if (projectAllowlist !== undefined) {
+      payload.projectAllowlist = projectAllowlist;
+    }
+    if (Array.isArray(body.includeScopes)) payload.includeScopes = body.includeScopes;
+    const result = await sdk.trigger({ function_id: "mem::codex-prune", payload });
+    if (
+      result &&
+      typeof result === "object" &&
+      (result as { success?: unknown }).success === false
+    ) {
+      return { status_code: 400, body: result };
+    }
+    return { status_code: 200, body: result };
+  });
+  sdk.registerTrigger({ type: "http", function_id: "api::codex-prune", config: { api_path: "/agentmemory/codex-prune", http_method: "POST" } });
+
   sdk.registerFunction("api::retrieval-proof",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
     if (denied) return denied;

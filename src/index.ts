@@ -96,6 +96,7 @@ import { registerRetrievalBlockStorageMigrationFunction } from "./functions/retr
 import { registerRetrievalIndexVerifyFunction } from "./functions/retrieval-index-verify.js";
 import { registerRetrievalBlockDiagnosticsFunction } from "./functions/retrieval-block-diagnostics.js";
 import { registerActiveScopeDiagnosticsFunction } from "./functions/active-scope-diagnostics.js";
+import { registerCodexPruneFunction } from "./functions/codex-prune.js";
 import { registerRetrievalVectorBackfillFunction } from "./functions/retrieval-vector-backfill.js";
 import { registerRetrievalVectorRepairWorkerFunction } from "./functions/retrieval-vector-repair-worker.js";
 import { registerRetrievalQualitySummaryFunction } from "./functions/retrieval-quality-summary.js";
@@ -254,6 +255,7 @@ async function main() {
   });
   registerRetrievalBlockDiagnosticsFunction(sdk, kv);
   registerActiveScopeDiagnosticsFunction(sdk, kv);
+  registerCodexPruneFunction(sdk, kv);
   registerRetrievalVectorBackfillFunction(sdk, kv);
   registerRetrievalVectorRepairWorkerFunction(sdk, kv);
   registerRetrievalQualitySummaryFunction(sdk, kv);
@@ -474,7 +476,7 @@ async function main() {
     `[agentmemory] Ready. ${embeddingProvider ? "Triple-stream (BM25+Vector+Graph)" : "BM25+Graph"} search active.`,
   );
   console.log(
-    `[agentmemory] Endpoints: 147 REST`,
+    `[agentmemory] Endpoints: 148 REST`,
   );
 
   const viewerPort = config.restPort + 2;
