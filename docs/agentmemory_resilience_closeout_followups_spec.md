@@ -755,3 +755,19 @@ Status:
   path-specific retrieval.
 - Responses include `cache.status` as `miss`, `hit`, or `coalesced` for
   proof and operator readback.
+
+2026-04-29 live closeout:
+
+- `36da76f feat: add Codex integration proof` is on `main` and pushed to
+  `origin/main`.
+- The worker was rebuilt/recreated from that commit and iii-engine remained up.
+- Live health is serving healthy with write gates open.
+- Retrieval freshness queue returned to 0 after a transient block; Codex proof
+  returned `contractPass: true`, `qualityPass: true`, and `pass: true`.
+- Direct repeated Codex context proved the 2s cache behavior:
+  first call recomputed, immediate second call hit cache, and calls after the
+  TTL recompute.
+- Cold Codex context can still take about 4-5s while maintenance debt remains;
+  this is accepted latency debt, not a contract or quality failure.
+- Stop coding unless retrieval freshness becomes nonzero again, Codex proof
+  fails quality, or cold context remains too slow after compression drains.
