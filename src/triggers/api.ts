@@ -53,6 +53,8 @@ type SessionBootstrapOptions = {
 const SESSION_START_BRANCH_DETECTION_TIMEOUT_MS = 750;
 const SESSION_START_PERSIST_TIMEOUT_MS = 1000;
 const SESSION_START_BOOTSTRAP_TIMEOUT_MS = 1000;
+const CODEX_CONTEXT_DEFAULT_BUDGET = 6000;
+const CODEX_CONTEXT_MAX_DEFAULT_BUDGET = 8000;
 const HEALTH_COMPONENT_TIMEOUT_MS = readBoundedPositiveIntEnv(
   "AGENTMEMORY_HEALTH_COMPONENT_TIMEOUT_MS",
   1500,
@@ -76,6 +78,10 @@ function readBoundedPositiveIntEnv(
 function envFlagEnabled(name: string): boolean {
   const raw = process.env[name];
   return raw === "1" || raw === "true" || raw === "yes";
+}
+
+function isCodexProject(project: string | undefined): boolean {
+  return Boolean(project?.endsWith("/workspace/repos/codex"));
 }
 
 function settleWithin<T>(
@@ -397,7 +403,18 @@ function parseContextPayload(
     sessionId,
   };
   if (project !== undefined) payload.project = project;
-  if (budget !== undefined) payload.budget = budget;
+  if (budget !== undefined) {
+    payload.budget = budget;
+  } else if (isCodexProject(project) && intent !== "file_enrich") {
+    payload.budget = CODEX_CONTEXT_DEFAULT_BUDGET;
+  }
+  if (
+    isCodexProject(project) &&
+    body.budget === undefined &&
+    payload.budget !== undefined
+  ) {
+    payload.budget = Math.min(payload.budget, CODEX_CONTEXT_MAX_DEFAULT_BUDGET);
+  }
   if (query !== undefined) payload.query = query;
   if (intent !== undefined) payload.intent = intent;
   if (files !== undefined) payload.files = files;
@@ -4263,6 +4280,63 @@ export function registerApiTriggers(
     return { status_code: 200, body: result };
   });
   sdk.registerTrigger({ type: "http", function_id: "api::retrieval-proof", config: { api_path: "/agentmemory/retrieval-proof", http_method: "POST" } });
+
+  sdk.registerFunction("api::codex-integration-proof",  async (req: ApiRequest) => {
+    const denied = checkAuth(req, secret);
+    if (denied) return denied;
+    const body = (req.body || {}) as Record<string, unknown>;
+    const contextBudget = parseOptionalPositiveInt(body.contextBudget);
+    const searchLimit = parseOptionalPositiveInt(body.searchLimit);
+    if (contextBudget === null || searchLimit === null) {
+      return {
+        status_code: 400,
+        body: {
+          error: "contextBudget and searchLimit must be positive integers when provided",
+        },
+      };
+    }
+    const payload: Record<string, unknown> = {};
+    for (const field of ["project", "cwd", "branch", "query", "sessionId"] as const) {
+      const value = asNonEmptyString(body[field]);
+      if (value) payload[field] = value;
+    }
+    if (contextBudget !== undefined) payload.contextBudget = contextBudget;
+    if (searchLimit !== undefined) payload.searchLimit = searchLimit;
+    if (
+      body.latencyTargetsMs !== undefined &&
+      (!body.latencyTargetsMs ||
+        typeof body.latencyTargetsMs !== "object" ||
+        Array.isArray(body.latencyTargetsMs))
+    ) {
+      return {
+        status_code: 400,
+        body: { error: "latencyTargetsMs must be an object when provided" },
+      };
+    }
+    if (body.latencyTargetsMs !== undefined) {
+      const targets = body.latencyTargetsMs as Record<string, unknown>;
+      const sessionStart = parseOptionalPositiveInt(targets.sessionStart);
+      const context = parseOptionalPositiveInt(targets.context);
+      const smartSearch = parseOptionalPositiveInt(targets.smartSearch);
+      if (sessionStart === null || context === null || smartSearch === null) {
+        return {
+          status_code: 400,
+          body: {
+            error:
+              "latencyTargetsMs.sessionStart, context, and smartSearch must be positive integers when provided",
+          },
+        };
+      }
+      payload.latencyTargetsMs = {
+        ...(sessionStart !== undefined ? { sessionStart } : {}),
+        ...(context !== undefined ? { context } : {}),
+        ...(smartSearch !== undefined ? { smartSearch } : {}),
+      };
+    }
+    const result = await sdk.trigger({ function_id: "mem::codex-integration-proof", payload });
+    return { status_code: 200, body: result };
+  });
+  sdk.registerTrigger({ type: "http", function_id: "api::codex-integration-proof", config: { api_path: "/agentmemory/codex-integration/proof", http_method: "POST" } });
 
   sdk.registerFunction("api::retrieval-blocks-retry",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);

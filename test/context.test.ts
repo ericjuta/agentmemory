@@ -1,5 +1,5 @@
 // Fork note: added in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   Memory,
   CompressedObservation,
@@ -19,6 +19,113 @@ import { registerContextFunction } from "../src/functions/context.js";
 import { mockKV, mockSdk } from "./helpers/mocks.js";
 
 describe("context freshness", () => {
+  it("caches repeated Codex project context for a short window", async () => {
+    vi.useFakeTimers();
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerContextFunction(sdk as never, kv as never, 800);
+
+    const session: Session = {
+      id: "session-codex-cache",
+      project: "/home/ericjuta/.openclaw/workspace/repos/codex",
+      cwd: "/home/ericjuta/.openclaw/workspace/repos/codex",
+      startedAt: "2026-03-28T10:00:00.000Z",
+      status: "active",
+      observationCount: 0,
+    };
+    await kv.set(KV.sessions, session.id, session);
+    await kv.set(KV.summaries, "summary-1", {
+      sessionId: "summary-1",
+      project: session.project,
+      createdAt: "2026-03-28T09:00:00.000Z",
+      title: "Codex integration context",
+      narrative: "Codex context should be reusable within the proof window.",
+      keyDecisions: [],
+      filesModified: [],
+      concepts: ["codex"],
+      observationCount: 1,
+    } satisfies SessionSummary);
+
+    const first = (await sdk.trigger("mem::context", {
+      sessionId: session.id,
+      project: session.project,
+      query: "codex integration",
+      intent: "manual_recall",
+      budget: 800,
+    })) as { context: string; cache?: { status: string } };
+    const second = (await sdk.trigger("mem::context", {
+      sessionId: session.id,
+      project: session.project,
+      query: "codex integration",
+      intent: "manual_recall",
+      budget: 800,
+    })) as { context: string; cache?: { status: string; ageMs?: number } };
+
+    expect(first.context).toContain("Codex integration context");
+    expect(first.cache?.status).toBe("miss");
+    expect(second.context).toBe(first.context);
+    expect(second.cache?.status).toBe("hit");
+    expect(typeof second.cache?.ageMs).toBe("number");
+
+    await vi.advanceTimersByTimeAsync(2_001);
+    const third = (await sdk.trigger("mem::context", {
+      sessionId: session.id,
+      project: session.project,
+      query: "codex integration",
+      intent: "manual_recall",
+      budget: 800,
+    })) as { context: string; cache?: { status: string } };
+    expect(third.context).toBe(first.context);
+    expect(third.cache?.status).toBe("miss");
+    vi.useRealTimers();
+  });
+
+  it("does not reuse Codex context cache for file-enrich requests", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerContextFunction(sdk as never, kv as never, 800);
+    const project = "/home/ericjuta/.openclaw/workspace/repos/codex";
+    await kv.set(KV.sessions, "session-file-a", {
+      id: "session-file-a",
+      project,
+      cwd: project,
+      startedAt: "2026-03-28T10:00:00.000Z",
+      status: "active",
+      observationCount: 0,
+    } satisfies Session);
+    await kv.set(KV.summaries, "summary-a", {
+      sessionId: "summary-a",
+      project,
+      createdAt: "2026-03-28T09:00:00.000Z",
+      title: "Codex file A context",
+      narrative: "File A context.",
+      keyDecisions: [],
+      filesModified: ["/codex/a.rs"],
+      concepts: [],
+      observationCount: 1,
+    } satisfies SessionSummary);
+
+    const first = (await sdk.trigger("mem::context", {
+      sessionId: "session-file-a",
+      project,
+      query: "codex file",
+      intent: "file_enrich",
+      files: ["/codex/a.rs"],
+      budget: 800,
+    })) as { cache?: { status: string } };
+    const second = (await sdk.trigger("mem::context", {
+      sessionId: "session-file-a",
+      project,
+      query: "codex file",
+      intent: "file_enrich",
+      files: ["/codex/a.rs"],
+      budget: 800,
+    })) as { cache?: { status: string } };
+
+    expect(first.cache).toBeUndefined();
+    expect(second.cache).toBeUndefined();
+  });
+
   it("prefers the current session turn capsule over older summaries", async () => {
     const sdk = mockSdk();
     const kv = mockKV();

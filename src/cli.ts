@@ -33,6 +33,7 @@ Commands:
   (default)          Start agentmemory worker
   status             Show connection status, memory count, and health
   demo               Seed sample sessions and show recall in action
+  codex-proof        Prove the live Codex-native AgentMemory contract
   upgrade            Upgrade local deps + iii runtime (best effort)
   mcp                Start standalone MCP server (no engine required)
 
@@ -46,6 +47,7 @@ Options:
 Quick start:
   npx @agentmemory/agentmemory          # start with local iii-engine or Docker
   npx @agentmemory/agentmemory status   # check health
+  npx @agentmemory/agentmemory codex-proof --port 3113
   npx @agentmemory/agentmemory demo     # try it in 30 seconds (needs server running)
   npx @agentmemory/agentmemory upgrade  # upgrade agentmemory + iii runtime
   npx @agentmemory/agentmemory mcp      # standalone MCP server (no engine)
@@ -68,6 +70,11 @@ const skipEngine = args.includes("--no-engine");
 
 function getRestPort(): number {
   return parseInt(process.env["III_REST_PORT"] || "3111", 10) || 3111;
+}
+
+function argValue(name: string): string | undefined {
+  const index = args.indexOf(name);
+  return index !== -1 ? args[index + 1] : undefined;
 }
 
 function getIiiDockerImage(): string {
@@ -640,6 +647,116 @@ async function runDemoSearch(base: string, query: string): Promise<SearchResult>
   };
 }
 
+type ProofCall = {
+  name: string;
+  status: number | null;
+  ok: boolean;
+  latencyMs: number;
+  summary: Record<string, unknown>;
+  error?: string;
+};
+
+async function timedJson(
+  method: "GET" | "POST",
+  url: string,
+  body?: unknown,
+  timeoutMs = 10000,
+): Promise<ProofCall> {
+  const startedAt = performance.now();
+  try {
+    const response = await fetch(url, {
+      method,
+      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const parsed = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+    return {
+      name: url,
+      status: response.status,
+      ok: response.ok,
+      latencyMs: Math.round(performance.now() - startedAt),
+      summary: parsed ?? {},
+    };
+  } catch (error) {
+    return {
+      name: url,
+      status: null,
+      ok: false,
+      latencyMs: Math.round(performance.now() - startedAt),
+      summary: {},
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function countArray(value: unknown): number {
+  return Array.isArray(value) ? value.length : 0;
+}
+
+function numberValue(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+async function runCodexProof() {
+  const port = getRestPort();
+  const base = argValue("--base-url") || `http://localhost:${port}`;
+  const project =
+    argValue("--project") || "/home/ericjuta/.openclaw/workspace/repos/codex";
+  const branch = argValue("--branch") || "main";
+  const query =
+    argValue("--query") || "Codex AgentMemory integration contract startup context";
+
+  p.intro("agentmemory codex-proof");
+
+  const proof = await timedJson(
+    "POST",
+    `${base}/agentmemory/codex-integration/proof`,
+    {
+      project,
+      cwd: project,
+      branch,
+      query,
+      latencyTargetsMs: {
+        sessionStart: 1000,
+        context: 2000,
+        smartSearch: 1500,
+      },
+    },
+    30000,
+  );
+
+  const body = proof.summary;
+  const steps = body.steps as Record<string, Record<string, unknown>> | undefined;
+  const sessionStart = steps?.sessionStart;
+  const context = steps?.context;
+  const smartSearch = steps?.smartSearch;
+  const retrievalProof = steps?.retrievalProof;
+  const contextDetails = context?.details as Record<string, unknown> | undefined;
+  const searchDetails = smartSearch?.details as Record<string, unknown> | undefined;
+  const retrievalDetails = retrievalProof?.details as Record<string, unknown> | undefined;
+  const warnings = Array.isArray(body.warnings) ? body.warnings : [];
+
+  const lines = [
+    `Base:         ${base}`,
+    `Project:      ${project}`,
+    `Proof HTTP:   ${proof.status ?? "ERR"} ${proof.latencyMs}ms`,
+    `Contract:     ${body.contractPass === true ? "pass" : "fail"}`,
+    `Quality:      ${body.qualityPass === true ? "pass" : "fail"}`,
+    `Overall:      ${body.pass === true ? "pass" : "warn/fail"}`,
+    `Session:      ${sessionStart?.status ?? "missing"} ${sessionStart?.latencyMs ?? "?"}ms`,
+    `Context:      ${context?.status ?? "missing"} ${context?.latencyMs ?? "?"}ms, blocks=${contextDetails?.blocks ?? "?"}, tokens=${contextDetails?.tokens ?? "?"}`,
+    `Smart search: ${smartSearch?.status ?? "missing"} ${smartSearch?.latencyMs ?? "?"}ms, results=${searchDetails?.results ?? "?"}`,
+    `Maintenance:  ${retrievalDetails?.maintenanceStatus ?? "unknown"}, queued=${retrievalDetails?.queuedCount ?? "?"}, blocking=${retrievalDetails?.blockingQueuedCount ?? "?"}`,
+    `Warnings:     ${warnings.length > 0 ? warnings.join(", ") : "none"}`,
+  ];
+
+  p.note(lines.join("\n"), "codex integration proof");
+  if (!proof.ok || body.contractPass !== true || body.qualityPass !== true) {
+    process.exit(1);
+  }
+}
+
 async function runDemo() {
   const port = getRestPort();
   const base = `http://localhost:${port}`;
@@ -831,6 +948,7 @@ async function runMcp(): Promise<void> {
 
 const commands: Record<string, () => Promise<void>> = {
   status: runStatus,
+  "codex-proof": runCodexProof,
   demo: runDemo,
   upgrade: runUpgrade,
   mcp: runMcp,

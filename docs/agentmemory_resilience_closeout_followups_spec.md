@@ -55,6 +55,36 @@ As of the closeout check on 2026-04-27:
 - Remaining work is passive watch until compression reaches zero plus optional
   SLO/FSM polish; not another hot-path recovery fix.
 
+2026-04-29 final spec closeout:
+
+- main is aligned with origin/main at `bcc2b7c fix: store compact working set
+  capsule summaries`.
+- New working sets no longer duplicate the full turn capsule in
+  `latestCompletedCapsule`; they store the compact capsule summary used by
+  recall/context plus the existing working-set file and concept fields.
+- Existing working sets can retain older larger embedded capsule payloads until
+  the session naturally rewrites. Do not add a historical migration unless
+  active-scope diagnostics show renewed storage or RSS pressure.
+- Session cleanup has removed the real stale set: active sessions older than
+  24h are at zero after diagnostics heal marked the abandoned sessions. Active
+  sessions older than 1h remain allowed because the built-in abandon policy is
+  currently 24h.
+- Live service is healthy and usable with write gates open, retrieval queue
+  clear, smart search working, and compression draining as maintenance debt.
+- Recovery is closed. The only active operational work is passive watch until
+  the compression queue reaches zero and stays non-blocking.
+
+Passive watch criteria:
+
+- /agentmemory/health remains healthy for runtime and serving.
+- write gates remain open.
+- retrieval block queue remains zero or drains immediately.
+- graph queue remains near zero and non-blocking.
+- compression queued count trends down during no-new-observation windows and
+  eventually reaches zero.
+- active sessions older than 24h stay at zero after routine heal/cleanup.
+- no repeated StateKV timeout burst or pressure streak reappears.
+
 ## P1. Predictable Compression Backlog Drain
 
 Problem:
@@ -376,6 +406,9 @@ Problem:
   still be large enough to keep iii-engine RSS high.
 - Long-lived active scopes need a layout that bounds per-scope load and write
   amplification.
+- The 2026-04-29 diagnostics showed no stale active-scope candidates at the
+  30-day threshold; the largest pressure was duplicated per-record payload, not
+  old rows.
 
 End state:
 
@@ -387,17 +420,99 @@ End state:
 Implementation:
 
 1. Measure and rank active scope files by bytes, key count, and write rate.
-2. Pick one high-impact scope first, likely retrieval blocks or observation
+2. First reduce duplicated payloads inside active records before introducing
+   new physical sharding.
+3. Pick one remaining high-impact scope only if live diagnostics still show
+   growth after payload slimming, likely retrieval blocks or observation
    indexes.
-3. Move it to physically sharded StateKV scopes using a deterministic shard key.
-4. Add a manifest that tracks shard set, schema version, and migration cursor.
-5. Keep read compatibility during migration through a bounded dual-read path.
-6. Add compaction or archive policy for cold shards.
+4. Move it to physically sharded StateKV scopes using a deterministic shard key.
+5. Add a manifest that tracks shard set, schema version, and migration cursor.
+6. Keep read compatibility during migration through a bounded dual-read path.
+7. Add compaction or archive policy for cold shards.
+
+Status:
+
+- Implemented the first payload-slimming step for working sets in
+  `bcc2b7c fix: store compact working set capsule summaries`.
+- No historical migration is planned. Older large working-set records should age
+  out through normal session rewrites unless diagnostics show pressure returning.
+- Further sharding is a future capacity project, not part of the recovery
+  closeout.
 
 Acceptance:
 
 - The largest active StateKV scope shrinks or stops growing unbounded.
 - iii-engine RSS has a path down that does not depend only on restart.
+
+### P1. Explicit Maintenance Lane State Machine
+
+Problem:
+
+- Health now exposes enough compression lane fields to infer the lane state,
+  but the state is still assembled from timers, streaks, timestamps, and skip
+  reasons.
+- Operators should not need to infer whether maintenance is draining,
+  idle-gated, backing off, stalled, or paused.
+
+End state:
+
+- Each maintenance lane reports a first-class state such as `idle`,
+  `eligible`, `running`, `draining`, `succeeded`, `backing_off`,
+  `paused`, or `stalled`.
+- Every transition records reason, timestamp, queue count, and pressure inputs.
+- Serving health stays separate from maintenance state: compression-only debt
+  can read as usable/draining rather than degraded serving.
+
+Implementation:
+
+1. Define a common maintenance lane state type shared by compression,
+   retrieval-block retry, graph catch-up, and future cold lanes.
+2. Derive state transitions inside the scheduler path instead of only in the
+   health formatter.
+3. Include the current state, previous state, reason, last transition time, and
+   alert eligibility in deferred-work status.
+4. Map states to operator language:
+   - `draining`: queue decreasing, gates open
+   - `idle_gated`: waiting for CPU/event-loop/KV headroom
+   - `backing_off`: recent StateKV timeout or lane pressure
+   - `stalled`: no progress past the configured window
+   - `paused`: runtime/serving pressure or disabled lane
+5. Keep this as readback polish; do not block recovery closeout on it.
+
+Acceptance:
+
+- A healthy service with compression debt reports a clear maintenance state
+  without log inspection.
+- A stalled lane emits a maintenance warning with a bounded next action.
+- Compression debt alone does not make serving health critical.
+
+### P2. Session Abandon Policy Tuning
+
+Problem:
+
+- Diagnostics heal currently treats sessions older than 24h as abandoned.
+- After cleanup, active sessions older than 24h were zero, but active sessions
+  older than 1h remained. Some may be legitimate long-running threads, so the
+  system should not blindly close them.
+
+End state:
+
+- Operators can preview shorter abandon thresholds without mutating state.
+- Any shorter policy is project-aware or evidence-based, not a global destructive
+  cleanup.
+
+Implementation:
+
+1. Add a dry-run session cleanup preview that accepts an abandon threshold and
+   returns counts by project, age bucket, and recent activity.
+2. Keep the default mutating heal threshold at 24h unless explicitly configured.
+3. Require endedAt/status updates to go through the existing diagnostics heal
+   path and audit trail.
+
+Acceptance:
+
+- The 24h cleanup remains safe and routine.
+- A shorter threshold can be evaluated from live data before being enabled.
 
 ### P2. Brownout Chaos Harness
 
@@ -532,3 +647,111 @@ Acceptance:
 
 - Recovery closeout no longer depends on manually stitching together ad hoc
   command output.
+
+## P1. Codex Integration Performance And Quality
+
+Problem:
+
+- The Codex-facing contract is live and correct, but large Codex project
+  retrievals are slower than ideal during maintenance debt.
+- Live proof on 2026-04-29 for
+  `/home/ericjuta/.openclaw/workspace/repos/codex` showed:
+  - `/agentmemory/session/start`: 200, expected
+    `bootstrap/context/session` envelope, about 4.7s
+  - `/agentmemory/context`: 200, about 20k chars / 6.7k tokens, about 4.0s
+  - `/agentmemory/smart-search`: 200, 5 results, about 3.5s
+  - `latestHandoff` can be null and is handled through session bootstrap, not
+    a standalone REST URL
+  - health was serving healthy with write gates open, retrieval queue 0,
+    graph queue 3, compression queue 516
+- This is usable for Codex, but not yet snappy enough to call fully optimized.
+
+End state:
+
+- Codex startup and recall get the same useful context with lower and more
+  predictable latency.
+- Session start remains non-blocking for Codex when retrieval is slow.
+- Context payloads are useful, compact, and traceable: the operator can see why
+  each block was selected and what was omitted.
+- AgentMemory can prove the Codex contract in one command without manual route
+  probing.
+
+Targets:
+
+- `session/start` p95 under 1s when includeContext is deferred/default.
+- Explicit context fetch p95 under 2s for the Codex repo during healthy runtime.
+- Smart search p95 under 1.5s for 5-result project-scoped queries.
+- Context injection usually stays under the caller budget and avoids returning
+  more than about 6k to 8k tokens unless explicitly requested.
+- Retrieval queue remains 0 during normal Codex use; compression-only backlog
+  does not degrade session start or manual recall.
+
+Implementation:
+
+1. Add a Codex integration proof command or endpoint that runs:
+   - health summary
+   - `session/start` against the Codex repo
+   - `context` against the Codex repo with a fixed prompt and budget
+   - `smart-search` against the Codex repo
+   - optional observe smoke with diagnostics-only persistence
+   - summarized latency, token, block, and result counts
+2. Split correctness and latency in the proof output:
+   - contract pass/fail
+   - context quality pass/fail
+   - latency warning
+   - maintenance-debt warning
+3. Add a context budget profile for Codex:
+   - default startup coordination context should be compact
+   - explicit recall can be larger
+   - file-enrich context should prioritize local path evidence
+4. Add trace readback for Codex context blocks:
+   - source class
+   - project/session/branch match
+   - score/freshness signals
+   - omission reason for high-scoring blocks that were dropped
+5. Cache or coalesce repeated project-scoped retrieval work over a short window
+   so startup, status, and immediate manual recall do not recompute the same
+   large context independently.
+6. Add latency guards around Codex startup retrieval:
+   - session registration must complete or fail open quickly
+   - bootstrap can include compact coordination context
+   - slow full context should be deferred to explicit recall/status surfaces
+7. Keep the wire contract stable unless Codex-side changes are coordinated:
+   - `/agentmemory/session/start`
+   - `/agentmemory/context`
+   - `/agentmemory/observe`
+   - bootstrap `latestHandoff: null | HandoffPacket`
+   - bootstrap/context/session top-level envelope
+
+Tests:
+
+- Codex compatibility test asserts session start accepts Codex-shaped payloads
+  and returns the bootstrap/context/session envelope.
+- Slow context retrieval does not fail session start or block registration.
+- Context budget tests cover the Codex repo shape and cap default startup
+  injection.
+- Smart search returns project-scoped results while retrieval queue is empty and
+  compression backlog exists.
+- Proof command reports latency warnings without marking the contract failed.
+
+Acceptance:
+
+- A single proof command says Codex contract pass, context quality pass, and
+  gives latency/maintenance warnings separately.
+- Codex startup remains usable during compression-only backlog.
+- Explicit Codex recall returns relevant project context within the target
+  latency window on a healthy runtime.
+- No Codex-side change is required for backend-internal retrieval or compaction
+  improvements.
+
+Status:
+
+- Implemented 2s short-window in-process Codex context caching/coalescing for
+  non-file-enrich `mem::context` calls.
+- Cache scope is keyed by project, branch, query, intent, budget, and maxBlocks;
+  session id is intentionally excluded so immediate startup/status/manual recall
+  can reuse the same project context.
+- File-enrich requests and file/term-focused context stay uncached to preserve
+  path-specific retrieval.
+- Responses include `cache.status` as `miss`, `hit`, or `coalesced` for
+  proof and operator readback.

@@ -429,6 +429,53 @@ describe("operational hardening APIs", () => {
     });
   });
 
+  it("forwards whitelisted Codex integration proof options", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    let forwarded: unknown;
+    registerApiTriggers(sdk as never, kv as never, "secret");
+    sdk.registerFunction("mem::codex-integration-proof", async (payload) => {
+      forwarded = payload;
+      return { success: true, pass: true };
+    });
+
+    const response = (await sdk.trigger("api::codex-integration-proof", {
+      body: {
+        project: "/project",
+        cwd: "/cwd",
+        branch: "main",
+        query: "codex proof",
+        sessionId: "session-1",
+        contextBudget: 6000,
+        searchLimit: 5,
+        latencyTargetsMs: {
+          sessionStart: 1000,
+          context: 2000,
+          smartSearch: 1500,
+        },
+        ignored: "drop",
+      },
+      headers: { authorization: "Bearer secret" },
+    })) as { status_code: number; body: { success: boolean; pass: boolean } };
+
+    expect(response.status_code).toBe(200);
+    expect(response.body).toEqual({ success: true, pass: true });
+    expect(forwarded).toEqual({
+      project: "/project",
+      cwd: "/cwd",
+      branch: "main",
+      query: "codex proof",
+      sessionId: "session-1",
+      contextBudget: 6000,
+      searchLimit: 5,
+      latencyTargetsMs: {
+        sessionStart: 1000,
+        context: 2000,
+        smartSearch: 1500,
+      },
+    });
+  });
+
   it("forwards whitelisted insight decay sweep options", async () => {
     const sdk = mockSdk();
     const kv = mockKV();

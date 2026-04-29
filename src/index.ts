@@ -103,6 +103,7 @@ import { registerRetrievalVectorBackfillFunction } from "./functions/retrieval-v
 import { registerRetrievalVectorRepairWorkerFunction } from "./functions/retrieval-vector-repair-worker.js";
 import { registerRetrievalQualitySummaryFunction } from "./functions/retrieval-quality-summary.js";
 import { registerRetrievalProofFunction } from "./functions/retrieval-proof.js";
+import { registerCodexIntegrationProofFunction } from "./functions/codex-integration-proof.js";
 import { registerConsolidatedMemoryBackfillFunction } from "./functions/consolidated-memory-backfill.js";
 import { registerIndexPersistenceCompactionFunction } from "./functions/index-persistence-compaction.js";
 import {
@@ -261,6 +262,7 @@ async function main() {
   registerRetrievalVectorRepairWorkerFunction(sdk, kv);
   registerRetrievalQualitySummaryFunction(sdk, kv);
   registerRetrievalProofFunction(sdk, kv);
+  registerCodexIntegrationProofFunction(sdk, kv);
   registerConsolidatedMemoryBackfillFunction(sdk, kv);
   registerDeferredWorkFunction(sdk, kv);
 
@@ -495,7 +497,7 @@ async function main() {
     `[agentmemory] Ready. ${embeddingProvider ? "Triple-stream (BM25+Vector+Graph)" : "BM25+Graph"} search active.`,
   );
   console.log(
-    `[agentmemory] Endpoints: 142 REST + 44 MCP tools + 6 MCP resources + 3 MCP prompts`,
+    `[agentmemory] Endpoints: 143 REST + 44 MCP tools + 6 MCP resources + 3 MCP prompts`,
   );
 
   const viewerPort = config.restPort + 2;

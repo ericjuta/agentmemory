@@ -1,6 +1,7 @@
 // Fork note: added in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 import { describe, expect, it } from "vitest";
 import { registerApiTriggers } from "../src/triggers/api.js";
+import { registerCodexIntegrationProofFunction } from "../src/functions/codex-integration-proof.js";
 import { registerContextFunction } from "../src/functions/context.js";
 import { registerObserveFunction } from "../src/functions/observe.js";
 import { KV } from "../src/state/schema.js";
@@ -520,5 +521,90 @@ describe("Codex payload compatibility", () => {
     expect(second.body.success).toBe(true);
     expect(second.body.steps.summarize).toBe("skipped");
     expect(second.body.steps.endSession).toBe("skipped");
+  });
+
+  it("returns a Codex integration proof bundle with separate contract, quality, and latency signals", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerApiTriggers(sdk as never, kv as never);
+    registerCodexIntegrationProofFunction(sdk as never, kv as never);
+
+    sdk.registerFunction("mem::context", async () => ({
+      context: "Codex startup context includes the latest handoff.",
+      items: [{ id: "ctx-1", why: "recent handoff", freshness: "recent" }],
+      blocks: 1,
+      tokens: 8,
+      trace: { lanes: [] },
+    }));
+    sdk.registerFunction("mem::smart-search", async () => ({
+      results: [{ id: "result-1", title: "Codex integration" }],
+      mode: "hybrid",
+    }));
+    sdk.registerFunction("mem::retrieval-proof", async () => ({
+      pass: true,
+      maintenance: {
+        status: "healthy",
+        queuedCount: 0,
+        blockingQueuedCount: 0,
+      },
+    }));
+
+    const response = (await sdk.trigger("api::codex-integration-proof", {
+      body: {
+        sessionId: "session-codex-proof",
+        project: "/home/ericjuta/.openclaw/workspace/repos/codex",
+        cwd: "/home/ericjuta/.openclaw/workspace/repos/codex",
+        query: "Codex integration proof",
+        latencyTargetsMs: {
+          sessionStart: 60_000,
+          context: 60_000,
+          smartSearch: 60_000,
+        },
+      },
+      headers: {},
+    })) as {
+      status_code: number;
+      body: {
+        pass: boolean;
+        contractPass: boolean;
+        qualityPass: boolean;
+        latencyWarnings: string[];
+        steps: Record<
+          string,
+          {
+            status: string;
+            details: Record<string, unknown>;
+          }
+        >;
+      };
+    };
+
+    expect(response.status_code).toBe(200);
+    expect(response.body.pass).toBe(true);
+    expect(response.body.contractPass).toBe(true);
+    expect(response.body.qualityPass).toBe(true);
+    expect(response.body.latencyWarnings).toEqual([]);
+    expect(response.body.steps.sessionStart.status).toBe("pass");
+    expect(response.body.steps.sessionStart.details.envelope).toEqual([
+      "session",
+      "context",
+      "bootstrap",
+    ]);
+    expect(response.body.steps.context.details).toMatchObject({
+      chars: 50,
+      tokens: 8,
+      blocks: 1,
+      tracePresent: true,
+    });
+    expect(response.body.steps.smartSearch.details).toMatchObject({
+      results: 1,
+      mode: "hybrid",
+    });
+    expect(response.body.steps.retrievalProof.details).toMatchObject({
+      pass: true,
+      maintenanceStatus: "healthy",
+      queuedCount: 0,
+      blockingQueuedCount: 0,
+    });
   });
 });
