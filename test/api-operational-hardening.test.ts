@@ -48,6 +48,7 @@ describe("operational hardening APIs", () => {
           compression: { queued: number; oldestFailedAt?: string; oldestAgeMs?: number };
           retrievalBlocks: { queued: number };
           graphExtraction: { queued: number };
+          observeCapture: { status: string; captureSkipped: boolean };
           totalQueued: number;
         };
         writeGates: Record<string, null>;
@@ -62,6 +63,7 @@ describe("operational hardening APIs", () => {
       },
       retrievalBlocks: { queued: 0 },
       graphExtraction: { queued: 0 },
+      observeCapture: { status: "capturing", captureSkipped: false },
       totalQueued: 1,
     });
     expect(response.body.maintenance).toEqual({
@@ -316,6 +318,67 @@ describe("operational hardening APIs", () => {
     expect(listedScopes).not.toContain(KV.compressRetry);
     expect(listedScopes).not.toContain(KV.retrievalBlockRetry);
     expect(listedScopes).not.toContain(KV.graphExtractionRetry);
+  });
+
+  it("reports observe capture emergency disabled from health", async () => {
+    const previous = process.env["AGENTMEMORY_INGEST_ENABLED"];
+    process.env["AGENTMEMORY_INGEST_ENABLED"] = "false";
+    const sdk = mockSdk();
+    const kv = mockKV();
+    try {
+      registerApiTriggers(sdk as never, kv as never);
+
+      const response = (await sdk.trigger("api::health", {
+        headers: {},
+      })) as {
+        status_code: number;
+        body: { observeCapture: { status: string; captureSkipped: boolean; lastShedReason: string } };
+      };
+
+      expect(response.status_code).toBe(200);
+      expect(response.body.observeCapture).toMatchObject({
+        status: "emergency_disabled",
+        captureSkipped: true,
+        lastShedReason: "ingest_disabled",
+      });
+    } finally {
+      if (previous === undefined) {
+        delete process.env["AGENTMEMORY_INGEST_ENABLED"];
+      } else {
+        process.env["AGENTMEMORY_INGEST_ENABLED"] = previous;
+      }
+    }
+  });
+
+  it("reports active observe cooldown from health", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    const cooldownUntil = new Date(Date.now() + 60_000).toISOString();
+    await kv.set(KV.observePressureState, "latest", {
+      status: "degraded",
+      timeoutStreak: 1,
+      degradedObserveCount: 1,
+      acceptedObserveCount: 0,
+      cooldownUntil,
+      lastShedReason: "StateKV state::set timed out after 5000ms",
+      lastTransitionAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    registerApiTriggers(sdk as never, kv as never);
+
+    const response = (await sdk.trigger("api::health", {
+      headers: {},
+    })) as {
+      status_code: number;
+      body: { observeCapture: { status: string; captureSkipped: boolean; cooldownUntil: string } };
+    };
+
+    expect(response.status_code).toBe(200);
+    expect(response.body.observeCapture).toMatchObject({
+      status: "degraded",
+      captureSkipped: true,
+      cooldownUntil,
+    });
   });
 
   it("forwards whitelisted retrieval block diagnostic options", async () => {

@@ -5,6 +5,7 @@ import type {
   HookType,
   ObservationPersistenceClass,
   ObserveReceipt,
+  ObservePressureState,
   RawObservation,
 } from "../types.js";
 import { KV, STREAM, fingerprintId, generateId } from "../state/schema.js";
@@ -127,6 +128,9 @@ function bestEffortTrigger(
     payload,
   }).catch(() => {});
 }
+
+const OBSERVE_PRESSURE_KEY = "latest";
+let inProcessObservePressureState: ObservePressureState | null = null;
 
 function asNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -383,6 +387,119 @@ function readPositiveIntegerEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+async function withObserveBudget<T>(
+  work: Promise<T>,
+  reason: string,
+): Promise<T> {
+  const budgetMs = readPositiveIntegerEnv(
+    "AGENTMEMORY_OBSERVE_WRITE_BUDGET_MS",
+    5_000,
+  );
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<T>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(reason + " after " + budgetMs + "ms")),
+          budgetMs,
+        );
+        timeout.unref();
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+async function readObservePressureState(
+  kv: StateKV,
+): Promise<ObservePressureState | null> {
+  const stored = await kv
+    .get<ObservePressureState>(KV.observePressureState, OBSERVE_PRESSURE_KEY)
+    .catch(() => null);
+  return stored ?? inProcessObservePressureState;
+}
+
+function observeStateStatus(
+  state: ObservePressureState | null,
+): ObservePressureState["status"] {
+  if (!state?.cooldownUntil) return state?.status ?? "enabled";
+  return Date.parse(state.cooldownUntil) > Date.now() ? "degraded" : "enabled";
+}
+
+async function writeObservePressureState(
+  kv: StateKV,
+  patch: Partial<ObservePressureState>,
+): Promise<ObservePressureState | null> {
+  const previous = await readObservePressureState(kv);
+  const now = new Date().toISOString();
+  const next: ObservePressureState = {
+    status: previous?.status ?? "enabled",
+    timeoutStreak: previous?.timeoutStreak ?? 0,
+    degradedObserveCount: previous?.degradedObserveCount ?? 0,
+    acceptedObserveCount: previous?.acceptedObserveCount ?? 0,
+    lastTransitionAt: previous?.lastTransitionAt ?? now,
+    ...previous,
+    ...patch,
+    updatedAt: now,
+  };
+  if (next.status !== previous?.status) next.lastTransitionAt = now;
+  inProcessObservePressureState = next;
+  return kv
+    .set(KV.observePressureState, OBSERVE_PRESSURE_KEY, next)
+    .catch(() => null);
+}
+
+async function recordObserveAccepted(kv: StateKV): Promise<void> {
+  const previous = await readObservePressureState(kv);
+  if (!previous || previous.status === "enabled") return;
+  const status = observeStateStatus(previous);
+  await writeObservePressureState(kv, {
+    status,
+    acceptedObserveCount: (previous.acceptedObserveCount ?? 0) + 1,
+    timeoutStreak: status === "enabled" ? 0 : previous.timeoutStreak,
+    cooldownUntil: status === "enabled" ? undefined : previous.cooldownUntil,
+  });
+}
+
+async function recordObserveDegraded(
+  kv: StateKV,
+  reason: string,
+): Promise<void> {
+  const previous = await readObservePressureState(kv);
+  const nowMs = Date.now();
+  await writeObservePressureState(kv, {
+    status: "degraded",
+    lastTimeoutAt: new Date(nowMs).toISOString(),
+    timeoutStreak: (previous?.timeoutStreak ?? 0) + 1,
+    cooldownUntil: new Date(
+      nowMs + readPositiveIntegerEnv("AGENTMEMORY_OBSERVE_COOLDOWN_MS", 60_000),
+    ).toISOString(),
+    lastShedReason: reason,
+    degradedObserveCount: (previous?.degradedObserveCount ?? 0) + 1,
+  });
+}
+
+async function currentObserveCooldown(
+  kv: StateKV,
+): Promise<ObservePressureState | null> {
+  const state = await readObservePressureState(kv);
+  return observeStateStatus(state) === "degraded" ? state : null;
+}
+
+function observeBudgetReason(err: unknown): string | null {
+  const message = err instanceof Error ? err.message : String(err);
+  if (
+    /statekv|state::|temporarily unavailable|timed out|observe_write_budget/i.test(
+      message,
+    )
+  ) {
+    return message;
+  }
+  return null;
+}
+
 function compressionTrackerPauseReason(
   tracker: CompressionTracker | undefined,
 ): string | null {
@@ -463,6 +580,35 @@ function shouldShedObservation(
     payload.hookType === "subagent_start" ||
     payload.hookType === "subagent_stop"
   );
+}
+
+function degradedObserveResult(
+  payload: HookPayload,
+  metadata: ObserveMetadata,
+  obsId: string,
+  reason: string,
+  state?: ObservePressureState | null,
+) {
+  logger.warn("Observation degraded under observe pressure", {
+    obsId,
+    sessionId: payload.sessionId,
+    hook: payload.hookType,
+    persistenceClass: metadata.persistenceClass,
+    reason,
+  });
+  return {
+    observationId: obsId,
+    persistenceClass: metadata.persistenceClass,
+    persisted: false,
+    skipped: true,
+    deferred: true,
+    reason: "observe_pressure",
+    pressure: {
+      reason,
+      status: state?.status ?? "degraded",
+      cooldownUntil: state?.cooldownUntil,
+    },
+  };
 }
 
 export function registerObserveFunction(
@@ -569,6 +715,17 @@ export function registerObserveFunction(
     }
 
     return withKeyedLock(`obs:${payload.sessionId}`, async () => {
+      const observeCooldown = await currentObserveCooldown(kv);
+      if (observeCooldown) {
+        return degradedObserveResult(
+          payload,
+          metadata,
+          obsId,
+          observeCooldown.lastShedReason || "observe_cooldown_active",
+          observeCooldown,
+        );
+      }
+
       if (metadata.eventId) {
         const existingReceipt = await kv
           .get<ObserveReceipt>(
@@ -637,19 +794,48 @@ export function registerObserveFunction(
       }
 
       const deferDerivedWork = Boolean(hotPathPressure);
+      let writePressureReason: string | undefined;
       if (metadata.persistenceClass !== "diagnostics_only" && !deferDerivedWork) {
-        await upsertTurnCapsuleFromRaw(
-          kv,
-          payload.sessionId,
-          payload.project,
-          payload.cwd,
-          raw,
-        );
+        await withObserveBudget(
+          upsertTurnCapsuleFromRaw(
+            kv,
+            payload.sessionId,
+            payload.project,
+            payload.cwd,
+            raw,
+          ),
+          "observe_write_budget_exceeded_during_turn_capsule",
+        ).catch((err) => {
+          const reason = observeBudgetReason(err);
+          if (!reason) throw err;
+          writePressureReason = reason;
+          logger.warn("Observe derived work deferred under write pressure", {
+            obsId,
+            sessionId: payload.sessionId,
+            phase: "turn_capsule",
+            reason,
+          });
+        });
       }
 
       let compressionMode: "llm" | "synthetic" | "deferred" = "synthetic";
       if (metadata.persistenceClass === "persistent") {
-        await kv.set(KV.observations(payload.sessionId), obsId, raw);
+        try {
+          await withObserveBudget(
+            kv.set(KV.observations(payload.sessionId), obsId, raw),
+            "observe_write_budget_exceeded_during_raw_observation",
+          );
+        } catch (err) {
+          const reason = observeBudgetReason(err);
+          if (!reason) throw err;
+          logger.warn("Observation persistence failed fast under write pressure", {
+            obsId,
+            sessionId: payload.sessionId,
+            reason,
+          });
+          await recordObserveDegraded(kv, reason);
+          return degradedObserveResult(payload, metadata, obsId, reason);
+        }
 
         bestEffortTrigger(sdk, "stream::set", {
           stream_name: STREAM.name,
@@ -693,12 +879,26 @@ export function registerObserveFunction(
         if (isAutoCompressEnabled()) {
           const pauseReason =
             hotPathPressure?.reason ||
+            writePressureReason ||
             compressionTrackerPauseReason(tracker) ||
             (await getLlmWorkPauseReason(kv));
           if (hotPathPressure && isQueuePressure(hotPathPressure.reason)) {
             compressionMode = "synthetic";
-            await storeSyntheticObservation(sdk, kv, payload, obsId, raw, {
-              syncEmbedding: false,
+            await withObserveBudget(
+              storeSyntheticObservation(sdk, kv, payload, obsId, raw, {
+                syncEmbedding: false,
+              }),
+              "observe_write_budget_exceeded_during_synthetic_observation",
+            ).catch((err) => {
+              const reason = observeBudgetReason(err);
+              if (!reason) throw err;
+              writePressureReason = reason;
+              compressionMode = "deferred";
+              logger.warn("Synthetic compression deferred under write pressure", {
+                obsId,
+                sessionId: payload.sessionId,
+                reason,
+              });
             });
             logger.warn("Auto compression downgraded under hot-path pressure", {
               obsId,
@@ -737,8 +937,21 @@ export function registerObserveFunction(
           if (hotPathPressure) {
             if (isQueuePressure(hotPathPressure.reason)) {
               compressionMode = "synthetic";
-              await storeSyntheticObservation(sdk, kv, payload, obsId, raw, {
-                syncEmbedding: false,
+              await withObserveBudget(
+                storeSyntheticObservation(sdk, kv, payload, obsId, raw, {
+                  syncEmbedding: false,
+                }),
+                "observe_write_budget_exceeded_during_synthetic_observation",
+              ).catch((err) => {
+                const reason = observeBudgetReason(err);
+                if (!reason) throw err;
+                writePressureReason = reason;
+                compressionMode = "deferred";
+                logger.warn("Synthetic compression deferred under write pressure", {
+                  obsId,
+                  sessionId: payload.sessionId,
+                  reason,
+                });
               });
               logger.warn("Synthetic compression stored under hot-path pressure", {
                 obsId,
@@ -759,7 +972,20 @@ export function registerObserveFunction(
               });
             }
           } else {
-          await storeSyntheticObservation(sdk, kv, payload, obsId, raw);
+            await withObserveBudget(
+              storeSyntheticObservation(sdk, kv, payload, obsId, raw),
+              "observe_write_budget_exceeded_during_synthetic_observation",
+            ).catch((err) => {
+              const reason = observeBudgetReason(err);
+              if (!reason) throw err;
+              writePressureReason = reason;
+              compressionMode = "deferred";
+              logger.warn("Synthetic compression deferred under write pressure", {
+                obsId,
+                sessionId: payload.sessionId,
+                reason,
+              });
+            });
           }
         }
       }
@@ -787,13 +1013,26 @@ export function registerObserveFunction(
             ? compressionMode
             : "skipped",
       });
+      if (writePressureReason) {
+        await recordObserveDegraded(kv, writePressureReason);
+      } else {
+        await recordObserveAccepted(kv);
+      }
       return {
         observationId: obsId,
         persistenceClass: metadata.persistenceClass,
         persisted: metadata.persistenceClass === "persistent",
-        deferred: deferDerivedWork || undefined,
-        reason: hotPathPressure ? "hot_path_backpressure" : undefined,
-        pressure: hotPathPressure || undefined,
+        deferred: deferDerivedWork || Boolean(writePressureReason) || undefined,
+        reason: writePressureReason
+          ? "observe_write_pressure"
+          : hotPathPressure
+            ? "hot_path_backpressure"
+            : undefined,
+        pressure:
+          hotPathPressure ||
+          (writePressureReason
+            ? { reason: writePressureReason, mode: "defer_derived" }
+            : undefined),
       };
     });
   });

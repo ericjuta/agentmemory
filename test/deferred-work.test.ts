@@ -74,8 +74,61 @@ describe("getDeferredWorkStatus", () => {
       },
       retrievalBlocks: { queued: 0 },
       graphExtraction: { queued: 0 },
+      observeCapture: {
+        status: "capturing",
+        pressure: null,
+        derivedWorkDeferred: false,
+        captureSkipped: false,
+      },
       totalQueued: 12,
     });
     expect(list).not.toHaveBeenCalled();
   });
+
+  it("reports observe capture shedding from lightweight deferred status", async () => {
+    const previousQueueCritical =
+      process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_CRITICAL"];
+    const previousIncludeCompression =
+      process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_INCLUDE_COMPRESSION"];
+    process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_CRITICAL"] = "1";
+    process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_INCLUDE_COMPRESSION"] = "true";
+    const kv = mockKV();
+    try {
+      await kv.set(KV.maintenanceLaneState, "compression", {
+        lane: "compression",
+        lastQueued: 1,
+        successStreak: 0,
+        pressureStreak: 1,
+        updatedAt: "2026-04-29T00:00:00.000Z",
+      });
+
+      const status = await getDeferredWorkStatus(kv as never, {
+        lightweight: true,
+      });
+
+      expect(status.observeCapture).toMatchObject({
+        status: "shedding",
+        derivedWorkDeferred: true,
+        captureSkipped: true,
+        pressure: {
+          reason: "deferred_queue_1_gte_1",
+          mode: "shed",
+        },
+      });
+    } finally {
+      if (previousQueueCritical === undefined) {
+        delete process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_CRITICAL"];
+      } else {
+        process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_CRITICAL"] =
+          previousQueueCritical;
+      }
+      if (previousIncludeCompression === undefined) {
+        delete process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_INCLUDE_COMPRESSION"];
+      } else {
+        process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_INCLUDE_COMPRESSION"] =
+          previousIncludeCompression;
+      }
+    }
+  });
+
 });

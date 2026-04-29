@@ -101,6 +101,12 @@ describe("viewer server listen host", () => {
       service: "agentmemory",
       source: "viewer-direct",
       status: "healthy",
+      deferredWork: {
+        observeCapture: {
+          status: "capturing",
+          captureSkipped: false,
+        },
+      },
       maintenance: {
         status: "caught_up",
         totalQueued: 0,

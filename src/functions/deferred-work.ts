@@ -3,6 +3,10 @@ import type { ISdk } from "iii-sdk";
 import type { StateKV } from "../state/kv.js";
 import { KV } from "../state/schema.js";
 import type { CompressRetryEntry, MaintenanceLaneState } from "../types.js";
+import {
+  observePressureFromQueued,
+  type ObserveHotPathStatus,
+} from "./hot-path-pressure.js";
 
 export interface DeferredWorkStatus {
   generatedAt: string;
@@ -26,6 +30,7 @@ export interface DeferredWorkStatus {
     queued: number;
     error?: string;
   };
+  observeCapture: ObserveHotPathStatus | { error: string };
   totalQueued: number;
 }
 
@@ -167,11 +172,33 @@ async function buildDeferredWorkStatus(
   ]);
   const totalQueued =
     compression.queued + retrievalBlocks.queued + graphExtraction.queued;
+  const includeCompressionQueue =
+    process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_INCLUDE_COMPRESSION"] === "1" ||
+    process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_INCLUDE_COMPRESSION"] === "true" ||
+    process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_INCLUDE_COMPRESSION"] === "yes";
+  const observeQueued = includeCompressionQueue
+    ? totalQueued
+    : retrievalBlocks.queued + graphExtraction.queued;
+  const observePressure = observePressureFromQueued(observeQueued);
+  const observeCapture: ObserveHotPathStatus = observePressure
+    ? {
+        status: observePressure.mode === "shed" ? "shedding" : "defer_derived",
+        pressure: observePressure,
+        derivedWorkDeferred: true,
+        captureSkipped: observePressure.mode === "shed",
+      }
+    : {
+        status: "capturing",
+        pressure: null,
+        derivedWorkDeferred: false,
+        captureSkipped: false,
+      };
   return {
     generatedAt: new Date().toISOString(),
     compression,
     retrievalBlocks,
     graphExtraction,
+    observeCapture,
     totalQueued,
   };
 }

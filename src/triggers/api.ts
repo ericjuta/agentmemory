@@ -17,6 +17,7 @@ import { KV } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
 import { getLatestHealth } from "../health/monitor.js";
 import { getDeferredWorkStatus } from "../functions/deferred-work.js";
+import { getObserveHotPathStatus } from "../functions/hot-path-pressure.js";
 import {
   getDerivedKvWritePauseReason,
   getGraphExtractionPauseReason,
@@ -685,13 +686,20 @@ export function registerApiTriggers(
       const functionMetrics = metricsResult.value;
       const circuitBreaker =
         provider && "circuitState" in provider ? provider.circuitState : null;
-      const [deferredWork, writeGates] = await Promise.all([
+      const [deferredWork, observeCapture, writeGates] = await Promise.all([
         settleWithin(
           getDeferredWorkStatus(kv, { lightweight: true }).catch((err) => ({
             error: err instanceof Error ? err.message : String(err),
           })),
           HEALTH_COMPONENT_TIMEOUT_MS,
           () => ({ error: "health_deferred_work_timeout" }),
+        ).then((result) => result.value),
+        settleWithin(
+          getObserveHotPathStatus(kv, undefined, { lightweight: true }).catch((err) => ({
+            error: err instanceof Error ? err.message : String(err),
+          })),
+          HEALTH_COMPONENT_TIMEOUT_MS,
+          () => ({ error: "health_observe_capture_timeout" }),
         ).then((result) => result.value),
         settleWithin(
           Promise.all([
@@ -749,6 +757,7 @@ export function registerApiTriggers(
           functionMetrics,
           circuitBreaker,
           deferredWork,
+          observeCapture,
           writeGates,
           healthTimeouts: {
             health: healthResult.status === "timeout",

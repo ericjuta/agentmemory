@@ -4,6 +4,17 @@ import { registerObserveFunction } from "../src/functions/observe.js";
 import { KV } from "../src/state/schema.js";
 import { mockKV, mockSdk } from "./helpers/mocks.js";
 
+function preserveEnv(name: string): () => void {
+  const previous = process.env[name];
+  return () => {
+    if (previous === undefined) {
+      delete process.env[name];
+    } else {
+      process.env[name] = previous;
+    }
+  };
+}
+
 describe("observe freshness plumbing", () => {
   it("parses assistant_result payloads into raw observations and capsules", async () => {
     const sdk = mockSdk();
@@ -592,6 +603,52 @@ describe("observe freshness plumbing", () => {
     }
   });
 
+  it("skips observe immediately while cooldown is active", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    await kv.set(KV.observePressureState, "latest", {
+      status: "degraded",
+      timeoutStreak: 2,
+      degradedObserveCount: 2,
+      acceptedObserveCount: 0,
+      cooldownUntil: new Date(Date.now() + 60_000).toISOString(),
+      lastShedReason: "StateKV state::set timed out after 5000ms",
+      lastTransitionAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    registerObserveFunction(sdk as never, kv as never);
+
+    const result = (await sdk.trigger("mem::observe", {
+      hookType: "post_tool_use",
+      sessionId: "session-cooldown",
+      project: "/project",
+      cwd: "/project",
+      timestamp: "2026-04-29T15:31:00.000Z",
+      source: "codex-native",
+      payloadVersion: "1",
+      eventId: "evt-cooldown",
+      persistenceClass: "persistent",
+      capabilities: ["structured_post_tool_payload", "event_identity"],
+      data: {
+        session_id: "session-cooldown",
+        turn_id: "turn-cooldown",
+        cwd: "/project",
+        model: "gpt-5.4",
+        tool_name: "Edit",
+        tool_use_id: "toolu_cooldown",
+        tool_input: { file_path: "/project/src/app.ts" },
+        tool_output: { changed_files: ["/project/src/app.ts"] },
+      },
+    })) as { persisted: boolean; skipped: boolean; reason: string };
+
+    expect(result).toMatchObject({
+      persisted: false,
+      skipped: true,
+      reason: "observe_pressure",
+    });
+    expect(await kv.list<any>(KV.observations("session-cooldown"))).toHaveLength(0);
+  });
+
   it("feeds synthetic compression signals back into the current turn capsule", async () => {
     const previousAutoCompress = process.env["AGENTMEMORY_AUTO_COMPRESS"];
     process.env["AGENTMEMORY_AUTO_COMPRESS"] = "false";
@@ -652,6 +709,132 @@ describe("observe freshness plumbing", () => {
       } else {
         process.env["AGENTMEMORY_AUTO_COMPRESS"] = previousAutoCompress;
       }
+    }
+  });
+
+  it("fails fast when the required raw observe write exceeds the write budget", async () => {
+    const restoreBudget = preserveEnv("AGENTMEMORY_OBSERVE_WRITE_BUDGET_MS");
+    const restoreAutoCompress = preserveEnv("AGENTMEMORY_AUTO_COMPRESS");
+    const restoreCooldown = preserveEnv("AGENTMEMORY_OBSERVE_COOLDOWN_MS");
+    process.env["AGENTMEMORY_OBSERVE_WRITE_BUDGET_MS"] = "5";
+    process.env["AGENTMEMORY_AUTO_COMPRESS"] = "false";
+    process.env["AGENTMEMORY_OBSERVE_COOLDOWN_MS"] = "1";
+
+    const sdk = mockSdk();
+    const baseKv = mockKV();
+    const kv = {
+      ...baseKv,
+      set: async <T>(scope: string, key: string, data: T): Promise<T> => {
+        if (scope === KV.observations("session-slow")) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        return baseKv.set(scope, key, data);
+      },
+    };
+    try {
+      registerObserveFunction(sdk as never, kv as never);
+
+      const startedAt = Date.now();
+      const result = (await sdk.trigger("mem::observe", {
+        hookType: "post_tool_use",
+        sessionId: "session-slow",
+        project: "/project",
+        cwd: "/project",
+        timestamp: "2026-03-29T12:03:00.000Z",
+        source: "codex-native",
+        payloadVersion: "1",
+        eventId: "evt-slow-write",
+        persistenceClass: "persistent",
+        capabilities: ["structured_post_tool_payload", "event_identity"],
+        data: {
+          session_id: "session-slow",
+          turn_id: "turn-slow",
+          cwd: "/project",
+          model: "gpt-5.4",
+          tool_name: "Edit",
+          tool_use_id: "toolu_slow",
+          tool_input: { file_path: "/project/src/app.ts" },
+          tool_output: { changed_files: ["/project/src/app.ts"] },
+        },
+      })) as {
+        persisted: boolean;
+        deferred?: boolean;
+        reason?: string;
+        pressure?: { reason?: string };
+      };
+
+      expect(Date.now() - startedAt).toBeLessThan(40);
+      expect(result).toMatchObject({
+        persisted: false,
+        deferred: true,
+        reason: "observe_pressure",
+      });
+      expect(result.pressure?.reason).toContain("raw_observation");
+      expect(await baseKv.list<any>(KV.observations("session-slow"))).toHaveLength(0);
+      await baseKv.delete(KV.observePressureState, "latest");
+    } finally {
+      restoreBudget();
+      restoreAutoCompress();
+      restoreCooldown();
+    }
+  });
+
+  it("returns write-pressure metadata when optional derived observe work times out", async () => {
+    const restoreBudget = preserveEnv("AGENTMEMORY_OBSERVE_WRITE_BUDGET_MS");
+    const restoreAutoCompress = preserveEnv("AGENTMEMORY_AUTO_COMPRESS");
+    process.env["AGENTMEMORY_OBSERVE_WRITE_BUDGET_MS"] = "5";
+    process.env["AGENTMEMORY_AUTO_COMPRESS"] = "false";
+
+    const sdk = mockSdk();
+    const baseKv = mockKV();
+    const kv = {
+      ...baseKv,
+      set: async <T>(scope: string, key: string, data: T): Promise<T> => {
+        if (scope === KV.turnCapsules) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        return baseKv.set(scope, key, data);
+      },
+    };
+    try {
+      registerObserveFunction(sdk as never, kv as never);
+
+      const result = (await sdk.trigger("mem::observe", {
+        hookType: "assistant_result",
+        sessionId: "session-derived-slow",
+        project: "/project",
+        cwd: "/project",
+        timestamp: "2026-03-29T12:03:30.000Z",
+        source: "codex-native",
+        payloadVersion: "1",
+        eventId: "evt-derived-slow",
+        persistenceClass: "persistent",
+        capabilities: ["event_identity"],
+        data: {
+          session_id: "session-derived-slow",
+          turn_id: "turn-derived-slow",
+          cwd: "/project",
+          model: "gpt-5.4",
+          assistant_text: "done",
+          is_final: true,
+        },
+      })) as {
+        persisted: boolean;
+        deferred?: boolean;
+        reason?: string;
+        pressure?: { reason?: string };
+      };
+
+      expect(result).toMatchObject({
+        persisted: true,
+        deferred: true,
+        reason: "observe_write_pressure",
+      });
+      expect(result.pressure?.reason).toContain("turn_capsule");
+      expect(await baseKv.list<any>(KV.observations("session-derived-slow"))).toHaveLength(1);
+    } finally {
+      restoreBudget();
+      restoreAutoCompress();
     }
   });
 });
