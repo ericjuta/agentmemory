@@ -76,7 +76,20 @@ function textEntities(...parts: string[]): string[] {
   return uniqueStrings(tokens).slice(0, 32);
 }
 
-function formatTurnCapsule(capsule: TurnCapsule, currentSession: boolean): string {
+function formatTurnCapsule(
+  capsule: Pick<
+    TurnCapsule,
+    | "turnId"
+    | "userPrompt"
+    | "assistantConclusion"
+    | "files"
+    | "concepts"
+    | "hadFailure"
+    | "hadDecision"
+    | "maxImportance"
+  >,
+  currentSession: boolean,
+): string {
   const lines = [
     `## ${currentSession ? "Current Turn" : `Recent Turn ${capsule.turnId}`}`,
   ];
@@ -94,7 +107,16 @@ function formatTurnCapsule(capsule: TurnCapsule, currentSession: boolean): strin
 
 function formatWorkingSet(workingSet: SessionWorkingSet): string | null {
   if (workingSet.latestCompletedCapsule) {
-    return formatTurnCapsule(workingSet.latestCompletedCapsule, true);
+    return formatTurnCapsule(
+      {
+        ...workingSet.latestCompletedCapsule,
+        files: workingSet.latestImportantFiles,
+        concepts: workingSet.latestImportantConcepts,
+        hadFailure: workingSet.latestHadFailure,
+        hadDecision: workingSet.latestHadDecision,
+      },
+      true,
+    );
   }
   const lines = ["## Current Working Set"];
   if (workingSet.latestAssistantConclusion) {

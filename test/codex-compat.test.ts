@@ -134,6 +134,10 @@ describe("Codex payload compatibility", () => {
     const workingSet = await kv.get<any>(KV.workingSets, "session-codex");
     expect(workingSet.latestCompletedTurnId).toBe("turn-codex-1");
     expect(workingSet.latestCompletedCapsule.turnId).toBe("turn-codex-1");
+    expect(workingSet.latestCompletedCapsule.files).toBeUndefined();
+    expect(workingSet.latestCompletedCapsule.concepts).toBeUndefined();
+    expect(workingSet.latestCompletedCapsule.sourceObservationIds).toBeUndefined();
+    expect(workingSet.latestCompletedCapsule.importantObservationIds).toBeUndefined();
 
     const result = (await sdk.trigger("mem::context", {
       sessionId: "session-codex",

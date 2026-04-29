@@ -4,6 +4,21 @@ import { KV } from "../state/schema.js";
 import type { StateKV } from "../state/kv.js";
 import { upsertWorkingSetRetrievalBlock } from "./retrieval-blocks.js";
 
+function summarizeCapsule(capsule: TurnCapsule): SessionWorkingSet["latestCompletedCapsule"] {
+  return {
+    id: capsule.id,
+    sessionId: capsule.sessionId,
+    turnId: capsule.turnId,
+    project: capsule.project,
+    cwd: capsule.cwd,
+    createdAt: capsule.createdAt,
+    updatedAt: capsule.updatedAt,
+    userPrompt: capsule.userPrompt,
+    assistantConclusion: capsule.assistantConclusion,
+    maxImportance: capsule.maxImportance,
+  };
+}
+
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
 }
@@ -35,7 +50,7 @@ export async function updateSessionWorkingSet(
         : existing?.latestCompletedTurnId,
     latestCompletedCapsule:
       isCompletionEvent(hookType)
-        ? capsule
+        ? summarizeCapsule(capsule)
         : existing?.latestCompletedCapsule,
     latestAssistantConclusion:
       capsule.assistantConclusion ||

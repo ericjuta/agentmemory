@@ -145,6 +145,19 @@ export interface TurnCapsule {
   maxImportance: number;
 }
 
+export interface TurnCapsuleSummary {
+  id: string;
+  sessionId: string;
+  turnId: string;
+  project: string;
+  cwd: string;
+  createdAt: string;
+  updatedAt: string;
+  userPrompt?: string;
+  assistantConclusion?: string;
+  maxImportance: number;
+}
+
 export interface SessionWorkingSet {
   sessionId: string;
   project: string;
@@ -152,7 +165,7 @@ export interface SessionWorkingSet {
   updatedAt: string;
   latestTurnId?: string;
   latestCompletedTurnId?: string;
-  latestCompletedCapsule?: TurnCapsule;
+  latestCompletedCapsule?: TurnCapsuleSummary;
   latestAssistantConclusion?: string;
   latestImportantFiles: string[];
   latestImportantConcepts: string[];
