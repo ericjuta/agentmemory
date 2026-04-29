@@ -250,6 +250,17 @@ export interface GraphExtractionRetryEntry {
   lastError: string;
 }
 
+export interface ObservePressureState {
+  status: "enabled" | "degraded";
+  timeoutStreak: number;
+  degradedObserveCount: number;
+  acceptedObserveCount: number;
+  cooldownUntil?: string;
+  lastShedReason?: string;
+  lastTransitionAt: string;
+  updatedAt: string;
+}
+
 export interface MaintenanceLaneState {
   lane: "compression";
   lastWakeAt?: string;

@@ -7,6 +7,7 @@ vi.mock("../src/logger.js", () => ({
 }));
 
 import { VERSION } from "../src/version.js";
+import { KV } from "../src/state/schema.js";
 
 const ROOT = join(import.meta.dirname, "..");
 
@@ -23,6 +24,10 @@ describe("Consistency checks", () => {
   it("export-import.ts supports current version", () => {
     const src = readText("src/functions/export-import.ts");
     expect(src).toContain(`"${VERSION}"`);
+  });
+
+  it("observe pressure state has a concrete StateKV scope", () => {
+    expect(KV.observePressureState).toBe("mem:observe-pressure-state");
   });
 
   it("every host-path bind mount in docker-compose.yml is in the published files list (#136)", () => {
