@@ -34,6 +34,34 @@ function reinforceInsight(insight: Insight): void {
   insight.updatedAt = now;
 }
 
+function parseNonNegativeInteger(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isInteger(value) && value >= 0) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isInteger(parsed) && parsed >= 0) return parsed;
+  }
+  return fallback;
+}
+
+function parsePositiveInteger(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  }
+  return fallback;
+}
+
+function timestampMs(value: string | undefined): number {
+  if (!value) return 0;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function buildGraphClusters(
   nodes: GraphNode[],
   edges: GraphEdge[],
@@ -423,16 +451,48 @@ export function registerReflectFunctions(
   );
 
   sdk.registerFunction("mem::insight-decay-sweep", 
-    async () => {
+    async (data: {
+      pruneDeletedAfterDays?: unknown;
+      pruneBatchSize?: unknown;
+      dryRun?: unknown;
+    } = {}) => {
       const items = await kv.list<Insight>(KV.insights);
       let decayed = 0;
       let softDeleted = 0;
+      let hardDeleted = 0;
       const now = Date.now();
       const timestamp = new Date().toISOString();
       const dirty: Insight[] = [];
+      const dryRun = data?.dryRun === true;
+      const pruneDeletedAfterDays = parseNonNegativeInteger(
+        data?.pruneDeletedAfterDays ?? process.env.INSIGHT_PRUNE_DELETED_AFTER_DAYS,
+        30,
+      );
+      const pruneBatchSize = parsePositiveInteger(
+        data?.pruneBatchSize ?? process.env.INSIGHT_PRUNE_BATCH_SIZE,
+        100,
+      );
+      const pruneCutoffMs = now - pruneDeletedAfterDays * 24 * 60 * 60 * 1000;
+      const pruneCandidates = items
+        .filter((insight) => {
+          if (!insight.deleted) return false;
+          const deletedAt = timestampMs(
+            insight.lastDecayedAt || insight.updatedAt || insight.createdAt,
+          );
+          return deletedAt > 0 && deletedAt <= pruneCutoffMs;
+        })
+        .sort(
+          (a, b) =>
+            timestampMs(a.lastDecayedAt || a.updatedAt || a.createdAt) -
+            timestampMs(b.lastDecayedAt || b.updatedAt || b.createdAt),
+        );
+      const pruneIds = pruneCandidates
+        .slice(0, pruneBatchSize)
+        .map((insight) => insight.id);
 
       for (const insight of items) {
         if (insight.deleted) continue;
+        if (dryRun) continue;
 
         const baseline =
           insight.lastDecayedAt ||
@@ -462,16 +522,32 @@ export function registerReflectFunctions(
         }
       }
 
-      await Promise.all(dirty.map((i) => kv.set(KV.insights, i.id, i)));
+      if (!dryRun) {
+        await Promise.all(dirty.map((i) => kv.set(KV.insights, i.id, i)));
+        await Promise.all(pruneIds.map((id) => kv.delete(KV.insights, id)));
+      }
+      hardDeleted = dryRun ? 0 : pruneIds.length;
       await recordAudit(kv, "reflect", "mem::insight-decay-sweep", dirty.map((i) => i.id), {
         event: "insight.decay",
         decayed,
         softDeleted,
+        hardDeleted,
+        pruneCandidates: pruneCandidates.length,
+        dryRun,
         total: items.length,
         timestamp,
       });
 
-      return { success: true, decayed, softDeleted, total: items.length };
+      return {
+        success: true,
+        decayed: dryRun ? 0 : decayed,
+        softDeleted: dryRun ? 0 : softDeleted,
+        hardDeleted,
+        pruneCandidates: pruneCandidates.length,
+        prunedIds: dryRun ? [] : pruneIds,
+        dryRun,
+        total: items.length,
+      };
     },
   );
 }

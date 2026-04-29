@@ -348,5 +348,57 @@ describe("Reflect", () => {
       const after = await kv.get<Insight>("mem:insights", "ins_weak");
       expect(after!.deleted).toBe(true);
     });
+
+    it("hard-deletes old soft-deleted insights in bounded batches", async () => {
+      const old = new Date(Date.now() - 45 * 86400000).toISOString();
+      const recent = new Date(Date.now() - 2 * 86400000).toISOString();
+      await kv.set("mem:insights", "ins_old_deleted", {
+        id: "ins_old_deleted", title: "Old deleted", content: "Old deleted",
+        confidence: 0.05, reinforcements: 0, sourceConceptCluster: [],
+        sourceMemoryIds: [], sourceLessonIds: [], sourceCrystalIds: [],
+        tags: [], createdAt: old, updatedAt: old, lastDecayedAt: old,
+        decayRate: 0.05, deleted: true,
+      });
+      await kv.set("mem:insights", "ins_recent_deleted", {
+        id: "ins_recent_deleted", title: "Recent deleted", content: "Recent deleted",
+        confidence: 0.05, reinforcements: 0, sourceConceptCluster: [],
+        sourceMemoryIds: [], sourceLessonIds: [], sourceCrystalIds: [],
+        tags: [], createdAt: recent, updatedAt: recent, lastDecayedAt: recent,
+        decayRate: 0.05, deleted: true,
+      });
+
+      const result = (await sdk.trigger("mem::insight-decay-sweep", {
+        pruneDeletedAfterDays: 30,
+        pruneBatchSize: 1,
+      })) as { hardDeleted: number; prunedIds: string[] };
+
+      expect(result.hardDeleted).toBe(1);
+      expect(result.prunedIds).toEqual(["ins_old_deleted"]);
+      expect(await kv.get("mem:insights", "ins_old_deleted")).toBeNull();
+      expect(await kv.get("mem:insights", "ins_recent_deleted")).not.toBeNull();
+    });
+
+    it("reports prune candidates without mutating on dry-run", async () => {
+      const old = new Date(Date.now() - 45 * 86400000).toISOString();
+      await kv.set("mem:insights", "ins_old_deleted", {
+        id: "ins_old_deleted", title: "Old deleted", content: "Old deleted",
+        confidence: 0.05, reinforcements: 0, sourceConceptCluster: [],
+        sourceMemoryIds: [], sourceLessonIds: [], sourceCrystalIds: [],
+        tags: [], createdAt: old, updatedAt: old, lastDecayedAt: old,
+        decayRate: 0.05, deleted: true,
+      });
+
+      const result = (await sdk.trigger("mem::insight-decay-sweep", {
+        dryRun: true,
+        pruneDeletedAfterDays: 30,
+      })) as { dryRun: boolean; hardDeleted: number; pruneCandidates: number };
+
+      expect(result).toMatchObject({
+        dryRun: true,
+        hardDeleted: 0,
+        pruneCandidates: 1,
+      });
+      expect(await kv.get("mem:insights", "ins_old_deleted")).not.toBeNull();
+    });
   });
 });
