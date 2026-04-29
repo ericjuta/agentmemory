@@ -168,7 +168,9 @@ function workingSetSample(item: SessionWorkingSet): Record<string, unknown> {
   };
 }
 
-async function diagnoseScope<T extends { updatedAt?: string; project?: string }>(
+async function diagnoseScope<
+  T extends { updatedAt?: string; project?: string; sessionId?: string },
+>(
   kv: StateKV,
   scope: string,
   staleAfterDays: number,
