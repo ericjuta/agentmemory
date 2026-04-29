@@ -24,6 +24,20 @@ As of the closeout check on 2026-04-27:
 - iii-engine RSS remains high enough that it should be treated as residual
   operational debt, not a request-path correctness failure.
 
+2026-04-28 update:
+
+- main is aligned with origin/main at the deployed compression retry maintenance
+  fix.
+- AGENTMEMORY_AUTO_COMPRESS=false is a valid live posture while queued
+  compression drains synthetically through mem::compress-retry; vector backfill
+  remains a separate lane.
+- The service can be usable while maintenance is behind: health can be 200,
+  runtime and serving can be healthy, write gates can be open, and a compression
+  queue can still be burning down.
+- The compression retry loop now drains on its own under idle headroom, but it
+  can still pause on CPU critical or StateKV timeout pressure. That pause is
+  correct; the remaining work is smoother pacing and clearer operator readback.
+
 ## P1. Predictable Compression Backlog Drain
 
 Problem:
@@ -65,6 +79,150 @@ Acceptance:
 
 - With no new observations and healthy runtime, compression queued count trends
   down across maintenance wakes without operator action.
+
+Status:
+
+- Implemented by the compression retry maintenance loop:
+  - COMPRESS_RETRY_ENABLED=true enables an adaptive timer.
+  - The timer calls mem::maintenance-catch-up with explicit lane: compression,
+    bounded batch size, and bounded time budget.
+  - Explicit lane timers are allowed to run their own lane; small retrieval or
+    graph backlogs no longer starve compression retry.
+  - Automatic catch-up still prioritizes enabled retrieval and graph lanes
+    before compression when no lane is requested.
+  - Compression retry is gated on idle CPU, event-loop lag, and KV latency.
+- Live proof after deployment showed automatic compression drain success,
+  context injection returning non-empty context, smart search returning
+  results, and memory_recall returning parsed results.
+- Current remaining debt is backlog burn-down and StateKV/RSS smoothness, not
+  recall/context correctness.
+
+## P1. Compression Burn-In Pacing And Visibility
+
+Problem:
+
+- Compression retry can now drain unattended, but live burn-in still shows
+  short pauses when StateKV writes time out or CPU briefly spikes.
+- Operators can see queue totals, but not enough scheduler state to know
+  whether the queue is actively draining, paused for a valid reason, or stuck.
+- A fixed safe batch can be too conservative while idle and too aggressive
+  immediately after StateKV pressure.
+
+End state:
+
+- Compression backlog drains steadily during idle windows without creating new
+  StateKV pressure.
+- The scheduler backs off after StateKV timeouts and resumes cautiously after a
+  cool-down.
+- Health and the operator dashboard expose enough lane state to answer
+  "working, paused, or stuck" without reading logs.
+
+Implementation:
+
+1. Persist a small per-lane maintenance state record for compression:
+   - lastWakeAt
+   - lastSuccessAt
+   - lastWorkDone
+   - lastDurationMs
+   - lastSkippedReason
+   - lastErrorReason
+   - currentIntervalMs
+   - currentBatchSize
+   - successStreak
+   - pressureStreak
+2. Treat StateKV write timeout as a first-class compression pressure signal:
+   - halve the next batch size down to the floor
+   - increase the next interval up to the configured max
+   - require one healthy idle health sample before increasing batch again
+3. Grow batch size only after consecutive successful wakes with low CPU,
+   low event-loop lag, and low KV latency.
+4. Add queue trend fields to deferred-work status:
+   - queuedDeltaSinceLastWake
+   - drainRatePerHour
+   - estimatedDrainEtaMs
+   - oldestAgeMs
+   - newestAgeMs
+5. Keep compression synthetic while AGENTMEMORY_AUTO_COMPRESS=false; do not
+   reintroduce LLM compression into the drain path unless explicitly enabled.
+6. Keep graph catch-up disabled by default during compression burn-in unless the
+   graph queue becomes blocking or aged past a separate threshold.
+
+Tests:
+
+- A successful compression wake records lane state and updates drain-rate
+  fields.
+- A StateKV timeout reduces the next compression batch and increases interval.
+- Batch size grows only after consecutive low-pressure successful wakes.
+- Compression remains paused while runtime is critical, and resumes after
+  health recovers.
+- Health/deferred-work readback stays bounded when lane state is missing or
+  stale.
+
+Acceptance:
+
+- During a no-new-observation burn-in, compression queued count trends down
+  across multiple maintenance wakes.
+- A StateKV timeout produces a visible paused/backoff reason and does not cause
+  repeated timeout bursts.
+- An operator can inspect health or the dashboard and see whether compression
+  is draining, paused with reason, or stuck past the alert window.
+
+## P1. Compression Backlog SLO And Alerting
+
+Problem:
+
+- maintenance: behind is too broad. A compression-only backlog should be
+  visible as maintenance debt without implying serving failure.
+- There is no explicit alert when compression stops making progress for too
+  long while runtime is otherwise healthy.
+
+End state:
+
+- Compression has its own burn-down SLO separate from serving health and
+  retrieval freshness.
+- Alert text tells the operator whether to wait, lower batch settings, inspect
+  StateKV, or escalate to compaction/RSS work.
+
+Suggested SLOs:
+
+- Serving remains healthy while compression is behind.
+- Write gates remain open during normal compression burn-down.
+- Compression retry should perform at least one successful wake within 10
+  minutes of an idle healthy window when backlog exists.
+- Compression queued count should trend down over a 30-minute no-new-observation
+  window.
+- Repeated StateKV timeout pauses over 15 minutes should raise a maintenance
+  warning, not a serving critical state.
+
+Implementation:
+
+1. Add compression-specific warning codes:
+   - compression_backlog_draining
+   - compression_backlog_stalled
+   - compression_paused_cpu
+   - compression_paused_event_loop_lag
+   - compression_paused_kv_latency
+   - compression_paused_statekv_timeout
+2. Include those warnings in health, dashboard, and recovery proof output.
+3. Keep serving status healthy for compression-only backlog unless hot-path
+   context/observe calls are failing.
+4. Add a runbook branch:
+   - wait when drain rate is positive and gates are open
+   - lower batch or increase interval when StateKV timeouts repeat
+   - run StateKV dry-run compaction when RSS stays high after backlog clears
+   - restart iii-engine only after diagnostics show no active cleanup path
+
+Tests:
+
+- Compression-only backlog does not flip serving health critical.
+- Stalled compression under healthy runtime emits a maintenance warning.
+- Positive drain trend suppresses stalled warnings.
+- Repeated StateKV timeout pauses emit the StateKV-specific warning.
+
+Acceptance:
+
+- A healthy serving system with compression debt reads as "usable, draining" or
+  "usable, stalled maintenance" instead of a generic green/red ambiguity.
 
 ## P1. iii-engine RSS Reduction And Scope Compaction
 
@@ -129,6 +287,180 @@ Acceptance:
 
 - A green health endpoint plus large iii-engine RSS has a direct diagnostic path
   and a documented operator decision.
+
+## Longer-Term Improvement Backlog
+
+This backlog is lower urgency than compression burn-in, but it is the durable
+shape for making AgentMemory boring under load.
+
+### P1. Single Maintenance Scheduler
+
+Problem:
+
+- Background work is still spread across separate adaptive timers.
+- Each timer is pressure-aware, but the system does not yet have one global view
+  of available maintenance budget.
+
+End state:
+
+- One scheduler owns cold and warm maintenance wakes.
+- Each lane declares work class, max batch, current pressure score, and stale
+  age.
+- The scheduler spends a small per-window budget and records exactly why each
+  lane ran or yielded.
+
+Implementation:
+
+1. Add a scheduler state record with per-lane leases and last-decision metadata.
+2. Model lanes explicitly:
+   - retrieval retry
+   - compression retry
+   - graph catch-up
+   - vector backfill
+   - index verification
+   - compaction
+3. Compute a global budget from runtime pressure:
+   - hot path always allowed with short timeouts
+   - warm work allowed when serving is healthy
+   - cold work allowed only during idle windows
+4. Replace independent cold timers with scheduler lane registrations.
+5. Expose last scheduler decisions in health and dashboard.
+
+Acceptance:
+
+- No two cold maintenance lanes compete blindly during StateKV pressure.
+- The operator can see which lane is next and why.
+
+### P1. Active StateKV Scope Slimming
+
+Problem:
+
+- Dry-run compaction can identify orphan cleanup, but active physical scopes can
+  still be large enough to keep iii-engine RSS high.
+- Long-lived active scopes need a layout that bounds per-scope load and write
+  amplification.
+
+End state:
+
+- High-cardinality active data is split across bounded physical StateKV scopes.
+- Old, rarely queried data can be archived or compacted without touching hot
+  active scopes.
+- Scope size is part of health diagnostics before it becomes a brownout.
+
+Implementation:
+
+1. Measure and rank active scope files by bytes, key count, and write rate.
+2. Pick one high-impact scope first, likely retrieval blocks or observation
+   indexes.
+3. Move it to physically sharded StateKV scopes using a deterministic shard key.
+4. Add a manifest that tracks shard set, schema version, and migration cursor.
+5. Keep read compatibility during migration through a bounded dual-read path.
+6. Add compaction or archive policy for cold shards.
+
+Acceptance:
+
+- The largest active StateKV scope shrinks or stops growing unbounded.
+- iii-engine RSS has a path down that does not depend only on restart.
+
+### P2. Brownout Chaos Harness
+
+Problem:
+
+- Most regressions appear only when StateKV is slow, CPU spikes, or iii-engine
+  queues are already deep.
+- Unit tests cover logic, but not the combined live pressure behavior.
+
+End state:
+
+- A local harness can simulate hung context, slow kv.set, slow kv.list, CPU
+  pressure, StateKV write timeouts, and unavailable embedding providers.
+- The harness proves hot paths fail open and cold lanes pause.
+
+Implementation:
+
+1. Add fault-injection hooks behind a test-only env flag.
+2. Add scripted scenarios for:
+   - session start while context hangs
+   - observe while StateKV writes time out
+   - health while diagnostics are slow
+   - compression retry while CPU is critical
+   - smart search while vector provider is rate-limited
+3. Emit a compact pass/fail bundle with p95 timings and queue deltas.
+
+Acceptance:
+
+- A brownout scenario cannot block session start or empty context fallback.
+- Cold maintenance pauses without generating repeated timeout bursts.
+
+### P2. Context Quality And Budget Discipline
+
+Problem:
+
+- Recall and context can be non-empty but still too noisy, too large, or poorly
+  matched to the current turn.
+- Operational recovery should not trade correctness for bloated prompt
+  injection.
+
+End state:
+
+- Context injection has explicit quality and size targets.
+- The system reports why each block was selected and what was omitted.
+- Budget pressure reduces lower-value blocks before dropping fresh relevant
+  evidence.
+
+Implementation:
+
+1. Add context trace fields for selected block source, score components,
+   freshness, scope, and omission reason.
+2. Track output budget by section:
+   - working set
+   - fresh observations
+   - durable memories
+   - lessons
+   - handoff/crystal context
+3. Add eval cases for noisy long-running repos and multi-session handoffs.
+4. Add a compact proof that checks non-empty output, source diversity, and max
+   token budget.
+
+Acceptance:
+
+- Context remains useful under backlog pressure and does not exceed its caller
+  budget.
+
+### P2. Retention And Lifecycle Policy
+
+Problem:
+
+- Compression, diagnostics, observations, retrieval blocks, graph edges, and
+  embeddings currently age differently.
+- Without an explicit lifecycle, background debt can return after the immediate
+  queue is drained.
+
+End state:
+
+- Each data class has a retention class, compaction path, and archive/delete
+  rule.
+- Diagnostics and ephemeral observations do not become permanent operational
+  load.
+
+Implementation:
+
+1. Define lifecycle classes:
+   - hot session state
+   - durable memory
+   - retrieval index blocks
+   - compressed summaries
+   - graph facts
+   - diagnostics-only observations
+   - transient maintenance state
+2. Add retention metrics by class to health or diagnostics.
+3. Add dry-run retention cleanup before any mutating cleanup.
+4. Keep audit records for destructive cleanup.
+
+Acceptance:
+
+- A month of normal agent activity has a bounded storage-growth story.
+- Cleanup can be previewed, audited, and run without degrading serving.
 
 ## P2. Recovery Proof Bundle
 
