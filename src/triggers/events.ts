@@ -1,10 +1,12 @@
 // Fork note: modified in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
 import { TriggerAction, type ISdk } from "iii-sdk";
-import type { HookPayload, Session } from "../types.js";
+import type { CompressedObservation, HookPayload, Session } from "../types.js";
 import { KV, STREAM } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
 import type { CompressionTracker } from "../state/compression-tracker.js";
 import { detectWorktreeInfo } from "../functions/branch-utils.js";
+import { isGraphExtractionEnabled } from "../config.js";
+import { logger } from "../logger.js";
 
 export function registerEventTriggers(
   sdk: ISdk,
@@ -63,7 +65,24 @@ export function registerEventTriggers(
         );
       }
     }
-    return sdk.trigger({ function_id: "mem::summarize", payload: data });
+    const summary = await sdk.trigger({ function_id: "mem::summarize", payload: data });
+    if (isGraphExtractionEnabled()) {
+      try {
+        const observations = await kv.list<CompressedObservation>(
+          KV.observations(data.sessionId),
+        );
+        const compressed = observations.filter((observation) => observation.title);
+        if (compressed.length > 0) {
+          sdk.triggerVoid("mem::graph-extract", { observations: compressed });
+        }
+      } catch (err) {
+        logger.warn("graph-extract triggerVoid failed", {
+          sessionId: data.sessionId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    return summary;
   },
   );
   sdk.registerTrigger({

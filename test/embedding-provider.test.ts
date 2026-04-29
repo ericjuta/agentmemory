@@ -19,6 +19,7 @@ describe("createEmbeddingProvider", () => {
 
   afterEach(() => {
     process.env = originalEnv;
+    vi.restoreAllMocks();
   });
 
   it("returns null when no API keys are set", () => {
@@ -46,5 +47,66 @@ describe("createEmbeddingProvider", () => {
     process.env["EMBEDDING_PROVIDER"] = "openai";
     const provider = createEmbeddingProvider();
     expect(provider).toBeInstanceOf(OpenAIEmbeddingProvider);
+  });
+});
+
+describe("OpenAIEmbeddingProvider", () => {
+  const originalEnv = { ...process.env };
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+    delete process.env["OPENAI_BASE_URL"];
+    delete process.env["OPENAI_EMBEDDING_MODEL"];
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+
+  it("uses default base URL and model when env vars are not set", () => {
+    const provider = new OpenAIEmbeddingProvider("test-key");
+    expect(provider.name).toBe("openai");
+    expect(provider.dimensions).toBe(1536);
+  });
+
+  it("throws when no API key is provided", () => {
+    delete process.env["OPENAI_API_KEY"];
+    expect(() => new OpenAIEmbeddingProvider()).toThrow(
+      "OPENAI_API_KEY is required",
+    );
+  });
+
+  it("respects OPENAI_BASE_URL env var", async () => {
+    process.env["OPENAI_BASE_URL"] = "https://my-proxy.example.com";
+    const provider = new OpenAIEmbeddingProvider("test-key");
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ data: [{ embedding: [0.1, 0.2, 0.3] }] }), {
+        status: 200,
+      }),
+    );
+
+    await provider.embed("hello");
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "https://my-proxy.example.com/v1/embeddings",
+      expect.any(Object),
+    );
+  });
+
+  it("respects OPENAI_EMBEDDING_MODEL env var", async () => {
+    process.env["OPENAI_EMBEDDING_MODEL"] = "text-embedding-3-large";
+    const provider = new OpenAIEmbeddingProvider("test-key");
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ data: [{ embedding: [0.1, 0.2, 0.3] }] }), {
+        status: 200,
+      }),
+    );
+
+    await provider.embed("hello");
+    const body = JSON.parse(
+      (fetchSpy.mock.calls[0][1] as RequestInit).body as string,
+    );
+    expect(body.model).toBe("text-embedding-3-large");
   });
 });

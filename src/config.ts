@@ -30,11 +30,13 @@ function parseEnvFile(path: string): Record<string, string> {
     if (eqIdx === -1) continue;
     const key = trimmed.slice(0, eqIdx).trim();
     let val = trimmed.slice(eqIdx + 1).trim();
-    if (
-      (val.startsWith('"') && val.endsWith('"')) ||
-      (val.startsWith("'") && val.endsWith("'"))
-    ) {
-      val = val.slice(1, -1);
+    const quoteChar = val[0] === '"' || val[0] === "'" ? val[0] : "";
+    if (quoteChar) {
+      const closeIdx = val.indexOf(quoteChar, 1);
+      if (closeIdx !== -1) val = val.slice(1, closeIdx);
+    } else {
+      const hashIdx = val.indexOf(" #");
+      if (hashIdx !== -1) val = val.slice(0, hashIdx).trim();
     }
     vars[key] = val;
   }
@@ -46,6 +48,10 @@ function loadEnvFile(): Record<string, string> {
     if (existsSync(path)) return parseEnvFile(path);
   }
   return {};
+}
+
+function hasRealValue(value: string | undefined): value is string {
+  return typeof value === "string" && value.trim().length > 0;
 }
 
 function detectProvider(env: Record<string, string>): ProviderConfig {
@@ -115,6 +121,20 @@ function getMergedEnv(
 
 export function getEnvVar(key: string): string | undefined {
   return getMergedEnv()[key];
+}
+
+export function detectLlmProviderKind(): "llm" | "noop" {
+  const env = getMergedEnv();
+  if (
+    hasRealValue(env["ANTHROPIC_API_KEY"]) ||
+    hasRealValue(env["GEMINI_API_KEY"]) ||
+    hasRealValue(env["GOOGLE_API_KEY"]) ||
+    hasRealValue(env["OPENROUTER_API_KEY"]) ||
+    hasRealValue(env["MINIMAX_API_KEY"])
+  ) {
+    return "llm";
+  }
+  return "noop";
 }
 
 export function loadEmbeddingConfig(): EmbeddingConfig {

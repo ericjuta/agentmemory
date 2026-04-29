@@ -63,5 +63,6 @@ export function mockSdk() {
       if (!fn) throw new Error(`No function: ${id}`);
       return fn(payload);
     },
+    triggerVoid: vi.fn(),
   };
 }

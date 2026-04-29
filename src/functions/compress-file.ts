@@ -1,4 +1,5 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import type { ISdk } from "iii-sdk";
 import type { MemoryProvider } from "../types.js";
@@ -110,6 +111,15 @@ export function registerCompressFileFunction(
         return { success: false, error: "refusing to process sensitive-looking path" };
       }
 
+      try {
+        const stat = await lstat(absolutePath);
+        if (stat.isSymbolicLink()) {
+          return { success: false, error: "symlinks are not supported" };
+        }
+      } catch {
+        return { success: false, error: "file not found" };
+      }
+
       let original: string;
       try {
         original = await readFile(absolutePath, "utf-8");
@@ -137,7 +147,23 @@ export function registerCompressFileFunction(
 
       const backupPath = resolveBackupPath(absolutePath);
       await writeFile(backupPath, original, "utf-8");
-      await writeFile(absolutePath, compressed, "utf-8");
+
+      let fd: Awaited<ReturnType<typeof open>> | null = null;
+      try {
+        fd = await open(
+          absolutePath,
+          constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW,
+        );
+        await fd.writeFile(compressed, "utf-8");
+      } catch (err: unknown) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === "ELOOP" || code === "EINVAL") {
+          return { success: false, error: "symlinks are not supported" };
+        }
+        return { success: false, error: "failed to write compressed file" };
+      } finally {
+        await fd?.close().catch(() => {});
+      }
 
       try {
         await recordAudit(kv, "compress", "mem::compress-file", [], {
