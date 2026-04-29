@@ -10,7 +10,6 @@
       "types": "./dist/index.d.mts",
       "import": "./dist/index.mjs"
     },
-    "./dist/standalone.mjs": "./dist/standalone.mjs",
     "./package.json": "./package.json"
   },
   "bin": {
@@ -35,14 +34,12 @@
     "memory",
     "persistent",
     "iii-engine",
-    "claude-code",
     "coding-agent",
     "context",
     "observation"
   ],
   "files": [
     "dist/",
-    "plugin/",
     "iii-config.yaml",
     "iii-config.docker.yaml",
     "docker-compose.yml",

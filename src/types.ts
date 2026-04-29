@@ -752,13 +752,6 @@ export interface FallbackConfig {
   providers: ProviderType[];
 }
 
-export interface ClaudeBridgeConfig {
-  enabled: boolean;
-  projectPath: string;
-  memoryFilePath: string;
-  lineBudget: number;
-}
-
 export interface StandaloneConfig {
   dataDir: string;
   persistPath: string;

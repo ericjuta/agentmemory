@@ -3323,7 +3323,7 @@
       html += '</div>';
 
       if (items.length === 0) {
-        html += '<div class="empty-state"><div class="empty-icon">&#9745;</div><p>No actions yet</p><p style="font-size:12px;color:var(--ink-faint);font-style:italic;">Create actions via memory_action_create MCP tool or POST /agentmemory/actions</p></div>';
+        html += '<div class="empty-state"><div class="empty-icon">&#9745;</div><p>No actions yet</p><p style="font-size:12px;color:var(--ink-faint);font-style:italic;">Create actions via POST /agentmemory/actions</p></div>';
       } else {
         html += '<table><thead><tr><th>Title</th><th>Status</th><th>Priority</th><th>Tags</th><th>Frontier</th><th>Updated</th></tr></thead><tbody>';
         items = items.slice().sort(function(a, b) { return (b.priority || 0) - (a.priority || 0); });

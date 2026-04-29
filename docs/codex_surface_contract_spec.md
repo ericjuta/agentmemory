@@ -236,13 +236,30 @@ runtime branches are more complexity than value.
 Cut directly:
 
 1. Remove MCP endpoint/resource/prompt registration from the main worker.
-2. Keep the standalone `agentmemory mcp` command only if it remains cheap and
-   isolated from the live worker; otherwise remove it too.
-3. Remove Claude bridge runtime registration and shipped Claude plugin
-   hooks/skills from the live path.
-4. Remove multi-client setup/docs from the host-local operator path.
-5. Delete tests whose only purpose is proving removed client surfaces, and keep
+2. Remove the MCP tool/resource/prompt registry if no standalone package remains.
+   If a standalone `agentmemory mcp` command is kept, it must be isolated from
+   the live worker startup path and from the native Codex proof.
+3. Remove Claude bridge runtime registration, config loading, log messages, and
+   its StateKV write path.
+4. Remove the shipped Claude plugin package, hook scripts, hook build outputs,
+   plugin skills, and package entries that publish them.
+5. Remove multi-client setup/docs from the host-local operator path.
+6. Delete tests whose only purpose is proving removed client surfaces, and keep
    only contract tests for native Codex and operator diagnostics.
+
+Known registration/file touch points:
+
+- worker registration: `src/index.ts` registers Claude bridge when enabled,
+  team memory, governance, orchestration families, API triggers, event triggers,
+  and MCP endpoints before startup reports `143 REST + 44 MCP tools + 6 MCP
+  resources + 3 MCP prompts`
+- API/MCP surface: `src/triggers/api.ts`, `src/mcp/server.ts`,
+  `src/mcp/tools-registry.ts`, and `src/mcp/standalone.ts`
+- Claude/plugin surface: `src/functions/claude-bridge.ts`, `src/hooks/*`,
+  `plugin/hooks.json`, `plugin/scripts/*`, `plugin/skills/*`,
+  `plugin/.claude-plugin/plugin.json`, and `package.json`
+- docs/tests to narrow: `README.md`, MCP standalone tests, plugin tests, and
+  any count assertions tied to removed tools/endpoints
 
 Expected impact:
 
@@ -258,6 +275,10 @@ Guardrail:
 - `npm test` should pass after removed-surface tests are deleted or narrowed
 - package/export cleanup should happen in the same cut so dead files are not
   left behind
+- the startup endpoint/tool count log must be updated in the same commit as
+  registration changes
+- no compatibility stub should remain for deleted host-local surfaces unless an
+  external consumer is found by live config/log evidence
 
 ### P1 Cut: Remove Non-Codex Coordination Primitives From The Hot Runtime
 
@@ -276,6 +297,16 @@ unless the Codex explicit memory lane is actively using them:
 - Claude bridge
 - generic MCP governance wrappers
 - generic import/export endpoints, except for operator backup/restore
+
+Treat these as feature-family lanes, not one giant edit. The safer grouping is:
+
+1. client adapters: MCP, Claude bridge, plugin, hooks
+2. collaboration/runtime coordination: team, mesh, signals, checkpoints,
+   sentinels, leases
+3. planning/editorial extras: routines, routine compiler, sketches, snapshots,
+   Obsidian export
+4. operator backup exceptions: import/export only if still used for archive or
+   rollback of destructive retention runs
 
 Implementation shape:
 
@@ -317,6 +348,23 @@ For all other projects:
 3. Rebuild retrieval indexes from the retained set.
 4. Run index compaction and restart iii-engine once to measure cold RSS.
 
+Scope priority:
+
+- largest likely savings: `mem:obs:<session>`, `mem:turn-capsules`,
+  `mem:working-sets`, `mem:access`, `mem:context-injections`, stale
+  `mem:enriched:<session>`, and retry/maintenance transient scopes
+- rebuildable index storage: `mem:index:bm25`,
+  `mem:index:retrieval-blocks`, their manifests, and their sharded physical
+  scopes after the retained record set is finalized
+- durable keep set: `mem:memories`, `mem:summaries`,
+  `mem:retrieval-blocks:*` for retained projects, `mem:handoff-packets`,
+  `mem:crystals`, `mem:lessons`, `mem:insights`, `mem:decisions`,
+  `mem:guardrails`, and `mem:component-dossiers`
+- removable only after feature deletion: `mem:claude-bridge`,
+  `mem:team:*`, `mem:mesh`, `mem:signals`, `mem:checkpoints`,
+  `mem:sentinels`, `mem:sketches`, `mem:routines`, `mem:routine-runs`,
+  `mem:leases`, `mem:mission-runs`, and related audit rows
+
 Expected impact:
 
 - likely the largest storage win
@@ -327,6 +375,8 @@ Expected impact:
 Guardrail:
 
 - dry-run must report bytes by scope and project before mutation
+- dry-run must distinguish archiveable, deletable, rebuildable, and must-keep
+  bytes
 - destructive deletion must require an explicit `force: true` request
 - export/archive must be available before the first destructive run
 - Codex integration proof and a project-scoped recall probe must pass after
@@ -398,15 +448,20 @@ Before deleting data or permanently disabling surfaces, collect:
 
 ### Suggested Implementation Order
 
-1. Remove MCP/plugin/Claude/team/mesh registration from the live worker.
-2. Add a dry-run retention endpoint that reports deletable bytes by project and
+1. Add a contract test/proof fixture that defines the exact native Codex
+   endpoints and operator diagnostics that must survive.
+2. Remove MCP/plugin/Claude registration and packaging from the live worker.
+3. Remove team/mesh/signals/checkpoints/sentinels/sketches/routines/snapshots in
+   feature-family lanes only after the explicit Codex command surface no longer
+   calls them.
+4. Add a dry-run retention endpoint that reports deletable bytes by project and
    scope for the Codex-only allowlist.
-3. Add archive-then-delete support for non-allowlisted raw observations, turn
+5. Add archive-then-delete support for non-allowlisted raw observations, turn
    capsules, working sets, and transient scopes.
-4. Rebuild retrieval indexes from retained data and compact.
-5. Restart iii-engine during a quiet window and compare cold RSS.
-6. Migrate Codex to the unified bootstrap/retrieval/closeout contracts.
-7. Gate now-dead generic lifecycle endpoints from `codex-native`.
+6. Rebuild retrieval indexes from retained data and compact.
+7. Restart iii-engine during a quiet window and compare cold RSS.
+8. Migrate Codex to the unified bootstrap/retrieval/closeout contracts.
+9. Gate now-dead generic lifecycle endpoints from `codex-native`.
 
 ## Documentation Outcome
 

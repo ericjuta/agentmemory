@@ -32,7 +32,6 @@ interface Counters {
   vectorSearchTotal: Counter;
   autoForgetTotal: Counter;
   profileGenerated: Counter;
-  claudeBridgeSync: Counter;
   graphExtraction: Counter;
   consolidationRun: Counter;
   teamShare: Counter;
@@ -74,7 +73,6 @@ const COUNTER_NAMES: Array<[keyof Counters, string]> = [
   ["vectorSearchTotal", "vector_search.total"],
   ["autoForgetTotal", "auto_forget.total"],
   ["profileGenerated", "profile.generated"],
-  ["claudeBridgeSync", "claude_bridge.sync"],
   ["graphExtraction", "graph.extraction"],
   ["consolidationRun", "consolidation.run"],
   ["teamShare", "team.share"],

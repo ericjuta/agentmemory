@@ -4,13 +4,11 @@ import {
   getEnvVar,
   loadEmbeddingConfig,
   loadFallbackConfig,
-  loadClaudeBridgeConfig,
   loadTeamConfig,
   loadSnapshotConfig,
   isGraphExtractionEnabled,
   isAutoCompressEnabled,
   isConsolidationEnabled,
-  isContextInjectionEnabled,
 } from "./config.js";
 import {
   createProvider,
@@ -52,7 +50,6 @@ import { registerProfileFunction } from "./functions/profile.js";
 import { registerAutoForgetFunction } from "./functions/auto-forget.js";
 import { registerExportImportFunction } from "./functions/export-import.js";
 import { registerEnrichFunction } from "./functions/enrich.js";
-import { registerClaudeBridgeFunction } from "./functions/claude-bridge.js";
 import { registerGraphFunction, pruneGraphForObservation } from "./functions/graph.js";
 import { registerConsolidationPipelineFunction } from "./functions/consolidation-pipeline.js";
 import { registerTeamFunction } from "./functions/team.js";
@@ -113,7 +110,6 @@ import {
 import { registerMaintenanceCatchUpFunction } from "./functions/maintenance-catch-up.js";
 import { registerApiTriggers } from "./triggers/api.js";
 import { registerEventTriggers } from "./triggers/events.js";
-import { registerMcpEndpoints } from "./mcp/server.js";
 import { startViewerServer } from "./viewer/server.js";
 import { MetricsStore } from "./eval/metrics-store.js";
 import { DedupMap } from "./functions/dedup.js";
@@ -266,14 +262,6 @@ async function main() {
   registerConsolidatedMemoryBackfillFunction(sdk, kv);
   registerDeferredWorkFunction(sdk, kv);
 
-  const claudeBridgeConfig = loadClaudeBridgeConfig();
-  if (claudeBridgeConfig.enabled) {
-    registerClaudeBridgeFunction(sdk, kv, claudeBridgeConfig);
-    console.log(
-      `[agentmemory] Claude bridge: syncing to ${claudeBridgeConfig.memoryFilePath}`,
-    );
-  }
-
   if (isGraphExtractionEnabled()) {
     registerGraphFunction(sdk, kv, provider);
     console.log(`[agentmemory] Knowledge graph: extraction enabled`);
@@ -289,16 +277,6 @@ async function main() {
   } else {
     console.log(
       `[agentmemory] Auto-compress: OFF (default, #138) — observations indexed via zero-LLM synthetic compression. Set AGENTMEMORY_AUTO_COMPRESS=true to opt-in to LLM-powered summaries (uses your API key).`,
-    );
-  }
-
-  if (isContextInjectionEnabled()) {
-    console.log(
-      `[agentmemory] WARNING: AGENTMEMORY_INJECT_CONTEXT=true — the PreToolUse and SessionStart hooks will inject up to ~4000 chars of memory context into every tool turn. On Claude Pro this burns session tokens proportional to your tool-call frequency (see #143). Set AGENTMEMORY_INJECT_CONTEXT=false to disable.`,
-    );
-  } else {
-    console.log(
-      `[agentmemory] Context injection: OFF (default, #143) — hooks capture observations but do not inject context into Claude Code's conversation. Set AGENTMEMORY_INJECT_CONTEXT=true to opt-in (warning: expect your Claude Pro allocation to drain faster).`,
     );
   }
 
@@ -379,7 +357,6 @@ async function main() {
 
   registerApiTriggers(sdk, kv, secret, metricsStore, provider);
   registerEventTriggers(sdk, kv, compressionTracker);
-  registerMcpEndpoints(sdk, kv, secret);
 
   const healthMonitor = registerHealthMonitor(sdk, kv, () => {
     const cm = getCompressMetrics();
@@ -497,7 +474,7 @@ async function main() {
     `[agentmemory] Ready. ${embeddingProvider ? "Triple-stream (BM25+Vector+Graph)" : "BM25+Graph"} search active.`,
   );
   console.log(
-    `[agentmemory] Endpoints: 143 REST + 44 MCP tools + 6 MCP resources + 3 MCP prompts`,
+    `[agentmemory] Endpoints: 147 REST`,
   );
 
   const viewerPort = config.restPort + 2;

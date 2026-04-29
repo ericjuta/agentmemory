@@ -35,12 +35,10 @@ Commands:
   demo               Seed sample sessions and show recall in action
   codex-proof        Prove the live Codex-native AgentMemory contract
   upgrade            Upgrade local deps + iii runtime (best effort)
-  mcp                Start standalone MCP server (no engine required)
 
 Options:
   --help, -h         Show this help
   --verbose, -v      Show engine stderr and diagnostic info on startup
-  --tools all|core   Tool visibility (default: core = 7 tools)
   --no-engine        Skip auto-starting iii-engine
   --port <N>         Override REST port (default: 3111)
 
@@ -50,15 +48,8 @@ Quick start:
   npx @agentmemory/agentmemory codex-proof --port 3113
   npx @agentmemory/agentmemory demo     # try it in 30 seconds (needs server running)
   npx @agentmemory/agentmemory upgrade  # upgrade agentmemory + iii runtime
-  npx @agentmemory/agentmemory mcp      # standalone MCP server (no engine)
-  npx @agentmemory/mcp                  # same as above (shim package)
 `);
   process.exit(0);
-}
-
-const toolsIdx = args.indexOf("--tools");
-if (toolsIdx !== -1 && args[toolsIdx + 1]) {
-  process.env["AGENTMEMORY_TOOLS"] = args[toolsIdx + 1];
 }
 
 const portIdx = args.indexOf("--port");
@@ -278,8 +269,6 @@ function installInstructions(): string[] {
       "     2. Start Docker Desktop (engine must be running)",
       "     3. Re-run: npx @agentmemory/agentmemory",
       "",
-      "Or skip the engine entirely for standalone MCP:",
-      "  npx @agentmemory/agentmemory mcp",
     ];
   }
   return [
@@ -289,9 +278,6 @@ function installInstructions(): string[] {
     "     (installs the prebuilt iii binary into ~/.local/bin/iii)",
     "",
     "  B) Docker: install Docker Desktop or docker-ce, then re-run",
-    "",
-    "Or skip the engine entirely for standalone MCP:",
-    "  npx @agentmemory/agentmemory mcp",
     "",
     "Docs: https://iii.dev/docs",
   ];
@@ -942,16 +928,11 @@ async function runUpgrade() {
   );
 }
 
-async function runMcp(): Promise<void> {
-  await import("./mcp/standalone.js");
-}
-
 const commands: Record<string, () => Promise<void>> = {
   status: runStatus,
   "codex-proof": runCodexProof,
   demo: runDemo,
   upgrade: runUpgrade,
-  mcp: runMcp,
 };
 
 const handler = commands[args[0] ?? ""] ?? main;

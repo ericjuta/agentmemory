@@ -2088,51 +2088,6 @@ export function registerApiTriggers(
     config: { api_path: "/agentmemory/auto-forget", http_method: "POST" },
   });
 
-  sdk.registerFunction("api::claude-bridge-read", 
-    async (req: ApiRequest): Promise<Response> => {
-      const authErr = checkAuth(req, secret);
-      if (authErr) return authErr;
-      try {
-        const result = await sdk.trigger({ function_id: "mem::claude-bridge-read", payload: {} });
-        return { status_code: 200, body: result };
-      } catch {
-        return {
-          status_code: 404,
-          body: { error: "Claude bridge not enabled" },
-        };
-      }
-    },
-  );
-  sdk.registerTrigger({
-    type: "http",
-    function_id: "api::claude-bridge-read",
-    config: { api_path: "/agentmemory/claude-bridge/read", http_method: "GET" },
-  });
-
-  sdk.registerFunction("api::claude-bridge-sync", 
-    async (req: ApiRequest): Promise<Response> => {
-      const authErr = checkAuth(req, secret);
-      if (authErr) return authErr;
-      try {
-        const result = await sdk.trigger({ function_id: "mem::claude-bridge-sync", payload: {} });
-        return { status_code: 200, body: result };
-      } catch {
-        return {
-          status_code: 404,
-          body: { error: "Claude bridge not enabled" },
-        };
-      }
-    },
-  );
-  sdk.registerTrigger({
-    type: "http",
-    function_id: "api::claude-bridge-sync",
-    config: {
-      api_path: "/agentmemory/claude-bridge/sync",
-      http_method: "POST",
-    },
-  });
-
   sdk.registerFunction("api::graph-query", 
     async (
       req: ApiRequest<{

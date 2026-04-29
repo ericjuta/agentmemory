@@ -24,7 +24,6 @@ export const KV = {
   beliefs: "mem:beliefs",
   beliefEvidence: "mem:belief-evidence",
   profiles: "mem:profiles",
-  claudeBridge: "mem:claude-bridge",
   graphNodes: "mem:graph:nodes",
   graphEdges: "mem:graph:edges",
   turnCapsules: "mem:turn-capsules",

@@ -6,7 +6,6 @@ import type {
   ProviderConfig,
   EmbeddingConfig,
   FallbackConfig,
-  ClaudeBridgeConfig,
   TeamConfig,
 } from "./types.js";
 
@@ -148,26 +147,6 @@ export function detectEmbeddingProvider(
   return null;
 }
 
-export function loadClaudeBridgeConfig(): ClaudeBridgeConfig {
-  const env = getMergedEnv();
-  const enabled = env["CLAUDE_MEMORY_BRIDGE"] === "true";
-  const projectPath = env["CLAUDE_PROJECT_PATH"] || "";
-  const lineBudget = safeParseInt(env["CLAUDE_MEMORY_LINE_BUDGET"], 200);
-  let memoryFilePath = "";
-  if (enabled && projectPath) {
-    const safePath = projectPath.replace(/[/\\]/g, "-").replace(/^-/, "");
-    memoryFilePath = join(
-      homedir(),
-      ".claude",
-      "projects",
-      safePath,
-      "memory",
-      "MEMORY.md",
-    );
-  }
-  return { enabled, projectPath, memoryFilePath, lineBudget };
-}
-
 export function loadTeamConfig(): TeamConfig | null {
   const env = getMergedEnv();
   const teamId = env["TEAM_ID"];
@@ -212,33 +191,8 @@ export function isAutoCompressEnabled(): boolean {
   return getMergedEnv()["AGENTMEMORY_AUTO_COMPRESS"] === "true";
 }
 
-// Hook-level context injection into Claude Code's conversation is OFF by
-// default as of 0.8.10 (see #143). When disabled, pre-tool-use and
-// session-start hooks still POST observations for background capture, but
-// never write context to stdout — so Claude Code doesn't inject an extra
-// ~4000-char blob into every tool turn. 0.8.8 stopped the agentmemory-side
-// Claude calls (via ANTHROPIC_API_KEY); this stops the Claude Code-side
-// token burn where every tool call silently grew the model input window.
-// Users who want the in-conversation context injection explicitly opt in
-// with AGENTMEMORY_INJECT_CONTEXT=true and get a loud startup warning.
-export function isContextInjectionEnabled(): boolean {
-  return getMergedEnv()["AGENTMEMORY_INJECT_CONTEXT"] === "true";
-}
-
 export function getConsolidationDecayDays(): number {
   return safeParseInt(getMergedEnv()["CONSOLIDATION_DECAY_DAYS"], 30);
-}
-
-export function isStandaloneMcp(): boolean {
-  return getMergedEnv()["STANDALONE_MCP"] === "true";
-}
-
-export function getStandalonePersistPath(): string {
-  const env = getMergedEnv();
-  return (
-    env["STANDALONE_PERSIST_PATH"] ||
-    join(homedir(), ".agentmemory", "standalone.json")
-  );
 }
 
 const VALID_PROVIDERS = new Set([
