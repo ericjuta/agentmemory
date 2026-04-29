@@ -85,6 +85,40 @@ Passive watch criteria:
 - active sessions older than 24h stay at zero after routine heal/cleanup.
 - no repeated StateKV timeout burst or pressure streak reappears.
 
+2026-04-29 observe-pressure cooldown update:
+
+- Live service hit an observe/write-pressure brownout after compression and
+  pruning work: health could return 200, but mem::observe calls were timing out
+  at the iii-engine 30s invocation boundary, hot-path pressure skips were
+  frequent, and Codex proof latency was degraded.
+- Compression retry was disabled in live .env.local with
+  COMPRESS_RETRY_ENABLED=false because retrieval and graph queues were clear and
+  compression was maintenance debt, not serving-critical work.
+- Ingestion was then temporarily disabled in live .env.local with
+  AGENTMEMORY_INGEST_ENABLED=false to stop the observe storm and let the
+  worker/StateKV path cool down.
+- After the cooldown restart, /agentmemory/health returned HTTP 200 in about
+  10ms, CPU dropped to single digits for both worker and iii-engine, KV latency
+  was low, and recent pressure logs were quiet.
+- Read latency improved but was not fully solved: search was roughly 1-2s, and
+  Codex proof still passed with slow session/context legs.
+- This is a temporary service-protection posture. It intentionally stops memory
+  capture and must not be treated as the desired steady state.
+
+Cooldown re-enable criteria:
+
+- Keep AGENTMEMORY_INGEST_ENABLED=false and COMPRESS_RETRY_ENABLED=false until
+  the service has a quiet window with no repeated mem::observe, StateKV timeout,
+  or hot-path pressure log bursts.
+- Re-enable ingestion before compression retry. Recreate the worker, then watch
+  health, Codex proof, observe logs, and queue deltas.
+- If observe timeouts return immediately, leave compression retry disabled and
+  implement the observe hot-path fail-fast work below before restoring normal
+  capture.
+- Re-enable compression retry only after ingestion is stable and read latency is
+  acceptable. Drain compression in tiny automatic or manual wakes; do not prune
+  during this recovery path.
+
 ## P1. Predictable Compression Backlog Drain
 
 Problem:
@@ -354,6 +388,81 @@ Acceptance:
 
 - A green health endpoint plus large iii-engine RSS has a direct diagnostic path
   and a documented operator decision.
+
+## P1. Observe Hot-Path Fail-Fast Under StateKV Pressure
+
+Problem:
+
+- During the 2026-04-29 live brownout, mem::observe calls accumulated enough
+  StateKV/write pressure to hit the iii-engine 30s invocation timeout.
+- Hot-path pressure detection shed some ephemeral observations and deferred
+  synthetic compression, but persistent observe calls could still spend too long
+  trying to capture state while the service was already hot.
+- Operator relief required disabling AGENTMEMORY_INGEST_ENABLED, which protects
+  serving but intentionally stops capture. That is acceptable as an emergency
+  posture, not as the steady-state answer.
+
+End state:
+
+- Observe remains best-effort under pressure and returns quickly, even when
+  StateKV writes or derived indexing are slow.
+- Persistent observations are bounded by short local budgets before they reach
+  iii-engine's 30s invocation timeout.
+- User-facing session start, context, search, and Codex proof stay available
+  while low-priority capture is shed or queued.
+- Operators can tell from health/logs whether capture is enabled, shedding,
+  queued, or emergency-disabled.
+
+Implementation:
+
+1. Add a short observe write budget for the hot path. When the budget expires,
+   return a successful skipped/deferred result instead of waiting for the engine
+   invocation timeout.
+2. Make StateKV timeout and temporary-unavailable errors first-class observe
+   pressure signals:
+   - do not retry synchronously on the hot path
+   - record a compact pressure reason
+   - defer only bounded follow-up work
+3. Split observe work into required and optional phases:
+   - required: validate payload, decide persistence class, record minimal
+     acceptance/skipped result
+   - optional: full observation write, retrieval block upsert, access tracking,
+     synthetic compression, graph/index work
+4. Ensure optional phases obey existing write gates and have their own small
+   budgets. A failure in one optional phase must not keep the HTTP call open.
+5. Add a capture status field to health/readback:
+   - enabled
+   - shedding
+   - degraded
+   - emergency_disabled
+   - last pressure reason and last transition time
+6. Keep AGENTMEMORY_INGEST_ENABLED=false as the emergency kill switch, but
+   document that the durable fix is observe fail-fast, not long-term disabled
+   ingestion.
+
+Tests:
+
+- Slow StateKV set/list in observe returns before the configured hot-path budget
+  and does not wait for the 30s iii-engine timeout.
+- Critical hot-path pressure sheds ephemeral and diagnostics-only observations
+  immediately.
+- Persistent observation under pressure returns a bounded skipped/deferred result
+  and does not run synthetic compression inline.
+- Retrieval block/index/access-tracker failures from observe do not fail or hang
+  the whole observe call.
+- Health reports capture status and pressure reason when observe shedding is
+  active or ingestion is disabled by env.
+
+Acceptance:
+
+- Under injected StateKV write timeout, /agentmemory/observe completes within the
+  configured budget and no Invocation timeout after 30000ms: mem::observe appears
+  in engine logs.
+- Codex proof still passes while observe is shedding.
+- Ingestion can be re-enabled with compression retry still off, and observe
+  pressure does not recreate the brownout.
+- Compression backlog remains maintenance debt and is not drained until observe
+  capture is stable.
 
 ## Longer-Term Improvement Backlog
 
