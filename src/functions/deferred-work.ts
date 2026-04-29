@@ -29,6 +29,17 @@ export interface DeferredWorkStatus {
   totalQueued: number;
 }
 
+export interface DeferredWorkStatusOptions {
+  refresh?: boolean;
+  lightweight?: boolean;
+}
+
+const DEFAULT_DEFERRED_WORK_CACHE_MS = 5000;
+let deferredWorkCache = new WeakMap<
+  StateKV,
+  { expiresAt: number; promise: Promise<DeferredWorkStatus> }
+>();
+
 function parseTimestampMs(value: unknown): number | null {
   if (typeof value !== "string") return null;
   const parsed = Date.parse(value);
@@ -38,12 +49,38 @@ function parseTimestampMs(value: unknown): number | null {
 async function compressionStatus(
   kv: StateKV,
   nowMs: number,
+  options: DeferredWorkStatusOptions = {},
 ): Promise<DeferredWorkStatus["compression"]> {
   try {
-    const [entries, laneState] = await Promise.all([
-      kv.list<CompressRetryEntry>(KV.compressRetry),
-      kv.get<MaintenanceLaneState>(KV.maintenanceLaneState, "compression").catch(() => null),
-    ]);
+    const laneState = await kv
+      .get<MaintenanceLaneState>(KV.maintenanceLaneState, "compression")
+      .catch(() => null);
+    if (options.lightweight) {
+      const queued =
+        typeof laneState?.lastQueued === "number" &&
+        Number.isFinite(laneState.lastQueued)
+          ? Math.max(0, laneState.lastQueued)
+          : 0;
+      return {
+        queued,
+        ...(laneState
+          ? {
+              laneState,
+              ...(typeof laneState.queuedDeltaSinceLastWake === "number"
+                ? { queuedDeltaSinceLastWake: laneState.queuedDeltaSinceLastWake }
+                : {}),
+              ...(typeof laneState.drainRatePerHour === "number"
+                ? { drainRatePerHour: laneState.drainRatePerHour }
+                : {}),
+              ...("estimatedDrainEtaMs" in laneState
+                ? { estimatedDrainEtaMs: laneState.estimatedDrainEtaMs ?? null }
+                : {}),
+            }
+          : {}),
+      };
+    }
+
+    const entries = await kv.list<CompressRetryEntry>(KV.compressRetry);
     let oldestMs: number | null = null;
     let newestMs: number | null = null;
     let oldestFailedAt: string | undefined;
@@ -96,7 +133,9 @@ async function compressionStatus(
 async function countScope(
   kv: StateKV,
   scope: string,
+  options: DeferredWorkStatusOptions = {},
 ): Promise<{ queued: number; error?: string }> {
+  if (options.lightweight) return { queued: 0 };
   try {
     return { queued: (await kv.list(scope)).length };
   } catch (err) {
@@ -107,14 +146,24 @@ async function countScope(
   }
 }
 
-export async function getDeferredWorkStatus(
+function readCacheMs(): number {
+  const raw = process.env.AGENTMEMORY_DEFERRED_WORK_CACHE_MS;
+  if (!raw) return DEFAULT_DEFERRED_WORK_CACHE_MS;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0
+    ? parsed
+    : DEFAULT_DEFERRED_WORK_CACHE_MS;
+}
+
+async function buildDeferredWorkStatus(
   kv: StateKV,
+  options: DeferredWorkStatusOptions = {},
 ): Promise<DeferredWorkStatus> {
   const nowMs = Date.now();
   const [compression, retrievalBlocks, graphExtraction] = await Promise.all([
-    compressionStatus(kv, nowMs),
-    countScope(kv, KV.retrievalBlockRetry),
-    countScope(kv, KV.graphExtractionRetry),
+    compressionStatus(kv, nowMs, options),
+    countScope(kv, KV.retrievalBlockRetry, options),
+    countScope(kv, KV.graphExtractionRetry, options),
   ]);
   const totalQueued =
     compression.queued + retrievalBlocks.queued + graphExtraction.queued;
@@ -125,6 +174,36 @@ export async function getDeferredWorkStatus(
     graphExtraction,
     totalQueued,
   };
+}
+
+export async function getDeferredWorkStatus(
+  kv: StateKV,
+  options: DeferredWorkStatusOptions = {},
+): Promise<DeferredWorkStatus> {
+  if (options.lightweight) return buildDeferredWorkStatus(kv, options);
+  const cacheMs = readCacheMs();
+  if (options.refresh || cacheMs <= 0) return buildDeferredWorkStatus(kv);
+
+  const now = Date.now();
+  const cached = deferredWorkCache.get(kv);
+  if (cached && cached.expiresAt > now) return cached.promise;
+
+  const promise = buildDeferredWorkStatus(kv).catch((err) => {
+    if (deferredWorkCache.get(kv)?.promise === promise) {
+      deferredWorkCache.delete(kv);
+    }
+    throw err;
+  });
+  deferredWorkCache.set(kv, { expiresAt: now + cacheMs, promise });
+  return promise;
+}
+
+export function clearDeferredWorkStatusCache(kv?: StateKV): void {
+  if (kv) {
+    deferredWorkCache.delete(kv);
+    return;
+  }
+  deferredWorkCache = new WeakMap();
 }
 
 export function registerDeferredWorkFunction(sdk: ISdk, kv: StateKV): void {

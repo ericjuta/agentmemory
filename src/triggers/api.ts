@@ -670,7 +670,7 @@ export function registerApiTriggers(
         provider && "circuitState" in provider ? provider.circuitState : null;
       const [deferredWork, writeGates] = await Promise.all([
         settleWithin(
-          getDeferredWorkStatus(kv).catch((err) => ({
+          getDeferredWorkStatus(kv, { lightweight: true }).catch((err) => ({
             error: err instanceof Error ? err.message : String(err),
           })),
           HEALTH_COMPONENT_TIMEOUT_MS,

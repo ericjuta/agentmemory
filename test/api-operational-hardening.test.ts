@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { registerApiTriggers } from "../src/triggers/api.js";
+import { getDeferredWorkStatus } from "../src/functions/deferred-work.js";
 import { KV } from "../src/state/schema.js";
 import { mockKV, mockSdk } from "./helpers/mocks.js";
 
@@ -9,14 +10,16 @@ afterEach(() => {
 });
 
 describe("operational hardening APIs", () => {
-  it("exposes deferred work and write gates on health", async () => {
+  it("exposes lightweight deferred work and write gates on health", async () => {
     const sdk = mockSdk();
     const kv = mockKV();
-    await kv.set(KV.compressRetry, "obs_1", {
-      obsId: "obs_1",
-      sessionId: "ses_1",
-      retries: 0,
-      failedAt: "2026-04-25T00:00:00.000Z",
+    await kv.set(KV.maintenanceLaneState, "compression", {
+      lane: "compression",
+      lastQueued: 1,
+      lastWorkDone: 1,
+      currentBatchSize: 1,
+      currentIntervalMs: 60_000,
+      updatedAt: "2026-04-25T00:00:00.000Z",
     });
     await kv.set(KV.retrievalBlockRetry, "rblk_1", {
       blockId: "rblk_1",
@@ -56,16 +59,14 @@ describe("operational hardening APIs", () => {
     expect(response.body.deferredWork).toMatchObject({
       compression: {
         queued: 1,
-        oldestFailedAt: "2026-04-25T00:00:00.000Z",
-        oldestAgeMs: expect.any(Number),
       },
-      retrievalBlocks: { queued: 1 },
-      graphExtraction: { queued: 1 },
-      totalQueued: 3,
+      retrievalBlocks: { queued: 0 },
+      graphExtraction: { queued: 0 },
+      totalQueued: 1,
     });
     expect(response.body.maintenance).toEqual({
       status: "behind",
-      totalQueued: 3,
+      totalQueued: 1,
       paused: false,
     });
     expect(response.body.writeGates).toMatchObject({
@@ -73,6 +74,45 @@ describe("operational hardening APIs", () => {
       derivedKvWrites: null,
       graphExtraction: null,
       indexPersistence: null,
+    });
+  });
+
+  it("keeps full deferred work counts available outside health", async () => {
+    const kv = mockKV();
+    await kv.set(KV.compressRetry, "obs_1", {
+      obsId: "obs_1",
+      sessionId: "ses_1",
+      retries: 0,
+      failedAt: "2026-04-25T00:00:00.000Z",
+    });
+    await kv.set(KV.retrievalBlockRetry, "rblk_1", {
+      blockId: "rblk_1",
+      sourceType: "memory",
+      retries: 0,
+      firstFailedAt: "2026-04-25T00:00:00.000Z",
+      lastFailedAt: "2026-04-25T00:00:00.000Z",
+      lastError: "timeout",
+    });
+    await kv.set(KV.graphExtractionRetry, "obs_2", {
+      observationId: "obs_2",
+      sessionId: "ses_1",
+      retries: 0,
+      firstDeferredAt: "2026-04-25T00:00:00.000Z",
+      lastDeferredAt: "2026-04-25T00:00:00.000Z",
+      lastError: "health_unhealthy",
+    });
+
+    const status = await getDeferredWorkStatus(kv as never, { refresh: true });
+
+    expect(status).toMatchObject({
+      compression: {
+        queued: 1,
+        oldestFailedAt: "2026-04-25T00:00:00.000Z",
+        oldestAgeMs: expect.any(Number),
+      },
+      retrievalBlocks: { queued: 1 },
+      graphExtraction: { queued: 1 },
+      totalQueued: 3,
     });
   });
 
@@ -210,14 +250,12 @@ describe("operational hardening APIs", () => {
     expect(response.body.writeGates.llmWork).toBe("cpu_critical_95%");
   });
 
-  it("bounds slow health subcomponents instead of hanging the endpoint", async () => {
+  it("does not list deferred queues during health under pressure", async () => {
     vi.useFakeTimers();
     const sdk = mockSdk();
     const kv = mockKV();
     kv.list = vi.fn(async (scope: string) => {
-      if (scope === KV.compressRetry) {
-        return new Promise<unknown[]>(() => {});
-      }
+      if (scope === KV.compressRetry) throw new Error("full compression list should not run");
       return [];
     });
     registerApiTriggers(sdk as never, kv as never);
@@ -230,12 +268,54 @@ describe("operational hardening APIs", () => {
     const response = await pending;
 
     expect(response.status_code).toBe(200);
-    expect(response.body.deferredWork.error).toBe(
-      "health_deferred_work_timeout",
-    );
+    expect(response.body.deferredWork).toMatchObject({
+      compression: { queued: 0 },
+      retrievalBlocks: { queued: 0 },
+      graphExtraction: { queued: 0 },
+      totalQueued: 0,
+    });
     expect(response.body.healthTimeouts).toMatchObject({
       componentTimeoutMs: 1500,
     });
+  });
+
+  it("uses lightweight deferred work for health under pressure", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    const listedScopes: string[] = [];
+    const originalList = kv.list;
+    kv.list = vi.fn(async (scope: string) => {
+      listedScopes.push(scope);
+      return originalList(scope);
+    });
+    await kv.set(KV.maintenanceLaneState, "compression", {
+      lane: "compression",
+      lastQueued: 42,
+      lastWorkDone: 5,
+      currentBatchSize: 6,
+      currentIntervalMs: 60_000,
+      updatedAt: "2026-04-29T00:00:00.000Z",
+    });
+    registerApiTriggers(sdk as never, kv as never);
+
+    const response = (await sdk.trigger("api::health", {
+      headers: {},
+    })) as {
+      status_code: number;
+      body: {
+        deferredWork: {
+          compression: { queued: number };
+          totalQueued: number;
+        };
+      };
+    };
+
+    expect(response.status_code).toBe(200);
+    expect(response.body.deferredWork.compression.queued).toBe(42);
+    expect(response.body.deferredWork.totalQueued).toBe(42);
+    expect(listedScopes).not.toContain(KV.compressRetry);
+    expect(listedScopes).not.toContain(KV.retrievalBlockRetry);
+    expect(listedScopes).not.toContain(KV.graphExtractionRetry);
   });
 
   it("forwards whitelisted retrieval block diagnostic options", async () => {

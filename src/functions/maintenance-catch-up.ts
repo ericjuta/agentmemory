@@ -411,7 +411,9 @@ export function registerMaintenanceCatchUpFunction(sdk: ISdk, kv: StateKV): void
       const workDone = workDoneFromResult(lane, result);
       let laneState: MaintenanceLaneState | undefined;
       if (lane === "compression") {
-        const afterWork = await getDeferredWorkStatus(kv).catch(() => deferredWork);
+        const afterWork = await getDeferredWorkStatus(kv, { refresh: true }).catch(
+          () => deferredWork,
+        );
         const previous = await readCompressionLaneState(kv);
         laneState = await writeCompressionLaneState(
           kv,
