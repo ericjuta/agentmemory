@@ -15,6 +15,9 @@ const DEFAULT_MAX_BATCH_SIZE = 64;
 const DEFAULT_CANDIDATE_SCAN_LIMIT = 2_500;
 const DEFAULT_TIME_BUDGET_MS = 6_000;
 const DEFAULT_COVERAGE_TARGET = 0.98;
+const DEFAULT_IDLE_MAX_CPU_PERCENT = 35;
+const DEFAULT_IDLE_MAX_EVENT_LOOP_LAG_MS = 40;
+const DEFAULT_IDLE_MAX_KV_LATENCY_MS = 200;
 
 interface RetrievalVectorRepairWorkerPayload {
   workerId?: unknown;
@@ -27,6 +30,7 @@ interface RetrievalVectorRepairWorkerPayload {
   resetCursor?: unknown;
   dryRun?: unknown;
   scheduleSave?: unknown;
+  requireIdle?: unknown;
 }
 
 interface RetrievalVectorRepairLease {
@@ -117,6 +121,36 @@ function stringValue(value: unknown, fallback: string): string {
 
 function cpuPercent(snapshot: Awaited<ReturnType<typeof getLatestHealth>>): number {
   return snapshot?.cpu?.percent ?? 0;
+}
+
+function idlePauseReason(
+  snapshot: Awaited<ReturnType<typeof getLatestHealth>>,
+): string | null {
+  const cpu = cpuPercent(snapshot);
+  const lag = snapshot?.eventLoopLagMs ?? 0;
+  const kvLatency = snapshot?.kvConnectivity?.latencyMs ?? 0;
+  const maxCpu = positiveInteger(
+    process.env.RETRIEVAL_VECTOR_REPAIR_IDLE_MAX_CPU_PERCENT,
+    DEFAULT_IDLE_MAX_CPU_PERCENT,
+  );
+  const maxLag = positiveInteger(
+    process.env.RETRIEVAL_VECTOR_REPAIR_IDLE_MAX_EVENT_LOOP_LAG_MS,
+    DEFAULT_IDLE_MAX_EVENT_LOOP_LAG_MS,
+  );
+  const maxKvLatency = positiveInteger(
+    process.env.RETRIEVAL_VECTOR_REPAIR_IDLE_MAX_KV_LATENCY_MS,
+    DEFAULT_IDLE_MAX_KV_LATENCY_MS,
+  );
+  if (cpu >= maxCpu) {
+    return `idle_required_cpu_${Math.round(cpu)}_gte_${maxCpu}`;
+  }
+  if (lag >= maxLag) {
+    return `idle_required_event_loop_lag_${Math.round(lag)}_gte_${maxLag}`;
+  }
+  if (kvLatency >= maxKvLatency) {
+    return `idle_required_kv_latency_${Math.round(kvLatency)}_gte_${maxKvLatency}`;
+  }
+  return null;
 }
 
 function adaptiveBatchSize(cpu: number, maxBatchSize: number): number {
@@ -233,6 +267,18 @@ export function registerRetrievalVectorRepairWorkerFunction(
             success: true,
             skipped: true,
             reason: pauseReason,
+            workDone: 0,
+            progress,
+          };
+        }
+        const requireIdle = booleanValue(data.requireIdle, true);
+        const idleReason = requireIdle ? idlePauseReason(health) : null;
+        if (idleReason) {
+          const progress = await markPaused(kv, workerId, idleReason);
+          return {
+            success: true,
+            skipped: true,
+            reason: idleReason,
             workDone: 0,
             progress,
           };

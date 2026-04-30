@@ -16,6 +16,10 @@ type ContextResponse = {
   blocks: number;
   tokens: number;
   trace: unknown;
+  degraded?: boolean;
+  fallback?: "memory-cache" | "last-known-good" | "empty";
+  pressure?: unknown;
+  ageMs?: number;
   cache?: {
     status: "hit" | "miss" | "coalesced";
     ageMs?: number;
@@ -41,6 +45,14 @@ const codexContextCache = new Map<
 >();
 const codexContextInflight = new Map<string, Promise<ContextResponse>>();
 
+type LastKnownGoodContext = {
+  key: string;
+  project: string;
+  branch?: string;
+  createdAt: string;
+  value: ContextResponse;
+};
+
 function isCodexProject(project: string): boolean {
   return project.endsWith(CODEX_PROJECT_SUFFIX);
 }
@@ -52,6 +64,15 @@ function cacheableCodexContext(data: ContextRequest, project: string): boolean {
     !data.files?.length &&
     !data.terms?.length
   );
+}
+
+function ignoresDeferredQueuePressure(
+  data: ContextRequest,
+  project: string,
+): boolean {
+  if (data.intent === "manual_recall") return true;
+  if (!isCodexProject(project)) return false;
+  return process.env.AGENTMEMORY_CODEX_CONTEXT_QUEUE_BACKPRESSURE !== "true";
 }
 
 function contextCacheKey(
@@ -80,6 +101,72 @@ function cloneContextResponse(
   };
 }
 
+function lastKnownGoodKey(cacheKey: string): string {
+  return `codex:last-known-good:${Buffer.from(cacheKey).toString("base64url")}`;
+}
+
+function degradedContextResponse(
+  value: ContextResponse,
+  fallback: "memory-cache" | "last-known-good",
+  pressure: unknown,
+  ageMs?: number,
+): ContextResponse {
+  return {
+    ...structuredClone(value),
+    degraded: true,
+    fallback,
+    pressure,
+    ageMs,
+  };
+}
+
+async function readLastKnownGoodContext(
+  kv: StateKV,
+  cacheKey: string,
+  pressure: unknown,
+): Promise<ContextResponse | null> {
+  const stored = await kv
+    .get<LastKnownGoodContext>(KV.contextInjections, lastKnownGoodKey(cacheKey))
+    .catch(() => null);
+  if (!stored?.value?.context) return null;
+  const createdAt = Date.parse(stored.createdAt);
+  return degradedContextResponse(
+    stored.value,
+    "last-known-good",
+    pressure,
+    Number.isFinite(createdAt) ? Date.now() - createdAt : undefined,
+  );
+}
+
+async function writeLastKnownGoodContext(
+  kv: StateKV,
+  cacheKey: string,
+  project: string,
+  branch: string | undefined,
+  value: ContextResponse,
+): Promise<void> {
+  if (!value.context || value.degraded) return;
+  const stored: LastKnownGoodContext = {
+    key: cacheKey,
+    project,
+    branch,
+    createdAt: new Date().toISOString(),
+    value: {
+      ...structuredClone(value),
+      cache: undefined,
+    },
+  };
+  await kv
+    .set(KV.contextInjections, lastKnownGoodKey(cacheKey), stored)
+    .catch((err) => {
+      logger.warn("Failed to persist last-known-good Codex context", {
+        project,
+        branch,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+}
+
 export function registerContextFunction(
   sdk: ISdk,
   kv: StateKV,
@@ -88,8 +175,18 @@ export function registerContextFunction(
   sdk.registerFunction(
     "mem::context",
     async (data: ContextRequest) => {
+      const budget = data.budget || tokenBudget;
+      const session = await kv
+        .get<Session>(KV.sessions, data.sessionId)
+        .catch(() => null);
+      const project = data.project || session?.project || "";
+      const branch = await resolveSessionBranch(kv, session);
+      const cacheable = cacheableCodexContext(data, project);
+      const cacheKey = cacheable
+        ? contextCacheKey(data, project, branch, budget)
+        : undefined;
       const pressure = await getContextHotPathPressure(kv, {
-        ignoreDeferredQueue: data.intent === "manual_recall",
+        ignoreDeferredQueue: ignoresDeferredQueuePressure(data, project),
       });
       if (pressure) {
         logger.warn("Context skipped under hot-path pressure", {
@@ -97,18 +194,31 @@ export function registerContextFunction(
           intent: data.intent,
           reason: pressure.reason,
         });
-        return emptyContextForPressure(pressure);
+        if (cacheKey) {
+          const cached = codexContextCache.get(cacheKey);
+          if (cached && cached.value.context) {
+            return degradedContextResponse(
+              cached.value,
+              "memory-cache",
+              pressure,
+              Date.now() - cached.createdAt,
+            );
+          }
+          const lastKnownGood = await readLastKnownGoodContext(
+            kv,
+            cacheKey,
+            pressure,
+          );
+          if (lastKnownGood) return lastKnownGood;
+        }
+        return {
+          ...emptyContextForPressure(pressure),
+          degraded: true,
+          fallback: "empty",
+        };
       }
 
-      const budget = data.budget || tokenBudget;
-      const session = await kv.get<Session>(KV.sessions, data.sessionId).catch(() => null);
-      const project = data.project || session?.project || "";
-      const branch = await resolveSessionBranch(kv, session);
       const purpose = data.intent === "file_enrich" ? "enrich" : "context";
-      const cacheable = cacheableCodexContext(data, project);
-      const cacheKey = cacheable
-        ? contextCacheKey(data, project, branch, budget)
-        : undefined;
 
       if (cacheKey) {
         const cached = codexContextCache.get(cacheKey);
@@ -172,6 +282,7 @@ export function registerContextFunction(
           createdAt: Date.now(),
           value,
         });
+        await writeLastKnownGoodContext(kv, cacheKey, project, branch, value);
         return cloneContextResponse(value, { status: "miss" });
       } finally {
         codexContextInflight.delete(cacheKey);

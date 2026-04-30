@@ -24,6 +24,8 @@ type StepResult = {
   details: Record<string, unknown>;
 };
 
+type ContextStatus = "full" | "degraded" | "empty";
+
 const DEFAULT_CODEX_PROJECT = "/home/ericjuta/.openclaw/workspace/repos/codex";
 const DEFAULT_QUERY =
   "Codex agentmemory integration startup context handoff recall current project state";
@@ -104,6 +106,10 @@ function textLength(value: unknown): number | undefined {
   return typeof value === "string" ? value.length : undefined;
 }
 
+function stringDetail(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
 function stepFromTrigger(
   result: { latencyMs: number; value?: unknown; error?: string },
   targetMs: number,
@@ -137,6 +143,65 @@ function latencyWarnings(steps: Record<string, StepResult>): string[] {
     .map(([name]) => name);
 }
 
+function blockCount(value: Record<string, unknown>): number | undefined {
+  return typeof value.blocks === "number"
+    ? value.blocks
+    : arrayLength(value.blocks) ?? arrayLength(value.items);
+}
+
+function contextStatus(value: Record<string, unknown>): ContextStatus {
+  const chars = textLength(value.context) ?? 0;
+  if (chars <= 0) return "empty";
+  return value.degraded === true || typeof value.fallback === "string"
+    ? "degraded"
+    : "full";
+}
+
+function contextDataAvailable(value: Record<string, unknown>): boolean {
+  return (
+    (textLength(value.context) ?? 0) > 0 ||
+    (blockCount(value) ?? 0) > 0 ||
+    numberValue(value.tokens) !== undefined
+  );
+}
+
+function pressureReason(value: Record<string, unknown>): string | undefined {
+  const pressure = isRecord(value.pressure) ? value.pressure : {};
+  return stringDetail(pressure.reason) ?? stringDetail(value.reason);
+}
+
+function contextDetails(
+  value: Record<string, unknown>,
+  healthRecord: { status?: string; observeCapture?: unknown } | null,
+): Record<string, unknown> {
+  const pressure = isRecord(value.pressure) ? value.pressure : {};
+  const observeCapture = isRecord(value.observeCapture)
+    ? value.observeCapture
+    : isRecord(pressure.observeCapture)
+      ? pressure.observeCapture
+      : healthRecord?.observeCapture;
+  return {
+    chars: textLength(value.context),
+    tokens: numberValue(value.tokens),
+    blocks: blockCount(value),
+    tracePresent: Boolean(value.trace),
+    contextStatus: contextStatus(value),
+    fallback: stringDetail(value.fallback),
+    degraded: value.degraded === true,
+    pressureReason: pressureReason(value),
+    pressure,
+    runtimeStatus:
+      stringDetail(value.runtimeStatus) ??
+      stringDetail(pressure.runtimeStatus) ??
+      healthRecord?.status,
+    observeCapture,
+    observeCaptureStatus: isRecord(observeCapture)
+      ? stringDetail(observeCapture.status)
+      : undefined,
+    ageMs: numberValue(value.ageMs),
+  };
+}
+
 export function registerCodexIntegrationProofFunction(
   sdk: ISdk,
   kv: StateKV,
@@ -160,6 +225,7 @@ export function registerCodexIntegrationProofFunction(
           alerts?: unknown[];
           eventLoopLagMs?: number;
           kvConnectivity?: { status?: string; latencyMs?: number };
+          observeCapture?: { status?: string };
         }
       | null;
 
@@ -213,14 +279,15 @@ export function registerCodexIntegrationProofFunction(
         }),
       ),
       targets.context,
-      (value) => typeof value.context === "string" && value.context.length > 0,
-      (value) => ({
-        chars: textLength(value.context),
-        tokens: numberValue(value.tokens),
-        blocks: arrayLength(value.blocks) ?? arrayLength(value.items),
-        tracePresent: Boolean(value.trace),
-      }),
+      (value) => contextStatus(value) !== "empty" || !contextDataAvailable(value),
+      (value) => contextDetails(value, healthRecord),
     );
+    if (
+      context.status === "pass" &&
+      context.details.contextStatus === "degraded"
+    ) {
+      context.status = "warn";
+    }
 
     const smartSearch = stepFromTrigger(
       await timed(() =>
@@ -279,6 +346,7 @@ export function registerCodexIntegrationProofFunction(
     const steps = { sessionStart, context, smartSearch, retrievalProof: retrievalStep };
     const warnings = [
       ...latencyWarnings(steps).map((name) => `latency_${name}`),
+      ...(context.details.contextStatus === "degraded" ? ["context_degraded"] : []),
       ...(retrievalStep.status === "warn" ? ["retrieval_proof_warning"] : []),
     ];
 
@@ -300,6 +368,7 @@ export function registerCodexIntegrationProofFunction(
         eventLoopLagMs: healthRecord?.eventLoopLagMs,
         kvStatus: healthRecord?.kvConnectivity?.status,
         kvLatencyMs: healthRecord?.kvConnectivity?.latencyMs,
+        observeCaptureStatus: healthRecord?.observeCapture?.status,
       },
       steps,
     };

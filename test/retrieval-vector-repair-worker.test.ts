@@ -52,6 +52,7 @@ describe("mem::retrieval-vector-repair-worker", () => {
     const result = (await sdk.trigger("mem::retrieval-vector-repair-worker", {
       workerId: "test-worker",
       maxBatchSize: 64,
+      requireIdle: false,
     })) as {
       workDone: number;
       progress?: { status?: string; runs?: number; vectorCoverageRatioAfter?: number };
@@ -128,6 +129,31 @@ describe("mem::retrieval-vector-repair-worker", () => {
     expect(result.progress).toMatchObject({
       status: "paused",
       lastPauseReason: "cpu_critical_99%",
+    });
+  });
+
+  it("waits for idle headroom by default before vector repair work", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerRetrievalVectorRepairWorkerFunction(sdk as never, kv as never);
+    sdk.registerFunction("mem::retrieval-vector-backfill", async () => {
+      throw new Error("backfill should not run until idle");
+    });
+    await setHealth(kv, "healthy", 50);
+
+    const result = (await sdk.trigger("mem::retrieval-vector-repair-worker", {
+      workerId: "test-worker",
+    })) as {
+      skipped?: boolean;
+      reason?: string;
+      progress?: { status?: string; lastPauseReason?: string };
+    };
+
+    expect(result.skipped).toBe(true);
+    expect(result.reason).toBe("idle_required_cpu_50_gte_35");
+    expect(result.progress).toMatchObject({
+      status: "paused",
+      lastPauseReason: "idle_required_cpu_50_gte_35",
     });
   });
 });

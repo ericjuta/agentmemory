@@ -19,6 +19,175 @@ import { registerContextFunction } from "../src/functions/context.js";
 import { mockKV, mockSdk } from "./helpers/mocks.js";
 
 describe("context freshness", () => {
+  it("returns cached Codex context under hot-path pressure", async () => {
+    process.env["AGENTMEMORY_HOT_PATH_PRESSURE_CACHE_MS"] = "1";
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerContextFunction(sdk as never, kv as never, 800);
+
+    const project = "/home/ericjuta/.openclaw/workspace/repos/codex";
+    const session: Session = {
+      id: "session-codex-pressure-cache",
+      project,
+      cwd: project,
+      startedAt: "2026-04-29T10:00:00.000Z",
+      status: "active",
+      observationCount: 0,
+    };
+    await kv.set(KV.sessions, session.id, session);
+    await kv.set(KV.summaries, "summary-pressure-cache", {
+      sessionId: "summary-pressure-cache",
+      project,
+      createdAt: "2026-04-29T09:00:00.000Z",
+      title: "Codex pressure cache context",
+      narrative: "Cached Codex context remains available while pressure sheds retrieval.",
+      keyDecisions: [],
+      filesModified: [],
+      concepts: ["codex"],
+      observationCount: 1,
+    } satisfies SessionSummary);
+
+    const first = (await sdk.trigger("mem::context", {
+      sessionId: session.id,
+      project,
+      query: "codex pressure",
+      intent: "resume",
+      budget: 800,
+    })) as { context: string };
+    await kv.set(KV.health, "latest", {
+      status: "critical",
+      alerts: ["cpu_critical_150%"],
+      kvConnectivity: { status: "ok" },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 2));
+
+    const pressure = (await sdk.trigger("mem::context", {
+      sessionId: session.id,
+      project,
+      query: "codex pressure",
+      intent: "resume",
+      budget: 800,
+    })) as {
+      context: string;
+      degraded: boolean;
+      fallback: string;
+      pressure: { reason: string; runtimeStatus: string };
+      ageMs: number;
+    };
+
+    expect(pressure.context).toBe(first.context);
+    expect(pressure.degraded).toBe(true);
+    expect(pressure.fallback).toBe("memory-cache");
+    expect(pressure.pressure).toMatchObject({
+      reason: "critical",
+      runtimeStatus: "critical",
+    });
+    expect(pressure.ageMs).toBeGreaterThanOrEqual(0);
+    delete process.env["AGENTMEMORY_HOT_PATH_PRESSURE_CACHE_MS"];
+  });
+
+  it("returns persisted last-known-good Codex context under pressure", async () => {
+    process.env["AGENTMEMORY_HOT_PATH_PRESSURE_CACHE_MS"] = "1";
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerContextFunction(sdk as never, kv as never, 800);
+
+    const project = "/home/ericjuta/.openclaw/workspace/repos/codex";
+    const session: Session = {
+      id: "session-codex-pressure-lkg",
+      project,
+      cwd: project,
+      startedAt: "2026-04-29T10:00:00.000Z",
+      status: "active",
+      observationCount: 0,
+    };
+    await kv.set(KV.sessions, session.id, session);
+    await kv.set(KV.summaries, "summary-pressure-lkg", {
+      sessionId: "summary-pressure-lkg",
+      project,
+      createdAt: "2026-04-29T09:00:00.000Z",
+      title: "Codex last-known-good context",
+      narrative: "Persisted Codex context survives process-local cache misses.",
+      keyDecisions: [],
+      filesModified: [],
+      concepts: ["codex"],
+      observationCount: 1,
+    } satisfies SessionSummary);
+
+    const first = (await sdk.trigger("mem::context", {
+      sessionId: session.id,
+      project,
+      query: "codex persisted pressure",
+      intent: "resume",
+      budget: 800,
+    })) as { context: string };
+    registerContextFunction(sdk as never, kv as never, 800);
+    await kv.set(KV.health, "latest", {
+      status: "critical",
+      alerts: ["cpu_critical_150%"],
+      kvConnectivity: { status: "ok" },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 2));
+
+    const pressure = (await sdk.trigger("mem::context", {
+      sessionId: session.id,
+      project,
+      query: "codex persisted pressure",
+      intent: "resume",
+      budget: 800,
+    })) as {
+      context: string;
+      degraded: boolean;
+      fallback: string;
+      pressure: { reason: string };
+      ageMs: number;
+    };
+
+    expect(pressure.context).toBe(first.context);
+    expect(pressure.degraded).toBe(true);
+    expect(["memory-cache", "last-known-good"]).toContain(pressure.fallback);
+    expect(pressure.pressure.reason).toBe("critical");
+    expect(pressure.ageMs).toBeGreaterThanOrEqual(0);
+    delete process.env["AGENTMEMORY_HOT_PATH_PRESSURE_CACHE_MS"];
+  });
+
+  it("keeps file-enrich pressure responses empty instead of using project fallback", async () => {
+    process.env["AGENTMEMORY_HOT_PATH_PRESSURE_CACHE_MS"] = "1";
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerContextFunction(sdk as never, kv as never, 800);
+
+    const project = "/home/ericjuta/.openclaw/workspace/repos/codex";
+    await kv.set(KV.sessions, "session-codex-file-pressure", {
+      id: "session-codex-file-pressure",
+      project,
+      cwd: project,
+      startedAt: "2026-04-29T10:00:00.000Z",
+      status: "active",
+      observationCount: 0,
+    } satisfies Session);
+    await kv.set(KV.health, "latest", {
+      status: "critical",
+      alerts: ["cpu_critical_150%"],
+      kvConnectivity: { status: "ok" },
+    });
+
+    const result = (await sdk.trigger("mem::context", {
+      sessionId: "session-codex-file-pressure",
+      project,
+      query: "codex file",
+      intent: "file_enrich",
+      files: ["/codex/a.rs"],
+      budget: 800,
+    })) as { context: string; degraded: boolean; fallback: string; pressure: { reason: string } };
+
+    expect(result.context).toBe("");
+    expect(result.degraded).toBe(true);
+    expect(result.fallback).toBe("empty");
+    expect(result.pressure.reason).toBe("critical");
+    delete process.env["AGENTMEMORY_HOT_PATH_PRESSURE_CACHE_MS"];
+  });
+
   it("caches repeated Codex project context for a short window", async () => {
     vi.useFakeTimers();
     const sdk = mockSdk();

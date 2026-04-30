@@ -333,4 +333,64 @@ describe("api::context", () => {
       }
     }
   });
+
+  it("does not use Codex fallback for file enrich pressure", async () => {
+    const previousQueueHigh =
+      process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_QUEUE_HIGH"];
+    const previousPressureCache =
+      process.env["AGENTMEMORY_HOT_PATH_PRESSURE_CACHE_MS"];
+    const previousCodexBackpressure =
+      process.env["AGENTMEMORY_CODEX_CONTEXT_QUEUE_BACKPRESSURE"];
+    process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_QUEUE_HIGH"] = "1";
+    process.env["AGENTMEMORY_HOT_PATH_PRESSURE_CACHE_MS"] = "0";
+    process.env["AGENTMEMORY_CODEX_CONTEXT_QUEUE_BACKPRESSURE"] = "true";
+
+    const sdk = mockSdk();
+    const kv = mockKV();
+    try {
+      registerContextFunction(sdk as never, kv as never, 900);
+      registerApiTriggers(sdk as never, kv as never);
+      await kv.set(KV.retrievalBlockRetry, "queued-block", {
+        id: "queued-block",
+      });
+
+      const response = (await sdk.trigger("api::context", {
+        body: {
+          sessionId: "session-codex-file-enrich-pressure",
+          project: "/home/ericjuta/.openclaw/workspace/repos/codex",
+          query: "codex fallback",
+          intent: "file_enrich",
+          files: ["/home/ericjuta/.openclaw/workspace/repos/codex/src/main.rs"],
+        },
+        headers: {},
+      })) as {
+        status_code: number;
+        body: { context: string; degraded?: boolean; fallback?: string };
+      };
+
+      expect(response.status_code).toBe(200);
+      expect(response.body.context).toBe("");
+      expect(response.body.degraded).toBe(true);
+      expect(response.body.fallback).toBe("empty");
+    } finally {
+      if (previousQueueHigh === undefined) {
+        delete process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_QUEUE_HIGH"];
+      } else {
+        process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_QUEUE_HIGH"] =
+          previousQueueHigh;
+      }
+      if (previousPressureCache === undefined) {
+        delete process.env["AGENTMEMORY_HOT_PATH_PRESSURE_CACHE_MS"];
+      } else {
+        process.env["AGENTMEMORY_HOT_PATH_PRESSURE_CACHE_MS"] =
+          previousPressureCache;
+      }
+      if (previousCodexBackpressure === undefined) {
+        delete process.env["AGENTMEMORY_CODEX_CONTEXT_QUEUE_BACKPRESSURE"];
+      } else {
+        process.env["AGENTMEMORY_CODEX_CONTEXT_QUEUE_BACKPRESSURE"] =
+          previousCodexBackpressure;
+      }
+    }
+  });
 });
