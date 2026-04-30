@@ -171,6 +171,71 @@ describe("mem::codex-integration-proof", () => {
     });
   });
 
+  it("keeps cold-session project fallback context as a warning", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    await kv.set("mem:health", "latest", {
+      status: "critical",
+      alerts: ["cpu_critical_152%"],
+      eventLoopLagMs: 59,
+      kvConnectivity: { status: "ok", latencyMs: 90 },
+      observeCapture: { status: "shedding" },
+    });
+    sdk.registerFunction("api::session::start", async () => ({
+      status_code: 200,
+      body: {
+        session: { id: "cold-session-1", project: "/project" },
+        context: "",
+        bootstrap: { latestHandoff: null, warnings: [] },
+      },
+    }));
+    sdk.registerFunction("mem::context", async () => ({
+      context: "Project-level Codex fallback context",
+      tokens: 120,
+      blocks: 1,
+      trace: { selected: 1 },
+      degraded: true,
+      fallback: "last-known-good",
+      ageMs: 42,
+      pressure: {
+        reason: "critical",
+        runtimeStatus: "critical",
+        fallbackScope: "project",
+      },
+    }));
+    sdk.registerFunction("mem::smart-search", async () => ({
+      mode: "hybrid",
+      results: [{ id: "result-1" }],
+    }));
+    sdk.registerFunction("mem::retrieval-proof", async () => ({
+      pass: true,
+      maintenance: { status: "caught_up" },
+    }));
+    registerCodexIntegrationProofFunction(sdk as never, kv as never);
+
+    const result = (await sdk.trigger("mem::codex-integration-proof", {
+      project: "/project",
+      sessionId: "cold-session-1",
+    })) as {
+      pass: boolean;
+      qualityPass: boolean;
+      warnings: string[];
+      steps: { context: { status: string; details: Record<string, unknown> } };
+    };
+
+    expect(result.pass).toBe(true);
+    expect(result.qualityPass).toBe(true);
+    expect(result.warnings).toContain("context_degraded");
+    expect(result.steps.context.status).toBe("warn");
+    expect(result.steps.context.details).toMatchObject({
+      contextStatus: "degraded",
+      fallback: "last-known-good",
+      pressureReason: "critical",
+      runtimeStatus: "critical",
+      pressure: { fallbackScope: "project" },
+    });
+  });
+
   it("keeps empty pressure context as a quality failure", async () => {
     const sdk = mockSdk();
     const kv = mockKV();
@@ -186,6 +251,54 @@ describe("mem::codex-integration-proof", () => {
       context: "",
       tokens: 0,
       blocks: 0,
+      trace: {},
+      degraded: true,
+      fallback: "empty",
+      pressure: { reason: "critical" },
+    }));
+    sdk.registerFunction("mem::smart-search", async () => ({
+      mode: "hybrid",
+      results: [{ id: "result-1" }],
+    }));
+    sdk.registerFunction("mem::retrieval-proof", async () => ({
+      pass: true,
+      maintenance: { status: "caught_up" },
+    }));
+    registerCodexIntegrationProofFunction(sdk as never, kv as never);
+
+    const result = (await sdk.trigger("mem::codex-integration-proof", {
+      project: "/project",
+      sessionId: "session-1",
+    })) as {
+      pass: boolean;
+      qualityPass: boolean;
+      steps: { context: { status: string; details: Record<string, unknown> } };
+    };
+
+    expect(result.pass).toBe(false);
+    expect(result.qualityPass).toBe(false);
+    expect(result.steps.context.status).toBe("fail");
+    expect(result.steps.context.details).toMatchObject({
+      contextStatus: "empty",
+      fallback: "empty",
+      pressureReason: "critical",
+    });
+  });
+
+  it("keeps empty fallback with zero token metadata as a quality failure", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    sdk.registerFunction("api::session::start", async () => ({
+      status_code: 200,
+      body: {
+        session: { id: "session-1", project: "/project" },
+        context: "",
+        bootstrap: { latestHandoff: null, warnings: [] },
+      },
+    }));
+    sdk.registerFunction("mem::context", async () => ({
+      context: "",
+      tokens: 0,
       trace: {},
       degraded: true,
       fallback: "empty",

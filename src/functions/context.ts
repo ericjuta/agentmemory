@@ -105,6 +105,15 @@ function lastKnownGoodKey(cacheKey: string): string {
   return `codex:last-known-good:${Buffer.from(cacheKey).toString("base64url")}`;
 }
 
+function projectLastKnownGoodKey(
+  project: string,
+  branch: string | undefined,
+): string {
+  return `codex:last-known-good-project:${Buffer.from(
+    JSON.stringify({ project, branch }),
+  ).toString("base64url")}`;
+}
+
 function degradedContextResponse(
   value: ContextResponse,
   fallback: "memory-cache" | "last-known-good",
@@ -122,20 +131,23 @@ function degradedContextResponse(
 
 async function readLastKnownGoodContext(
   kv: StateKV,
-  cacheKey: string,
+  keys: string[],
   pressure: unknown,
 ): Promise<ContextResponse | null> {
-  const stored = await kv
-    .get<LastKnownGoodContext>(KV.contextInjections, lastKnownGoodKey(cacheKey))
-    .catch(() => null);
-  if (!stored?.value?.context) return null;
-  const createdAt = Date.parse(stored.createdAt);
-  return degradedContextResponse(
-    stored.value,
-    "last-known-good",
-    pressure,
-    Number.isFinite(createdAt) ? Date.now() - createdAt : undefined,
-  );
+  for (const key of keys) {
+    const stored = await kv
+      .get<LastKnownGoodContext>(KV.contextInjections, key)
+      .catch(() => null);
+    if (!stored?.value?.context) continue;
+    const createdAt = Date.parse(stored.createdAt);
+    return degradedContextResponse(
+      stored.value,
+      "last-known-good",
+      pressure,
+      Number.isFinite(createdAt) ? Date.now() - createdAt : undefined,
+    );
+  }
+  return null;
 }
 
 async function writeLastKnownGoodContext(
@@ -156,9 +168,10 @@ async function writeLastKnownGoodContext(
       cache: undefined,
     },
   };
-  await kv
-    .set(KV.contextInjections, lastKnownGoodKey(cacheKey), stored)
-    .catch((err) => {
+  await Promise.all([
+    kv.set(KV.contextInjections, lastKnownGoodKey(cacheKey), stored),
+    kv.set(KV.contextInjections, projectLastKnownGoodKey(project, branch), stored),
+  ]).catch((err) => {
       logger.warn("Failed to persist last-known-good Codex context", {
         project,
         branch,
@@ -206,7 +219,10 @@ export function registerContextFunction(
           }
           const lastKnownGood = await readLastKnownGoodContext(
             kv,
-            cacheKey,
+            [
+              lastKnownGoodKey(cacheKey),
+              projectLastKnownGoodKey(project, branch),
+            ],
             pressure,
           );
           if (lastKnownGood) return lastKnownGood;

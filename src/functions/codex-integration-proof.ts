@@ -161,7 +161,7 @@ function contextDataAvailable(value: Record<string, unknown>): boolean {
   return (
     (textLength(value.context) ?? 0) > 0 ||
     (blockCount(value) ?? 0) > 0 ||
-    numberValue(value.tokens) !== undefined
+    (numberValue(value.tokens) ?? 0) > 0
   );
 }
 
@@ -279,7 +279,7 @@ export function registerCodexIntegrationProofFunction(
         }),
       ),
       targets.context,
-      (value) => contextStatus(value) !== "empty" || !contextDataAvailable(value),
+      (value) => contextStatus(value) !== "empty" && contextDataAvailable(value),
       (value) => contextDetails(value, healthRecord),
     );
     if (
