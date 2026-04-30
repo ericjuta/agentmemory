@@ -227,6 +227,24 @@ describe("Smart Search Function", () => {
     expect(result.results[0].observation.title).toBe("Auth handler");
   });
 
+  it("expand mode resolves source ids without listing every retrieval block", async () => {
+    const rawList = kv.list.bind(kv);
+    const listSpy = vi.fn(rawList);
+    kv.list = (async <T>(scope: string): Promise<T[]> => {
+      if (scope === KV.retrievalBlocks) throw new Error("full retrieval block scan");
+      return listSpy(scope);
+    }) as typeof kv.list;
+
+    const result = (await sdk.trigger("mem::smart-search", {
+      expandIds: ["obs_1"],
+      project: "my-project",
+    })) as { mode: string; results: Array<{ obsId: string; observation: CompressedObservation }> };
+
+    expect(result.mode).toBe("expanded");
+    expect(result.results[0]?.observation.title).toBe("Auth handler");
+    expect(listSpy.mock.calls.some(([scope]) => scope === KV.retrievalBlocks)).toBe(false);
+  });
+
   it("returns error when query is missing and no expandIds", async () => {
     const result = (await sdk.trigger("mem::smart-search", { project: "my-project" })) as {
       mode: string;
@@ -419,5 +437,38 @@ describe("Smart Search Function", () => {
     expect(result.results.map((entry) => entry.blockId)).toEqual([
       globalBlock.id,
     ]);
+  });
+
+  it("bounds retrieval trace candidates for broad scoped searches", async () => {
+    const blocks = Array.from({ length: 150 }, (_, index) =>
+      makeRetrievalBlock({
+        id: `rblk_trace_${index}`,
+        sourceId: `mem_trace_${index}`,
+        project: "/repo-a",
+        canonicalText: `Trace pressure sentinel memory ${index}`,
+        title: `Trace memory ${index}`,
+        eventAt: new Date(Date.UTC(2026, 1, 1, 0, index)).toISOString(),
+        updatedAt: new Date(Date.UTC(2026, 1, 1, 0, index)).toISOString(),
+      }),
+    );
+    await storeRetrievalBlocks(kv, blocks);
+    await warmRetrievalBlockScopeMemberships(kv as never, blocks);
+
+    const result = (await sdk.trigger("mem::smart-search", {
+      query: "trace pressure sentinel",
+      project: "/repo-a",
+      limit: 5,
+      trace: true,
+    })) as {
+      mode: string;
+      results: CompactSearchResult[];
+      trace: { selected: unknown[]; skipped: unknown[]; skippedTruncated?: number };
+    };
+
+    expect(result.mode).toBe("compact");
+    expect(result.results.length).toBeLessThanOrEqual(5);
+    expect(result.trace.selected.length).toBeLessThanOrEqual(40);
+    expect(result.trace.skipped.length).toBeLessThanOrEqual(80);
+    expect(result.trace.skippedTruncated).toBeGreaterThan(0);
   });
 });

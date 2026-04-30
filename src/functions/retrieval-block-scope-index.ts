@@ -215,16 +215,13 @@ export async function loadScopedRetrievalBlocks(
     DEFAULT_SCOPED_RETRIEVAL_BLOCK_LOAD_LIMIT,
   );
 
-  if (ids.length > loadLimit) {
-    return { blocks: [], complete: false };
-  }
-
   if (ids.length === 0) {
     return { blocks: [], complete: true };
   }
 
+  const idsToLoad = ids.slice(0, loadLimit);
   const loaded = await Promise.all(
-    ids.map(async (id) => ({
+    idsToLoad.map(async (id) => ({
       id,
       block: await kv.get<RetrievalBlock>(KV.retrievalBlocks, id).catch(() => null),
     })),
@@ -252,6 +249,6 @@ export async function loadScopedRetrievalBlocks(
     blocks: loaded
       .map((entry) => entry.block)
       .filter((block): block is RetrievalBlock => block !== null),
-    complete: missingIds.size === 0,
+    complete: ids.length <= loadLimit && missingIds.size === 0,
   };
 }

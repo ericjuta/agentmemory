@@ -385,7 +385,7 @@ describe("retrieveRelevantBlocks", () => {
         purpose: "context",
       });
 
-      expect(requestedBlockIds).toEqual([]);
+      expect(requestedBlockIds).toEqual(["rblk_1", "rblk_2"]);
       expect(collectLightweightRetrievalBlocksFromStateMock).toHaveBeenCalled();
       expect(collectRetrievalBlocksFromStateMock).not.toHaveBeenCalled();
       expect(result.blocks.map((block) => block.id)).toContain("rblk_lightweight");
@@ -802,5 +802,36 @@ describe("retrieveRelevantBlocks", () => {
     expect(result.searchResults[0]?.rankingMetadata?.sources.vector).toBe(true);
     expect(result.searchResults[0]?.rankingMetadata?.sources.lexical).toBe(false);
     expect(result.trace.selected[0]?.sources?.vector).toBe(true);
+  });
+
+  it("bounds broad no-query candidate ranking to the freshest pool", async () => {
+    const kv = mockKV();
+    const blocks = Array.from({ length: 300 }, (_, i) =>
+      makeRetrievalBlock({
+        id: `rblk_broad_${i}`,
+        sourceId: `mem_broad_${i}`,
+        canonicalText: `Broad project note ${i}`,
+        eventAt: new Date(Date.UTC(2026, 0, 1, 0, i)).toISOString(),
+        createdAt: new Date(Date.UTC(2026, 0, 1, 0, i)).toISOString(),
+        updatedAt: new Date(Date.UTC(2026, 0, 1, 0, i)).toISOString(),
+      }),
+    );
+    await storeIndexedBlocks(kv, blocks);
+
+    const result = await retrieveRelevantBlocks(kv as never, {
+      project: "/project",
+      budget: 5000,
+      purpose: "context",
+      maxBlocks: 300,
+    });
+
+    const tracedIds = [
+      ...result.trace.selected.map((candidate) => candidate.id),
+      ...result.trace.skipped.map((candidate) => candidate.id),
+    ];
+
+    expect(tracedIds.length).toBe(240);
+    expect(tracedIds).toContain("memory:mem_broad_299");
+    expect(tracedIds).not.toContain("memory:mem_broad_0");
   });
 });

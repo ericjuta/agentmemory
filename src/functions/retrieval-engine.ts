@@ -48,6 +48,8 @@ const QUERY_EMBEDDING_CACHE_TTL_MS = 5 * 60_000;
 const QUERY_EMBEDDING_TIMEOUT_MS = 2500;
 const RETRIEVAL_BLOCK_SCOPE_COOLDOWN_MS = 60_000;
 const RETRIEVAL_BLOCK_VECTOR_MIN_SCORE = 0.35;
+const RETRIEVAL_CANDIDATE_POOL_MAX = 240;
+const RETRIEVAL_TRACE_SKIPPED_MAX = 80;
 const DUPLICATE_CLUSTER_MIN_JACCARD = 0.72;
 const DUPLICATE_CLUSTER_MIN_SHARED_TERMS = 5;
 
@@ -640,6 +642,38 @@ export interface UnifiedRetrievalResult {
   searchResults: RetrievalSearchResult[];
 }
 
+function compareRetrievalBlockRecency(a: RetrievalBlock, b: RetrievalBlock): number {
+  const aTime = Date.parse(a.eventAt || a.updatedAt || a.createdAt);
+  const bTime = Date.parse(b.eventAt || b.updatedAt || b.createdAt);
+  const aSafe = Number.isFinite(aTime) ? aTime : 0;
+  const bSafe = Number.isFinite(bTime) ? bTime : 0;
+  if (bSafe !== aSafe) return bSafe - aSafe;
+  return b.importance - a.importance;
+}
+
+function capCandidateBlocks(
+  blocks: RetrievalBlock[],
+  candidateIds: Set<string>,
+  forcedIds: Set<string>,
+): RetrievalBlock[] {
+  if (blocks.length <= RETRIEVAL_CANDIDATE_POOL_MAX) return blocks;
+  const selected = new Map<string, RetrievalBlock>();
+  const add = (block: RetrievalBlock) => {
+    if (selected.size < RETRIEVAL_CANDIDATE_POOL_MAX) selected.set(block.id, block);
+  };
+  for (const block of blocks) {
+    if (forcedIds.has(block.id)) add(block);
+  }
+  for (const block of blocks) {
+    if (candidateIds.has(block.id)) add(block);
+  }
+  if (selected.size < RETRIEVAL_CANDIDATE_POOL_MAX) {
+    const byRecency = [...blocks].sort(compareRetrievalBlockRecency);
+    for (const block of byRecency) add(block);
+  }
+  return [...selected.values()];
+}
+
 function hasExplicitRelevance(item: RankedRetrievalBlock): boolean {
   return (
     item.lexicalScore > 0 ||
@@ -1084,6 +1118,8 @@ export async function retrieveRelevantBlocks(
       (block) => block.sourceType !== "handoff" || block.id === bestHandoffId,
     );
   }
+  candidateBlocks = capCandidateBlocks(candidateBlocks, candidateIds, forcedIds);
+
   const newest = Math.max(
     1,
     ...candidateBlocks.map((block) => new Date(block.eventAt).getTime()),
@@ -1191,7 +1227,8 @@ export async function retrieveRelevantBlocks(
       }
       return item.block.freshnessLane === "hot" && item.sessionScore > 0;
     })
-    .sort((a, b) => b.combinedScore - a.combinedScore);
+    .sort((a, b) => b.combinedScore - a.combinedScore)
+    .slice(0, RETRIEVAL_CANDIDATE_POOL_MAX);
 
   const traceTimestamp = new Date().toISOString();
   const retryEntries = await kv
@@ -1408,6 +1445,16 @@ export async function retrieveRelevantBlocks(
     }),
   );
 
+  const skippedCandidates = [...traceCandidates.values()]
+    .filter((candidate) => !candidate.selected)
+    .sort((a, b) => {
+      const queryDelta = b.score.queryOverlap - a.score.queryOverlap;
+      if (queryDelta !== 0) return queryDelta;
+      const laneDelta = b.score.lanePriority - a.score.lanePriority;
+      if (laneDelta !== 0) return laneDelta;
+      return b.score.recency - a.score.recency;
+    });
+
   const trace: RetrievalTrace = {
     generatedAt: traceTimestamp,
     query: query.query?.trim() || undefined,
@@ -1421,15 +1468,11 @@ export async function retrieveRelevantBlocks(
     selected: selected
       .map((item) => traceCandidates.get(item.block.id))
       .filter((candidate): candidate is RetrievalTraceCandidate => Boolean(candidate)),
-    skipped: [...traceCandidates.values()]
-      .filter((candidate) => !candidate.selected)
-      .sort((a, b) => {
-        const queryDelta = b.score.queryOverlap - a.score.queryOverlap;
-        if (queryDelta !== 0) return queryDelta;
-        const laneDelta = b.score.lanePriority - a.score.lanePriority;
-        if (laneDelta !== 0) return laneDelta;
-        return b.score.recency - a.score.recency;
-      }),
+    skipped: skippedCandidates.slice(0, RETRIEVAL_TRACE_SKIPPED_MAX),
+    skippedTruncated:
+      skippedCandidates.length > RETRIEVAL_TRACE_SKIPPED_MAX
+        ? skippedCandidates.length - RETRIEVAL_TRACE_SKIPPED_MAX
+        : undefined,
     usefulnessLink,
     degradedFreshness:
       usingStateFallbackBlocks ||

@@ -465,6 +465,7 @@ export interface RetrievalTrace {
   laneUsage: Record<RetrievalTraceLane, number>;
   selected: RetrievalTraceCandidate[];
   skipped: RetrievalTraceCandidate[];
+  skippedTruncated?: number;
   usefulnessLink: ContextInjection | null;
   degradedFreshness?: boolean;
   freshnessLag?: {

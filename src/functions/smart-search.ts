@@ -9,9 +9,7 @@ import type { StateKV } from "../state/kv.js";
 import { deferRecordAccessBatch } from "./access-tracker.js";
 import { logger } from "../logger.js";
 import { retrieveRelevantBlocks } from "./retrieval-engine.js";
-import {
-  collectRetrievalBlocksFromState,
-} from "./retrieval-blocks.js";
+import { loadScopedRetrievalBlocks } from "./retrieval-block-scope-index.js";
 
 type SmartSearchExpandId =
   | string
@@ -116,6 +114,20 @@ function toCompact(block: RetrievalBlock, score: number): CompactSearchResult {
   };
 }
 
+async function loadExpandableBlockById(
+  kv: StateKV,
+  id: string,
+  scope: SmartSearchScope,
+): Promise<RetrievalBlock | null> {
+  const direct = await kv.get<RetrievalBlock>(KV.retrievalBlocks, id).catch(() => null);
+  if (direct) return direct;
+  const scopedBlocks = await loadScopedRetrievalBlocks(kv, {
+    project: scope.project,
+    branch: scope.branch,
+  }).catch(() => ({ blocks: [] as RetrievalBlock[] }));
+  return scopedBlocks.blocks.find((candidate) => candidate.sourceId === id) || null;
+}
+
 export function registerSmartSearchFunction(
   sdk: ISdk,
   kv: StateKV,
@@ -145,16 +157,9 @@ export function registerSmartSearchFunction(
           if (entry?.obsId) return { id: entry.obsId, sessionId: entry.sessionId };
           return null;
         }).filter((item): item is NonNullable<typeof item> => item !== null);
-
-        let allBlocks = await kv.list<RetrievalBlock>(KV.retrievalBlocks).catch(() => []);
-        if (allBlocks.length === 0) {
-          allBlocks = await collectRetrievalBlocksFromState(kv).catch(() => []);
-        }
         const expanded = await Promise.all(
           requested.map(async ({ id, sessionId }) => {
-            const block =
-              (await kv.get<RetrievalBlock>(KV.retrievalBlocks, id).catch(() => null)) ||
-              allBlocks.find((candidate) => candidate.sourceId === id);
+            const block = await loadExpandableBlockById(kv, id, scope);
             if (!block) return null;
             if (
               !projectMatchesScope(block, scope.project) ||

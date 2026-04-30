@@ -31,6 +31,32 @@ npx @agentmemory/agentmemory status
 npx @agentmemory/agentmemory codex-proof --port 3111
 ```
 
+After code changes, redeploy the Docker worker from the repo root:
+
+```bash
+npm test
+docker compose up -d --build agentmemory-worker
+npx @agentmemory/agentmemory codex-proof --port 3111
+```
+
+That rebuilds the code container while leaving `iii-engine` and the `iii-data`
+volume in place. If engine config or the pinned Docker image changed, rebuild the
+whole compose stack instead:
+
+```bash
+docker compose up -d --build
+```
+
+For a harder restart that still preserves memory state:
+
+```bash
+docker compose down
+docker compose up -d --build
+```
+
+Do not run `docker compose down -v` unless deleting the `iii-data` volume is
+intentional.
+
 ## Codex Contract
 
 Keep these endpoints healthy for the native Codex path:
