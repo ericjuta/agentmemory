@@ -863,7 +863,7 @@ export async function retrieveRelevantBlocks(
   }
   const shouldRefreshBlocks =
     needsProjectCoverageRefresh ||
-    (scopedBlockReadIncomplete && canFallbackFromState);
+    (scopedBlockReadIncomplete && canFallbackFromState && allBlocks.length === 0);
   if (shouldRefreshBlocks) {
     if (!canFallbackFromState && (storedBlockReadFailed || !canReadStoredBlocks)) {
       usingStateFallbackBlocks = true;

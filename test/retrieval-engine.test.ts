@@ -364,10 +364,26 @@ describe("retrieveRelevantBlocks", () => {
         ids: ["rblk_1", "rblk_2", "rblk_3"],
         updatedAt: "2026-04-30T00:00:00.000Z",
       });
+      await kv.set(
+        KV.retrievalBlocks,
+        "rblk_1",
+        makeRetrievalBlock({
+          id: "rblk_1",
+          canonicalText: "Scoped partial retrieval survives oversized fanout",
+        }),
+      );
+      await kv.set(
+        KV.retrievalBlocks,
+        "rblk_2",
+        makeRetrievalBlock({
+          id: "rblk_2",
+          canonicalText: "Scoped partial retrieval second block",
+        }),
+      );
       collectLightweightRetrievalBlocksFromStateMock.mockResolvedValue([
         makeRetrievalBlock({
           id: "rblk_lightweight",
-          canonicalText: "Lightweight retrieval survives oversized scoped fanout",
+          canonicalText: "Broad fallback should not run for incomplete scoped reads",
         }),
       ]);
 
@@ -380,15 +396,16 @@ describe("retrieveRelevantBlocks", () => {
 
       const result = await retrieveRelevantBlocks(kv as never, {
         project: "/project",
-        query: "lightweight retrieval",
+        query: "scoped partial retrieval",
         budget: 300,
         purpose: "context",
       });
 
       expect(requestedBlockIds).toEqual(["rblk_1", "rblk_2"]);
-      expect(collectLightweightRetrievalBlocksFromStateMock).toHaveBeenCalled();
+      expect(collectLightweightRetrievalBlocksFromStateMock).not.toHaveBeenCalled();
       expect(collectRetrievalBlocksFromStateMock).not.toHaveBeenCalled();
-      expect(result.blocks.map((block) => block.id)).toContain("rblk_lightweight");
+      expect(result.blocks.map((block) => block.id)).toEqual(["rblk_1", "rblk_2"]);
+      expect(result.trace.degradedFreshness).toBe(true);
     } finally {
       if (previousLimit === undefined) {
         delete process.env["AGENTMEMORY_SCOPED_RETRIEVAL_BLOCK_LOAD_LIMIT"];
@@ -524,7 +541,7 @@ describe("retrieveRelevantBlocks", () => {
 
     const result = await retrieveRelevantBlocks(kv as never, {
       project: "/project",
-      query: "alpha context",
+      query: "Fallback block",
       budget: 300,
       purpose: "smart-search",
     });
