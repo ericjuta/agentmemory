@@ -128,6 +128,24 @@ import { initMetrics, OTEL_CONFIG } from "./telemetry/setup.js";
 import { VERSION } from "./version.js";
 import { configureObservationIndexingRuntime } from "./state/observation-indexing.js";
 
+let lastUnhandledRejectionLogAt = 0;
+process.on("unhandledRejection", (reason) => {
+  const now = Date.now();
+  if (now - lastUnhandledRejectionLogAt < 60_000) return;
+  lastUnhandledRejectionLogAt = now;
+  const detail = reason as {
+    code?: string;
+    function_id?: string;
+    message?: string;
+  };
+  console.warn(
+    "[agentmemory] unhandledRejection suppressed:",
+    detail?.code
+      ? `${detail.code} ${detail.function_id ?? ""} ${detail.message ?? ""}`.trim()
+      : reason,
+  );
+});
+
 function hasGetMeter(
   sdk: unknown,
 ): sdk is { getMeter: (name: string) => unknown } {

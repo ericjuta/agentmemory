@@ -284,6 +284,7 @@ export class IndexPersistence {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private inFlight: Promise<void> | null = null;
   private dirty = false;
+  private failed = false;
   private nextDelayMs = DEBOUNCE_MS;
   private readonly mode: IndexPersistenceMode;
   private readonly shardSizeBytes: number;
@@ -336,6 +337,7 @@ export class IndexPersistence {
       return;
     }
     await this.saveNow(options);
+    this.failed = false;
     this.nextDelayMs = DEBOUNCE_MS;
   }
 
@@ -354,9 +356,11 @@ export class IndexPersistence {
     try {
       const result = await this.inFlight;
       if (result === "saved") {
+        this.failed = false;
         this.nextDelayMs = DEBOUNCE_MS;
       }
     } catch (error) {
+      this.failed = true;
       this.dirty = true;
       this.nextDelayMs = Math.min(
         MAX_RETRY_BACKOFF_MS,
@@ -422,7 +426,7 @@ export class IndexPersistence {
   getStatus(): IndexPersistenceStatus {
     return {
       ...this.status,
-      pendingSave: this.dirty,
+      pendingSave: this.dirty || this.failed,
       inFlight: Boolean(this.inFlight),
       nextDelayMs: this.nextDelayMs,
       deferredCount: this.deferredCount,

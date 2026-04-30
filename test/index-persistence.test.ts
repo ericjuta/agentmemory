@@ -161,6 +161,49 @@ describe("IndexPersistence", () => {
         error: "state unavailable",
       }),
     );
+    expect(persistence.getStatus()).toMatchObject({
+      pendingSave: true,
+      status: "error",
+      error: "state unavailable",
+    });
+  });
+
+  it("scheduled save swallows kv.set timeout without unhandledRejection", async () => {
+    const failingKv = {
+      ...mockKV(),
+      set: vi.fn(async () => {
+        const err = new Error(
+          "TIMEOUT: invocation timed out after 30000ms",
+        ) as Error & { code?: string; function_id?: string };
+        err.code = "TIMEOUT";
+        err.function_id = "state::set";
+        throw err;
+      }),
+    };
+    const bm25 = new SearchIndex();
+    bm25.add(makeObs({ id: "obs_1", title: "auth handler" }));
+    const persistence = new IndexPersistence(failingKv as never, bm25, null);
+
+    let unhandled = false;
+    const onUnhandled = () => {
+      unhandled = true;
+    };
+    process.on("unhandledRejection", onUnhandled);
+
+    try {
+      persistence.scheduleSave();
+      await vi.advanceTimersByTimeAsync(5000);
+      await Promise.resolve();
+
+      expect(failingKv.set).toHaveBeenCalled();
+      expect(unhandled).toBe(false);
+      expect(persistence.getStatus()).toMatchObject({
+        pendingSave: true,
+        status: "error",
+      });
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
   });
 
   it("does not start a second deferred save while one is still in flight", async () => {
