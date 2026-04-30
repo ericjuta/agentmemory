@@ -118,7 +118,7 @@ async function buildViewerHealth(kv: StateKV): Promise<{ status: number; body: u
   ).value;
   const [deferredResult, writeGateResult] = await Promise.all([
     settleWithin(
-      getDeferredWorkStatus(kv),
+      getDeferredWorkStatus(kv, { lightweight: true }),
       1500,
       () => ({
         error: "viewer_health_deferred_work_timeout",

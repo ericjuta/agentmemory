@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { startViewerServer } from "../src/viewer/server.js";
+import { KV } from "../src/state/schema.js";
 
 const servers: Server[] = [];
 
@@ -113,5 +114,52 @@ describe("viewer server listen host", () => {
         paused: false,
       },
     });
+  });
+
+  it("does not scan deferred retry queues for viewer health", async () => {
+    process.env["VIEWER_UPSTREAM_URL"] = "http://127.0.0.1:1";
+    const listedScopes: string[] = [];
+    const kv = {
+      get: async (scope: string, key: string) => {
+        if (scope === KV.maintenanceLaneState && key === "compression") {
+          return {
+            lane: "compression",
+            lastQueued: 9,
+            updatedAt: "2026-04-30T00:00:00.000Z",
+          };
+        }
+        return null;
+      },
+      list: vi.fn(async (scope: string) => {
+        listedScopes.push(scope);
+        if (
+          scope === KV.compressRetry ||
+          scope === KV.retrievalBlockRetry ||
+          scope === KV.graphExtractionRetry
+        ) {
+          throw new Error("viewer health should not scan retry queues");
+        }
+        return [];
+      }),
+    };
+    const server = await startServerWithKv(kv);
+    const address = addressInfo(server);
+
+    const response = await fetch(
+      `http://127.0.0.1:${address.port}/agentmemory/health`,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      deferredWork: {
+        compression: { queued: 9 },
+        retrievalBlocks: { queued: 0 },
+        graphExtraction: { queued: 0 },
+        totalQueued: 9,
+      },
+    });
+    expect(listedScopes).not.toContain(KV.compressRetry);
+    expect(listedScopes).not.toContain(KV.retrievalBlockRetry);
+    expect(listedScopes).not.toContain(KV.graphExtractionRetry);
   });
 });

@@ -347,6 +347,57 @@ describe("retrieveRelevantBlocks", () => {
     expect(result.searchResults[0]?.block.id).toBe(block.id);
   });
 
+  it("does not fan out scoped retrieval block loads past the configured limit", async () => {
+    const previousLimit = process.env["AGENTMEMORY_SCOPED_RETRIEVAL_BLOCK_LOAD_LIMIT"];
+    process.env["AGENTMEMORY_SCOPED_RETRIEVAL_BLOCK_LOAD_LIMIT"] = "2";
+    const kv = mockKV();
+    try {
+      await kv.set(KV.retrievalBlockScopeIndex, "scope:index-ready", {
+        ready: true,
+        updatedAt: "2026-04-30T00:00:00.000Z",
+      });
+      await kv.set(KV.retrievalBlockScopeIndex, "scope:global", {
+        ids: [],
+        updatedAt: "2026-04-30T00:00:00.000Z",
+      });
+      await kv.set(KV.retrievalBlockScopeIndex, "scope:project:%2Fproject", {
+        ids: ["rblk_1", "rblk_2", "rblk_3"],
+        updatedAt: "2026-04-30T00:00:00.000Z",
+      });
+      collectLightweightRetrievalBlocksFromStateMock.mockResolvedValue([
+        makeRetrievalBlock({
+          id: "rblk_lightweight",
+          canonicalText: "Lightweight retrieval survives oversized scoped fanout",
+        }),
+      ]);
+
+      const rawGet = kv.get.bind(kv);
+      const requestedBlockIds: string[] = [];
+      kv.get = (async <T>(scope: string, key: string): Promise<T | null> => {
+        if (scope === KV.retrievalBlocks) requestedBlockIds.push(key);
+        return rawGet(scope, key);
+      }) as typeof kv.get;
+
+      const result = await retrieveRelevantBlocks(kv as never, {
+        project: "/project",
+        query: "lightweight retrieval",
+        budget: 300,
+        purpose: "context",
+      });
+
+      expect(requestedBlockIds).toEqual([]);
+      expect(collectLightweightRetrievalBlocksFromStateMock).toHaveBeenCalled();
+      expect(collectRetrievalBlocksFromStateMock).not.toHaveBeenCalled();
+      expect(result.blocks.map((block) => block.id)).toContain("rblk_lightweight");
+    } finally {
+      if (previousLimit === undefined) {
+        delete process.env["AGENTMEMORY_SCOPED_RETRIEVAL_BLOCK_LOAD_LIMIT"];
+      } else {
+        process.env["AGENTMEMORY_SCOPED_RETRIEVAL_BLOCK_LOAD_LIMIT"] = previousLimit;
+      }
+    }
+  });
+
   it("prefers explicit query matches over unrelated hot session continuity for targeted context", async () => {
     const kv = mockKV();
     const hotBlock: RetrievalBlock = {

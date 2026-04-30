@@ -25,6 +25,20 @@ function mergeStrings(existing: string[], next: string[]): string[] {
   return [...new Set([...existing, ...next])];
 }
 
+function readPositiveIntegerEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function cappedStrings(values: string[], fallbackLimit: number): string[] {
+  return uniqueStrings(values).slice(
+    0,
+    readPositiveIntegerEnv("AGENTMEMORY_TURN_CAPSULE_SIGNAL_LIMIT", fallbackLimit),
+  );
+}
+
 function buildDefaultCapsule(
   sessionId: string,
   turnId: string,
@@ -107,14 +121,14 @@ export async function upsertTurnCapsuleFromRaw(
       raw.assistantResponse && raw.assistantResponse.trim()
         ? raw.assistantResponse
         : existing.assistantConclusion,
-    files,
-    concepts,
+    files: cappedStrings(files, 64),
+    concepts: cappedStrings(concepts, 96),
     hadFailure: existing.hadFailure || raw.hookType === "post_tool_failure",
-    sourceObservationIds: uniqueStrings([
+    sourceObservationIds: cappedStrings([
       ...existing.sourceObservationIds,
       raw.id,
-    ]),
-    importantObservationIds: uniqueStrings(importantObservationIds),
+    ], 256),
+    importantObservationIds: cappedStrings(importantObservationIds, 64),
   };
 
   await kv.set(KV.turnCapsules, key, next);
@@ -145,15 +159,15 @@ export async function upsertTurnCapsuleFromCompressed(
   const next: TurnCapsule = {
     ...existing,
     updatedAt: now,
-    files: mergeStrings(existing.files, compressed.files || []),
-    concepts: mergeStrings(existing.concepts, compressed.concepts || []),
+    files: cappedStrings(mergeStrings(existing.files, compressed.files || []), 64),
+    concepts: cappedStrings(mergeStrings(existing.concepts, compressed.concepts || []), 96),
     hadFailure: existing.hadFailure || compressed.type === "error",
     hadDecision: existing.hadDecision || compressed.type === "decision",
-    sourceObservationIds: uniqueStrings([
+    sourceObservationIds: cappedStrings([
       ...existing.sourceObservationIds,
       compressed.id,
-    ]),
-    importantObservationIds: uniqueStrings(importantObservationIds),
+    ], 256),
+    importantObservationIds: cappedStrings(importantObservationIds, 64),
     maxImportance: Math.max(existing.maxImportance, compressed.importance || 0),
   };
 

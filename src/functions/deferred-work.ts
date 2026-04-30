@@ -139,8 +139,19 @@ async function countScope(
   kv: StateKV,
   scope: string,
   options: DeferredWorkStatusOptions = {},
+  laneStateKey?: string,
 ): Promise<{ queued: number; error?: string }> {
-  if (options.lightweight) return { queued: 0 };
+  if (options.lightweight) {
+    if (!laneStateKey) return { queued: 0 };
+    const laneState = await kv
+      .get<MaintenanceLaneState>(KV.maintenanceLaneState, laneStateKey)
+      .catch(() => null);
+    const queued =
+      typeof laneState?.lastQueued === "number" && Number.isFinite(laneState.lastQueued)
+        ? Math.max(0, laneState.lastQueued)
+        : 0;
+    return { queued };
+  }
   try {
     return { queued: (await kv.list(scope)).length };
   } catch (err) {
@@ -167,8 +178,8 @@ async function buildDeferredWorkStatus(
   const nowMs = Date.now();
   const [compression, retrievalBlocks, graphExtraction] = await Promise.all([
     compressionStatus(kv, nowMs, options),
-    countScope(kv, KV.retrievalBlockRetry, options),
-    countScope(kv, KV.graphExtractionRetry, options),
+    countScope(kv, KV.retrievalBlockRetry, options, "retrieval"),
+    countScope(kv, KV.graphExtractionRetry, options, "graph"),
   ]);
   const totalQueued =
     compression.queued + retrievalBlocks.queued + graphExtraction.queued;

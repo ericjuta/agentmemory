@@ -146,7 +146,9 @@ export async function getContextHotPathPressure(
       return { reason: pauseReason, runtimeStatus: health?.status };
     }
 
-    const deferredWork = await getDeferredWorkStatus(kv).catch(() => null);
+    const deferredWork = await getDeferredWorkStatus(kv, {
+      lightweight: true,
+    }).catch(() => null);
     if (!deferredWork) return null;
     if (options.ignoreDeferredQueue) return null;
     const contextQueued = retrievalContextQueued(

@@ -253,8 +253,10 @@ describe("api::context", () => {
     try {
       registerContextFunction(sdk as never, kv as never, 900);
       registerApiTriggers(sdk as never, kv as never);
-      await kv.set(KV.retrievalBlockRetry, "queued-block", {
-        id: "queued-block",
+      await kv.set(KV.maintenanceLaneState, "retrieval", {
+        lane: "retrieval",
+        lastQueued: 1,
+        updatedAt: "2026-04-30T00:00:00.000Z",
       });
 
       const response = (await sdk.trigger("api::context", {
@@ -296,8 +298,10 @@ describe("api::context", () => {
     try {
       registerContextFunction(sdk as never, kv as never, 900);
       registerApiTriggers(sdk as never, kv as never);
-      await kv.set(KV.retrievalBlockRetry, "queued-block", {
-        id: "queued-block",
+      await kv.set(KV.maintenanceLaneState, "retrieval", {
+        lane: "retrieval",
+        lastQueued: 1,
+        updatedAt: "2026-04-30T00:00:00.000Z",
       });
 
       const response = (await sdk.trigger("api::context", {
@@ -350,8 +354,10 @@ describe("api::context", () => {
     try {
       registerContextFunction(sdk as never, kv as never, 900);
       registerApiTriggers(sdk as never, kv as never);
-      await kv.set(KV.retrievalBlockRetry, "queued-block", {
-        id: "queued-block",
+      await kv.set(KV.maintenanceLaneState, "retrieval", {
+        lane: "retrieval",
+        lastQueued: 1,
+        updatedAt: "2026-04-30T00:00:00.000Z",
       });
 
       const response = (await sdk.trigger("api::context", {

@@ -1,5 +1,5 @@
 // Fork note: added in this fork from upstream rohitg00/agentmemory. See NOTICE and LICENSE.
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   Memory,
   CompressedObservation,
@@ -16,7 +16,14 @@ import type {
 import { KV } from "../src/state/schema.js";
 import { registerBeliefsFunctions } from "../src/functions/beliefs.js";
 import { registerContextFunction } from "../src/functions/context.js";
+import { clearDeferredWorkStatusCache } from "../src/functions/deferred-work.js";
 import { mockKV, mockSdk } from "./helpers/mocks.js";
+
+afterEach(() => {
+  clearDeferredWorkStatusCache();
+  delete process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_QUEUE_HIGH"];
+  delete process.env["AGENTMEMORY_HOT_PATH_PRESSURE_CACHE_MS"];
+});
 
 describe("context freshness", () => {
   it("returns cached Codex context under hot-path pressure", async () => {
@@ -186,6 +193,34 @@ describe("context freshness", () => {
     expect(result.fallback).toBe("empty");
     expect(result.pressure.reason).toBe("critical");
     delete process.env["AGENTMEMORY_HOT_PATH_PRESSURE_CACHE_MS"];
+  });
+
+  it("checks context queue pressure without listing retry queues", async () => {
+    process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_QUEUE_HIGH"] = "1";
+    process.env["AGENTMEMORY_HOT_PATH_PRESSURE_CACHE_MS"] = "0";
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerContextFunction(sdk as never, kv as never, 800);
+    await kv.set(KV.maintenanceLaneState, "retrieval", {
+      lane: "retrieval",
+      lastQueued: 1,
+      updatedAt: "2026-04-30T00:00:00.000Z",
+    });
+    const list = vi.spyOn(kv, "list");
+
+    const result = (await sdk.trigger("mem::context", {
+      sessionId: "session-context-lightweight-pressure",
+      project: "/project",
+      query: "retrieval pressure",
+      budget: 800,
+    })) as { context: string; skipped: boolean; pressure: { reason: string } };
+
+    expect(result.context).toBe("");
+    expect(result.skipped).toBe(true);
+    expect(result.pressure.reason).toBe("deferred_queue_1_gte_1");
+    expect(list).not.toHaveBeenCalledWith(KV.retrievalBlockRetry);
+    expect(list).not.toHaveBeenCalledWith(KV.graphExtractionRetry);
+    expect(list).not.toHaveBeenCalledWith(KV.compressRetry);
   });
 
   it("caches repeated Codex project context for a short window", async () => {

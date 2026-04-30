@@ -12,6 +12,14 @@ const READY_SCOPE_KEY = "scope:index-ready";
 const BRANCH_SCOPE_PREFIX = "scope:branch:";
 const SCOPE_INDEX = KV.retrievalBlockScopeIndex;
 const LEGACY_SCOPE_INDEX = KV.retrievalBlockIndex;
+const DEFAULT_SCOPED_RETRIEVAL_BLOCK_LOAD_LIMIT = 512;
+
+function readPositiveIntegerEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
@@ -202,6 +210,14 @@ export async function loadScopedRetrievalBlocks(
   const ids = uniqueStrings(
     scopeEntries.flatMap(({ entry }) => entry?.ids || []),
   );
+  const loadLimit = readPositiveIntegerEnv(
+    "AGENTMEMORY_SCOPED_RETRIEVAL_BLOCK_LOAD_LIMIT",
+    DEFAULT_SCOPED_RETRIEVAL_BLOCK_LOAD_LIMIT,
+  );
+
+  if (ids.length > loadLimit) {
+    return { blocks: [], complete: false };
+  }
 
   if (ids.length === 0) {
     return { blocks: [], complete: true };

@@ -108,6 +108,53 @@ describe("observe freshness plumbing", () => {
     expect(workingSet.latestCompletedCapsule.turnId).toBe("turn-2");
   });
 
+  it("bounds per-turn capsule signal arrays under repeated observe fanout", async () => {
+    const previousLimit = process.env["AGENTMEMORY_TURN_CAPSULE_SIGNAL_LIMIT"];
+    process.env["AGENTMEMORY_TURN_CAPSULE_SIGNAL_LIMIT"] = "3";
+    const sdk = mockSdk();
+    const kv = mockKV();
+    try {
+      registerObserveFunction(sdk as never, kv as never);
+
+      for (let index = 0; index < 8; index += 1) {
+        await sdk.trigger("mem::observe", {
+          hookType: "post_tool_use",
+          sessionId: "session-1",
+          project: "/project",
+          cwd: "/project",
+          timestamp: `2026-04-30T00:00:0${index}.000Z`,
+          source: "codex-native",
+          payloadVersion: "1",
+          eventId: `evt-${index}`,
+          persistenceClass: "persistent",
+          capabilities: ["structured_post_tool_payload", "event_identity"],
+          data: {
+            session_id: "session-1",
+            turn_id: "turn-oom",
+            cwd: "/project",
+            model: "gpt-5.4",
+            tool_name: "Read",
+            tool_use_id: `toolu-${index}`,
+            tool_input: { file_path: `/project/src/file-${index}.ts` },
+            tool_output: { output: `concept-${index} result` },
+          },
+        });
+      }
+
+      const capsule = await kv.get<any>(KV.turnCapsules, "session-1:turn-oom");
+
+      expect(capsule.files.length).toBeLessThanOrEqual(3);
+      expect(capsule.concepts.length).toBeLessThanOrEqual(3);
+      expect(capsule.sourceObservationIds.length).toBeLessThanOrEqual(3);
+    } finally {
+      if (previousLimit === undefined) {
+        delete process.env["AGENTMEMORY_TURN_CAPSULE_SIGNAL_LIMIT"];
+      } else {
+        process.env["AGENTMEMORY_TURN_CAPSULE_SIGNAL_LIMIT"] = previousLimit;
+      }
+    }
+  });
+
   it("rejects unknown hook families instead of storing them", async () => {
     const sdk = mockSdk();
     const kv = mockKV();
