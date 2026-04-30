@@ -864,6 +864,13 @@ Status:
   path-specific retrieval.
 - Responses include `cache.status` as `miss`, `hit`, or `coalesced` for
   proof and operator readback.
+- Successful Codex context is also persisted as last-known-good at two scopes:
+  the exact cache key and the Codex project+branch. Under critical hot-path
+  pressure, cold Codex sessions first try the exact key and then project+branch
+  before returning an empty degraded response.
+- Degraded non-empty context fallback reports `fallback: "last-known-good"`,
+  `degraded: true`, `pressure`, and `ageMs`; this is a proof warning, not a
+  quality failure. Empty fallback with zero tokens remains a quality failure.
 
 2026-04-29 live closeout:
 
@@ -880,3 +887,30 @@ Status:
   this is accepted latency debt, not a contract or quality failure.
 - Stop coding unless retrieval freshness becomes nonzero again, Codex proof
   fails quality, or cold context remains too slow after compression drains.
+
+2026-04-30 pressure deploy closeout:
+
+- `1cacd23 fix: preserve cold Codex context under pressure` is pushed to
+  `origin/scratch/upstream-selected-fixes-20260429` and deployed through
+  `docker compose up -d --build --force-recreate agentmemory-worker`.
+- The worker image rebuilt successfully and was recreated while iii-engine
+  stayed up.
+- The first post-deploy `codex-proof` correctly exposed the missing case: a
+  brand-new Codex session under `runtimeStatus: critical` still returned empty
+  context because no exact session/query last-known-good existed.
+- The fix stores project+branch last-known-good context from any successful
+  Codex context generation and lets new Codex sessions use it under critical
+  pressure.
+- Live direct proof after redeploy:
+  - warm Codex context: 10 blocks, 1992 tokens, `cache.status: "miss"`
+  - cold Codex context under critical pressure: 10 blocks, 1992 tokens,
+    `degraded: true`, `fallback: "last-known-good"`,
+    `pressure.reason: "critical"`
+- The all-in-one `codex-proof` CLI can still time out under current critical
+  CPU/RSS pressure. Treat that as the runtime-pressure lane, not as a context
+  quality regression when direct context proof returns non-empty fallback.
+- Current runtime is not fully happy: serving is degraded/critical, observe may
+  shed, write gates may close under CPU pressure, and compression backlog is
+  still maintenance debt. Stop changing retrieval/context code unless direct
+  context fallback returns empty again; next work should target runtime pressure
+  and maintenance scheduling.
