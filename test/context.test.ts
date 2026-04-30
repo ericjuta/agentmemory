@@ -23,6 +23,8 @@ afterEach(() => {
   clearDeferredWorkStatusCache();
   delete process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_QUEUE_HIGH"];
   delete process.env["AGENTMEMORY_HOT_PATH_PRESSURE_CACHE_MS"];
+  delete process.env["AGENTMEMORY_HOT_PATH_RSS_WARN_BYTES"];
+  delete process.env["AGENTMEMORY_HOT_PATH_RSS_CRITICAL_BYTES"];
 });
 
 describe("context freshness", () => {
@@ -193,6 +195,68 @@ describe("context freshness", () => {
     expect(result.fallback).toBe("empty");
     expect(result.pressure.reason).toBe("critical");
     delete process.env["AGENTMEMORY_HOT_PATH_PRESSURE_CACHE_MS"];
+  });
+
+  it("returns current-session observations when pressure prevents retrieval context", async () => {
+    process.env["AGENTMEMORY_HOT_PATH_PRESSURE_CACHE_MS"] = "0";
+    process.env["AGENTMEMORY_HOT_PATH_RSS_WARN_BYTES"] = "100";
+    process.env["AGENTMEMORY_HOT_PATH_RSS_CRITICAL_BYTES"] = "1000";
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerContextFunction(sdk as never, kv as never, 800);
+
+    const project = "/home/ericjuta/.openclaw/workspace/repos/agentmemory";
+    const session: Session = {
+      id: "session-pressure-current-observation",
+      project,
+      cwd: project,
+      startedAt: "2026-04-30T10:00:00.000Z",
+      status: "active",
+      observationCount: 1,
+    };
+    await kv.set(KV.sessions, session.id, session);
+    await kv.set(KV.health, "latest", {
+      status: "degraded",
+      alerts: ["memory_warn_500_gte_100"],
+      kvConnectivity: { status: "ok" },
+      memory: { rss: 500 },
+    });
+    await kv.set(KV.observations(session.id), "obs-marker", {
+      id: "obs-marker",
+      sessionId: session.id,
+      timestamp: "2026-04-30T10:00:01.000Z",
+      type: "conversation",
+      title: "prompt_submit",
+      facts: ["agentmemory-codex-full-smoke-marker landed"],
+      narrative: "Codex printed the full smoke marker.",
+      concepts: ["codex"],
+      files: [],
+      importance: 6,
+    } satisfies CompressedObservation);
+
+    const result = (await sdk.trigger("mem::context", {
+      sessionId: session.id,
+      project,
+      query: "agentmemory-codex-full-smoke-marker",
+      budget: 800,
+    })) as {
+      context: string;
+      items: unknown[];
+      degraded: boolean;
+      fallback: string;
+      pressure: { reason: string };
+      trace: { fallback: string; observationIds: string[] };
+    };
+
+    expect(result.context).toContain("agentmemory-codex-full-smoke-marker");
+    expect(result.items).toHaveLength(1);
+    expect(result.degraded).toBe(true);
+    expect(result.fallback).toBe("current-session-observations");
+    expect(result.pressure.reason).toContain("rss_warn_");
+    expect(result.trace).toMatchObject({
+      fallback: "current-session-observations",
+      observationIds: ["obs-marker"],
+    });
   });
 
   it("checks context queue pressure without listing retry queues", async () => {

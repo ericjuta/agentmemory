@@ -1,5 +1,9 @@
 import type { ISdk } from "iii-sdk";
-import type { RetrievalIntent, Session } from "../types.js";
+import type {
+  CompressedObservation,
+  RetrievalIntent,
+  Session,
+} from "../types.js";
 import { KV } from "../state/schema.js";
 import type { StateKV } from "../state/kv.js";
 import { logger } from "../logger.js";
@@ -17,7 +21,11 @@ type ContextResponse = {
   tokens: number;
   trace: unknown;
   degraded?: boolean;
-  fallback?: "memory-cache" | "last-known-good" | "empty";
+  fallback?:
+    | "memory-cache"
+    | "last-known-good"
+    | "current-session-observations"
+    | "empty";
   pressure?: unknown;
   ageMs?: number;
   cache?: {
@@ -128,6 +136,61 @@ function degradedContextResponse(
   };
 }
 
+function observationText(observation: CompressedObservation): string {
+  const parts = [
+    observation.title,
+    observation.subtitle,
+    observation.narrative,
+    ...observation.facts,
+  ];
+  return parts.filter(Boolean).join("\n");
+}
+
+async function currentSessionObservationContext(
+  kv: StateKV,
+  sessionId: string,
+  pressure: unknown,
+  maxObservations = 5,
+): Promise<ContextResponse | null> {
+  const observations = await kv
+    .list<CompressedObservation>(KV.observations(sessionId))
+    .catch(() => [] as CompressedObservation[]);
+  const usable = observations
+    .filter((observation) => observationText(observation).trim())
+    .sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""))
+    .slice(0, maxObservations);
+  if (usable.length === 0) return null;
+
+  const context = usable
+    .map((observation) => {
+      const files = observation.files.length
+        ? `\nFiles: ${observation.files.join(", ")}`
+        : "";
+      return `<observation id="${observation.id}" type="${observation.type}" title="${observation.title}">\n${observationText(observation)}${files}\n</observation>`;
+    })
+    .join("\n\n");
+
+  return {
+    context,
+    items: usable.map((observation) => ({
+      id: observation.id,
+      type: "observation",
+      title: observation.title,
+      why: "current session observation fallback under pressure",
+      freshness: "current",
+    })),
+    blocks: usable.length,
+    tokens: Math.ceil(context.length / 3),
+    trace: {
+      fallback: "current-session-observations",
+      observationIds: usable.map((observation) => observation.id),
+    },
+    degraded: true,
+    fallback: "current-session-observations",
+    pressure,
+  };
+}
+
 async function readLastKnownGoodContext(
   kv: StateKV,
   keys: string[],
@@ -226,6 +289,12 @@ export function registerContextFunction(
           );
           if (lastKnownGood) return lastKnownGood;
         }
+        const currentObservations = await currentSessionObservationContext(
+          kv,
+          data.sessionId,
+          pressure,
+        );
+        if (currentObservations) return currentObservations;
         return {
           ...emptyContextForPressure(pressure),
           degraded: true,

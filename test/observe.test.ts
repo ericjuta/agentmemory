@@ -845,7 +845,7 @@ describe("observe freshness plumbing", () => {
     }
   });
 
-  it("skips observe immediately while cooldown is active", async () => {
+  it("skips non-persistent observe immediately while cooldown is active", async () => {
     const sdk = mockSdk();
     const kv = mockKV();
     await kv.set(KV.observePressureState, "latest", {
@@ -861,7 +861,7 @@ describe("observe freshness plumbing", () => {
     registerObserveFunction(sdk as never, kv as never);
 
     const result = (await sdk.trigger("mem::observe", {
-      hookType: "post_tool_use",
+      hookType: "stop",
       sessionId: "session-cooldown",
       project: "/project",
       cwd: "/project",
@@ -869,17 +869,14 @@ describe("observe freshness plumbing", () => {
       source: "codex-native",
       payloadVersion: "1",
       eventId: "evt-cooldown",
-      persistenceClass: "persistent",
+      persistenceClass: "ephemeral",
       capabilities: ["structured_post_tool_payload", "event_identity"],
       data: {
         session_id: "session-cooldown",
         turn_id: "turn-cooldown",
         cwd: "/project",
         model: "gpt-5.4",
-        tool_name: "Edit",
-        tool_use_id: "toolu_cooldown",
-        tool_input: { file_path: "/project/src/app.ts" },
-        tool_output: { changed_files: ["/project/src/app.ts"] },
+        last_assistant_message: "cooldown stop",
       },
     })) as { persisted: boolean; skipped: boolean; reason: string };
 
@@ -891,6 +888,7 @@ describe("observe freshness plumbing", () => {
     expect(
       await kv.list<any>(KV.observations("session-cooldown")),
     ).toHaveLength(0);
+    await kv.delete(KV.observePressureState, "latest");
   });
 
   it("feeds synthetic compression signals back into the current turn capsule", async () => {
@@ -1096,5 +1094,60 @@ describe("observe freshness plumbing", () => {
       restoreBudget();
       restoreAutoCompress();
     }
+  });
+
+  it("still persists compact persistent observations while observe cooldown is active", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    await kv.set(KV.observePressureState, "latest", {
+      status: "degraded",
+      timeoutStreak: 1,
+      degradedObserveCount: 1,
+      acceptedObserveCount: 0,
+      lastTransitionAt: "2026-03-29T12:04:00.000Z",
+      updatedAt: "2026-03-29T12:04:00.000Z",
+      cooldownUntil: new Date(Date.now() + 60_000).toISOString(),
+      lastShedReason: "observe_write_budget_exceeded_during_turn_capsule",
+    });
+    registerObserveFunction(sdk as never, kv as never);
+
+    const result = (await sdk.trigger("mem::observe", {
+      hookType: "prompt_submit",
+      sessionId: "session-cooldown-persistent",
+      project: "/project",
+      cwd: "/project",
+      timestamp: "2026-03-29T12:04:10.000Z",
+      source: "codex-native",
+      payloadVersion: "1",
+      eventId: "evt-cooldown-prompt",
+      persistenceClass: "persistent",
+      capabilities: ["event_identity"],
+      data: {
+        session_id: "session-cooldown-persistent",
+        turn_id: "turn-cooldown",
+        cwd: "/project",
+        model: "gpt-5.4",
+        prompt: "agentmemory-codex-full-smoke-cooldown-marker",
+      },
+    })) as {
+      persisted: boolean;
+      skipped?: boolean;
+      deferred?: boolean;
+      reason?: string;
+      pressure?: { mode?: string; reason?: string };
+    };
+
+    expect(result.persisted).toBe(true);
+    expect(result.skipped).toBeUndefined();
+    expect(result.deferred).toBe(true);
+    expect(result.reason).toBe("hot_path_backpressure");
+    expect(result.pressure?.mode).toBe("defer_derived");
+    const observations = await kv.list<any>(
+      KV.observations("session-cooldown-persistent"),
+    );
+    expect(observations).toHaveLength(1);
+    expect(observations[0].narrative).toContain(
+      "agentmemory-codex-full-smoke-cooldown-marker",
+    );
   });
 });

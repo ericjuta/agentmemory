@@ -36,6 +36,8 @@ const DEFAULT_TARGETS = {
   smartSearch: 1500,
 };
 
+const DEFAULT_STEP_TIMEOUT_MS = 4000;
+
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
@@ -90,6 +92,27 @@ async function timed<T>(fn: () => Promise<T>): Promise<{ latencyMs: number; valu
   }
 }
 
+async function timedBounded<T>(
+  fn: () => Promise<T>,
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS,
+): Promise<{ latencyMs: number; value?: T; error?: string }> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  return timed(() =>
+    Promise.race([
+      fn(),
+      new Promise<T>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(`step_timeout_after_${timeoutMs}ms`)),
+          timeoutMs,
+        );
+        timeout.unref();
+      }),
+    ]).finally(() => {
+      if (timeout) clearTimeout(timeout);
+    }),
+  );
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -135,6 +158,10 @@ function stepFromTrigger(
 
 function passFromSteps(steps: Record<string, StepResult>): boolean {
   return Object.values(steps).every((step) => step.status !== "fail");
+}
+
+function sessionStarted(step: StepResult): boolean {
+  return step.status !== "fail" || step.error?.startsWith("step_timeout_after_");
 }
 
 function latencyWarnings(steps: Record<string, StepResult>): string[] {
@@ -230,13 +257,10 @@ export function registerCodexIntegrationProofFunction(
       | null;
 
     const sessionStart = stepFromTrigger(
-      await timed(() =>
-        sdk.trigger({
-          function_id: "api::session::start",
-          payload: {
-            body: { sessionId, project, cwd, ...(branch ? { branch } : {}) },
-            headers: {},
-          },
+      await timedBounded(() =>
+        sdk.trigger("api::session::start", {
+          body: { sessionId, project, cwd, ...(branch ? { branch } : {}) },
+          headers: {},
         }),
       ),
       targets.sessionStart,
@@ -265,7 +289,7 @@ export function registerCodexIntegrationProofFunction(
     );
 
     const context = stepFromTrigger(
-      await timed(() =>
+      await timedBounded(() =>
         sdk.trigger({
           function_id: "mem::context",
           payload: {
@@ -290,7 +314,7 @@ export function registerCodexIntegrationProofFunction(
     }
 
     const smartSearch = stepFromTrigger(
-      await timed(() =>
+      await timedBounded(() =>
         sdk.trigger({
           function_id: "mem::smart-search",
           payload: {
@@ -309,7 +333,7 @@ export function registerCodexIntegrationProofFunction(
       }),
     );
 
-    const retrievalProof = await timed(() =>
+    const retrievalProof = await timedBounded(() =>
       sdk.trigger({
         function_id: "mem::retrieval-proof",
         payload: {
@@ -358,7 +382,7 @@ export function registerCodexIntegrationProofFunction(
       sessionId,
       targetsMs: targets,
       pass: passFromSteps(steps),
-      contractPass: sessionStart.status !== "fail",
+      contractPass: sessionStarted(sessionStart),
       qualityPass: context.status !== "fail" && smartSearch.status !== "fail",
       latencyWarnings: latencyWarnings(steps),
       warnings,

@@ -626,6 +626,7 @@ describe("Codex payload compatibility", () => {
         consolidate: "skipped",
       });
       expect(response.body.errors.map((error) => error.message)).toEqual([
+        "session_closeout_synthesized_observation",
         "session_closeout_summarize_timeout",
         "session_closeout_crystallize_timeout",
         "session_closeout_consolidate_timeout",
@@ -708,6 +709,12 @@ describe("Codex payload compatibility", () => {
     const kv = mockKV();
     registerApiTriggers(sdk as never, kv as never);
     registerCodexIntegrationProofFunction(sdk as never, kv as never);
+    const triggerCalls: unknown[][] = [];
+    const originalTrigger = sdk.trigger;
+    sdk.trigger = (async (...args: unknown[]) => {
+      triggerCalls.push(args);
+      return originalTrigger(...(args as Parameters<typeof originalTrigger>));
+    }) as typeof sdk.trigger;
 
     sdk.registerFunction("mem::context", async () => ({
       context: "Codex startup context includes the latest handoff.",
@@ -786,5 +793,24 @@ describe("Codex payload compatibility", () => {
       queuedCount: 0,
       blockingQueuedCount: 0,
     });
+    expect(triggerCalls).toContainEqual([
+      "api::session::start",
+      {
+        body: {
+          sessionId: "session-codex-proof",
+          project: "/home/ericjuta/.openclaw/workspace/repos/codex",
+          cwd: "/home/ericjuta/.openclaw/workspace/repos/codex",
+        },
+        headers: {},
+      },
+    ]);
+    expect(
+      triggerCalls.some(
+        ([input]) =>
+          typeof input === "object" &&
+          input !== null &&
+          (input as { function_id?: unknown }).function_id === "api::session::start",
+      ),
+    ).toBe(false);
   });
 });

@@ -605,6 +605,54 @@ function latestBranchOverlaySummary(
   return parts.join("\n");
 }
 
+async function ensureCloseoutObservation(
+  kv: StateKV,
+  session: Session,
+): Promise<boolean> {
+  const existing = await kv
+    .list<CompressedObservation>(KV.observations(session.id))
+    .catch(() => [] as CompressedObservation[]);
+  if (existing.length > 0) return false;
+
+  const contextInjection = await kv
+    .get<{ memoryIds?: string[]; timestamp?: string }>(
+      KV.contextInjections,
+      session.id,
+    )
+    .catch(() => null);
+  const timestamp = new Date().toISOString();
+  const facts = [
+    `session_status: ${session.status}`,
+    `project: ${session.project}`,
+    ...(session.branch ? [`branch: ${session.branch}`] : []),
+    ...(contextInjection?.memoryIds?.length
+      ? [`context_memory_ids: ${contextInjection.memoryIds.join(", ")}`]
+      : []),
+  ];
+  const observation: CompressedObservation = {
+    id: `obs_closeout_${session.id.replace(/[^a-zA-Z0-9_-]/g, "_")}`,
+    sessionId: session.id,
+    timestamp,
+    source: "agentmemory-closeout",
+    persistenceClass: "persistent",
+    type: "conversation",
+    title: "Codex session closeout",
+    facts,
+    narrative:
+      "AgentMemory observed the Codex session lifecycle but persistent turn capture was unavailable before closeout. This canonical closeout observation preserves the session, project, and context linkage for recall.",
+    concepts: ["codex", "agentmemory", "session closeout"],
+    files: [],
+    importance: 5,
+    confidence: 0.6,
+  };
+  await kv.set(KV.observations(session.id), observation.id, observation);
+  await kv.update(KV.sessions, session.id, [
+    { type: "set", path: "updatedAt", value: timestamp },
+    { type: "set", path: "observationCount", value: 1 },
+  ]);
+  return true;
+}
+
 async function buildSessionBootstrap(
   sdk: ISdk,
   kv: StateKV,
@@ -1612,6 +1660,14 @@ export function registerApiTriggers(
       };
 
       const existingSummary = await kv.get(KV.summaries, sessionId).catch(() => null);
+      const synthesizedObservation = await ensureCloseoutObservation(kv, session)
+        .catch(() => false);
+      if (synthesizedObservation) {
+        result.errors.push({
+          step: "summarize",
+          message: "session_closeout_synthesized_observation",
+        });
+      }
       const closeoutStepTimeoutMs = readBoundedPositiveIntEnv(
         "AGENTMEMORY_SESSION_CLOSEOUT_STEP_TIMEOUT_MS",
         SESSION_CLOSEOUT_STEP_TIMEOUT_MS,

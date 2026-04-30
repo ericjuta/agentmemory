@@ -938,7 +938,14 @@ export function registerObserveFunction(
 
     return withKeyedLock(`obs:${payload.sessionId}`, async () => {
       const observeCooldown = await currentObserveCooldown(kv);
-      if (observeCooldown) {
+      if (
+        observeCooldown &&
+        (metadata.persistenceClass !== "persistent" ||
+          payload.hookType === "pre_tool_use" ||
+          payload.hookType === "notification" ||
+          payload.hookType === "subagent_start" ||
+          payload.hookType === "subagent_stop")
+      ) {
         return degradedObserveResult(
           payload,
           metadata,
@@ -974,7 +981,14 @@ export function registerObserveFunction(
         };
       }
 
-      const hotPathPressure = await getObserveHotPathPressure(kv);
+      const hotPathPressure =
+        observeCooldown && metadata.persistenceClass === "persistent"
+          ? ({
+              reason:
+                observeCooldown.lastShedReason || "observe_cooldown_active",
+              mode: "defer_derived",
+            } as const)
+          : await getObserveHotPathPressure(kv);
       if (
         hotPathPressure &&
         shouldShedObservation(payload, metadata, hotPathPressure)
