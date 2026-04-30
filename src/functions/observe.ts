@@ -4,6 +4,7 @@ import type {
   HookPayload,
   HookType,
   ObservationPersistenceClass,
+  ObserveDerivedRetryEntry,
   ObserveReceipt,
   ObservePressureState,
   RawObservation,
@@ -49,48 +50,49 @@ const SUPPORTED_HOOK_TYPES = new Set<HookType>([
 
 const NATIVE_SOURCE = "codex-native";
 const SUPPORTED_NATIVE_PAYLOAD_VERSIONS = new Set(["1"]);
-const NATIVE_REQUIRED_DATA_FIELDS: Partial<Record<HookType, readonly string[]>> =
-  {
-    session_start: ["session_id", "cwd", "model"],
-    prompt_submit: ["session_id", "turn_id", "cwd", "model", "prompt"],
-    pre_tool_use: [
-      "session_id",
-      "turn_id",
-      "cwd",
-      "model",
-      "tool_name",
-      "tool_use_id",
-      "tool_input",
-    ],
-    post_tool_use: [
-      "session_id",
-      "turn_id",
-      "cwd",
-      "model",
-      "tool_name",
-      "tool_use_id",
-      "tool_input",
-      "tool_output",
-    ],
-    post_tool_failure: [
-      "session_id",
-      "turn_id",
-      "cwd",
-      "model",
-      "tool_name",
-      "tool_use_id",
-      "tool_input",
-      "error",
-    ],
-    assistant_result: [
-      "session_id",
-      "turn_id",
-      "cwd",
-      "model",
-      "assistant_text",
-      "is_final",
-    ],
-  };
+const NATIVE_REQUIRED_DATA_FIELDS: Partial<
+  Record<HookType, readonly string[]>
+> = {
+  session_start: ["session_id", "cwd", "model"],
+  prompt_submit: ["session_id", "turn_id", "cwd", "model", "prompt"],
+  pre_tool_use: [
+    "session_id",
+    "turn_id",
+    "cwd",
+    "model",
+    "tool_name",
+    "tool_use_id",
+    "tool_input",
+  ],
+  post_tool_use: [
+    "session_id",
+    "turn_id",
+    "cwd",
+    "model",
+    "tool_name",
+    "tool_use_id",
+    "tool_input",
+    "tool_output",
+  ],
+  post_tool_failure: [
+    "session_id",
+    "turn_id",
+    "cwd",
+    "model",
+    "tool_name",
+    "tool_use_id",
+    "tool_input",
+    "error",
+  ],
+  assistant_result: [
+    "session_id",
+    "turn_id",
+    "cwd",
+    "model",
+    "assistant_text",
+    "is_final",
+  ],
+};
 
 type ObserveMetadata = {
   source?: string;
@@ -128,10 +130,12 @@ function bestEffortTrigger(
   functionId: string,
   payload: unknown,
 ): void {
-  void sdk.trigger({
-    function_id: functionId,
-    payload,
-  }).catch(() => {});
+  void sdk
+    .trigger({
+      function_id: functionId,
+      payload,
+    })
+    .catch(() => {});
 }
 
 const OBSERVE_PRESSURE_KEY = "latest";
@@ -191,10 +195,17 @@ function isOperatorDiagnosticObservation(payload: HookPayload): boolean {
       ? (payload.data as Record<string, unknown>)
       : {};
   const toolName = asNonEmptyString(data["tool_name"])?.toLowerCase() || "";
-  const toolInput = stringifyForDiagnosticScan(data["tool_input"]).slice(0, 20_000);
+  const toolInput = stringifyForDiagnosticScan(data["tool_input"]).slice(
+    0,
+    20_000,
+  );
   const haystack = `${toolName}\n${toolInput}`.toLowerCase();
   if (!haystack.trim()) return false;
-  if (OPERATOR_DIAGNOSTIC_ENDPOINTS.some((endpoint) => haystack.includes(endpoint))) {
+  if (
+    OPERATOR_DIAGNOSTIC_ENDPOINTS.some((endpoint) =>
+      haystack.includes(endpoint),
+    )
+  ) {
     return true;
   }
   return OPERATOR_DIAGNOSTIC_PATTERNS.some((pattern) => pattern.test(haystack));
@@ -202,13 +213,13 @@ function isOperatorDiagnosticObservation(payload: HookPayload): boolean {
 
 function normalizeObserveMetadata(
   payload: HookPayload,
-):
-  | { ok: true; metadata: ObserveMetadata }
-  | { ok: false; error: string } {
+): { ok: true; metadata: ObserveMetadata } | { ok: false; error: string } {
   const record = payload as HookPayload & Record<string, unknown>;
   const sourceRaw = payload.source ?? record["source"];
   const payloadVersionRaw =
-    payload.payloadVersion ?? record["payloadVersion"] ?? record["payload_version"];
+    payload.payloadVersion ??
+    record["payloadVersion"] ??
+    record["payload_version"];
   const eventIdRaw = payload.eventId ?? record["eventId"] ?? record["event_id"];
   const sourceTimestampRaw =
     payload.sourceTimestamp ??
@@ -246,7 +257,8 @@ function normalizeObserveMetadata(
   if (eventIdRaw !== undefined && !eventId) {
     return {
       ok: false,
-      error: "Invalid payload: eventId must be a non-empty string when provided",
+      error:
+        "Invalid payload: eventId must be a non-empty string when provided",
     };
   }
 
@@ -302,11 +314,7 @@ function normalizeObserveMetadata(
 
 function hasValidNativeField(field: string, value: unknown): boolean {
   if (field === "is_final") return typeof value === "boolean";
-  if (
-    field === "tool_input" ||
-    field === "tool_output" ||
-    field === "error"
-  ) {
+  if (field === "tool_input" || field === "tool_output" || field === "error") {
     return value !== undefined;
   }
   return !!asNonEmptyString(value);
@@ -394,7 +402,10 @@ function readPositiveIntegerEnv(name: string, fallback: number): number {
 
 function truncateString(value: string, limit: number): string {
   if (value.length <= limit) return value;
-  return value.slice(0, limit) + `\n${TRUNCATED_MARKER} ${value.length - limit} chars]`;
+  return (
+    value.slice(0, limit) +
+    `\n${TRUNCATED_MARKER} ${value.length - limit} chars]`
+  );
 }
 
 function boundObserveRawValue(
@@ -407,7 +418,8 @@ function boundObserveRawValue(
   },
   depth = 0,
 ): unknown {
-  if (typeof value === "string") return truncateString(value, options.stringLimit);
+  if (typeof value === "string")
+    return truncateString(value, options.stringLimit);
   if (typeof value !== "object" || value === null) return value;
   if (depth >= options.depthLimit) return TRUNCATED_MARKER;
 
@@ -416,7 +428,9 @@ function boundObserveRawValue(
       .slice(0, options.arrayLimit)
       .map((item) => boundObserveRawValue(item, options, depth + 1));
     if (value.length > options.arrayLimit) {
-      bounded.push(`${TRUNCATED_MARKER} ${value.length - options.arrayLimit} items]`);
+      bounded.push(
+        `${TRUNCATED_MARKER} ${value.length - options.arrayLimit} items]`,
+      );
     }
     return bounded;
   }
@@ -576,7 +590,9 @@ function compressionTrackerPauseReason(
     2,
   );
   const inflight = tracker.totalInflight();
-  return inflight >= limit ? `compress_inflight_${inflight}_gte_${limit}` : null;
+  return inflight >= limit
+    ? `compress_inflight_${inflight}_gte_${limit}`
+    : null;
 }
 
 function shouldCompressInlineOnObserve(): boolean {
@@ -597,6 +613,31 @@ function shouldPersistDerivedObserveWork(): boolean {
 
 function shouldPersistRawTurnCapsule(payload: HookPayload): boolean {
   if (shouldPersistDerivedObserveWork()) return true;
+  if (
+    payload.hookType === "post_tool_use" ||
+    payload.hookType === "post_tool_failure"
+  ) {
+    const data =
+      typeof payload.data === "object" && payload.data !== null
+        ? (payload.data as Record<string, unknown>)
+        : {};
+    const hasNativeIdentity =
+      payload.source === "codex-native" ||
+      typeof payload.eventId === "string" ||
+      typeof data["session_id"] === "string";
+    if (!hasNativeIdentity) return true;
+    const toolInput =
+      typeof data["tool_input"] === "object" && data["tool_input"] !== null
+        ? (data["tool_input"] as Record<string, unknown>)
+        : {};
+    const toolOutput =
+      typeof data["tool_output"] === "object" && data["tool_output"] !== null
+        ? (data["tool_output"] as Record<string, unknown>)
+        : {};
+    return Boolean(
+      toolInput["file_path"] || toolInput["query"] || toolOutput["error"],
+    );
+  }
   return (
     payload.hookType === "prompt_submit" ||
     payload.hookType === "assistant_result" ||
@@ -622,8 +663,51 @@ function shouldIndexObserveInline(): boolean {
   );
 }
 
+async function enqueueObserveDerivedRetry(
+  kv: StateKV,
+  entry: {
+    observationId: string;
+    sessionId: string;
+    project: string;
+    cwd: string;
+    hookType: HookType;
+    raw: RawObservation;
+    error: string;
+  },
+): Promise<void> {
+  const now = new Date().toISOString();
+  const existing = await kv
+    .get<ObserveDerivedRetryEntry>(KV.observeDerivedRetry, entry.observationId)
+    .catch(() => null);
+  await kv.set(KV.observeDerivedRetry, entry.observationId, {
+    observationId: entry.observationId,
+    sessionId: entry.sessionId,
+    project: entry.project,
+    cwd: entry.cwd,
+    hookType: entry.hookType,
+    raw: entry.raw,
+    retries: existing?.retries ?? 0,
+    firstDeferredAt: existing?.firstDeferredAt ?? now,
+    lastDeferredAt: now,
+    lastError: entry.error,
+  } satisfies ObserveDerivedRetryEntry);
+}
+
 function isQueuePressure(reason: string | undefined): boolean {
   return reason?.startsWith("deferred_queue_") ?? false;
+}
+
+function runDeferredObserveWork(
+  label: string,
+  work: Promise<unknown>,
+  context: Record<string, unknown>,
+): void {
+  void work.catch((err) => {
+    logger.warn(label, {
+      ...context,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  });
 }
 
 async function storeSyntheticObservation(
@@ -648,10 +732,25 @@ async function storeSyntheticObservation(
     await indexCompressedObservation(kv, getSearchIndex(), storedSynthetic, {
       syncEmbedding,
     });
-    await upsertObservationRetrievalBlock(kv, storedSynthetic, payload.project, {
-      skipEmbedding: !syncEmbedding,
-    });
+    await upsertObservationRetrievalBlock(
+      kv,
+      storedSynthetic,
+      payload.project,
+      {
+        skipEmbedding: !syncEmbedding,
+      },
+    );
     await upsertTurnCapsuleFromCompressed(kv, storedSynthetic);
+  } else {
+    await enqueueObserveDerivedRetry(kv, {
+      observationId: obsId,
+      sessionId: payload.sessionId,
+      project: payload.project,
+      cwd: payload.cwd,
+      hookType: payload.hookType,
+      raw,
+      error: "observe_derived_inline_disabled",
+    });
   }
   bestEffortTrigger(sdk, "stream::set", {
     stream_name: STREAM.name,
@@ -758,6 +857,19 @@ export function registerObserveFunction(
 
     const obsId = buildObservationId(payload.sessionId, metadata.eventId);
 
+    if (
+      metadata.persistenceClass === "ephemeral" &&
+      payload.hookType === "pre_tool_use"
+    ) {
+      return {
+        observationId: obsId,
+        persistenceClass: metadata.persistenceClass,
+        persisted: false,
+        skipped: true,
+        reason: "ephemeral_pre_tool_use",
+      };
+    }
+
     let dedupHash: string | undefined;
     if (dedupMap) {
       const d =
@@ -778,7 +890,9 @@ export function registerObserveFunction(
       const sanitized = stripPrivateData(jsonStr);
       sanitizedRaw = boundObserveRawPayload(JSON.parse(sanitized));
     } catch {
-      sanitizedRaw = boundObserveRawPayload(stripPrivateData(String(payload.data)));
+      sanitizedRaw = boundObserveRawPayload(
+        stripPrivateData(String(payload.data)),
+      );
     }
 
     const raw: RawObservation = {
@@ -812,9 +926,13 @@ export function registerObserveFunction(
       if (payload.hookType === "assistant_result") {
         raw.assistantResponse = d["assistant_text"] as string | undefined;
       }
-      if (payload.hookType === "stop" || payload.hookType === "task_completed") {
-        raw.assistantResponse =
-          d["last_assistant_message"] as string | undefined;
+      if (
+        payload.hookType === "stop" ||
+        payload.hookType === "task_completed"
+      ) {
+        raw.assistantResponse = d["last_assistant_message"] as
+          | string
+          | undefined;
       }
     }
 
@@ -857,7 +975,10 @@ export function registerObserveFunction(
       }
 
       const hotPathPressure = await getObserveHotPathPressure(kv);
-      if (hotPathPressure && shouldShedObservation(payload, metadata, hotPathPressure)) {
+      if (
+        hotPathPressure &&
+        shouldShedObservation(payload, metadata, hotPathPressure)
+      ) {
         const receipt = buildObserveReceipt(payload, metadata, obsId);
         if (receipt) {
           await kv.set(
@@ -897,9 +1018,13 @@ export function registerObserveFunction(
         }
       }
 
-      const deferDerivedWork = Boolean(hotPathPressure) || !shouldPersistRawTurnCapsule(payload);
+      const persistRawTurnCapsule = shouldPersistRawTurnCapsule(payload);
+      const deferDerivedWork = Boolean(hotPathPressure);
       let writePressureReason: string | undefined;
-      if (metadata.persistenceClass !== "diagnostics_only" && !deferDerivedWork) {
+      if (
+        metadata.persistenceClass !== "diagnostics_only" &&
+        persistRawTurnCapsule
+      ) {
         await withObserveBudget(
           upsertTurnCapsuleFromRaw(
             kv,
@@ -920,6 +1045,25 @@ export function registerObserveFunction(
             reason,
           });
         });
+      } else if (
+        metadata.persistenceClass !== "diagnostics_only" &&
+        shouldPersistDerivedObserveWork()
+      ) {
+        runDeferredObserveWork(
+          "Observe derived work failed after deferred scheduling",
+          upsertTurnCapsuleFromRaw(
+            kv,
+            payload.sessionId,
+            payload.project,
+            payload.cwd,
+            raw,
+          ),
+          {
+            obsId,
+            sessionId: payload.sessionId,
+            phase: "turn_capsule",
+          },
+        );
       }
 
       let compressionMode: "llm" | "synthetic" | "deferred" = "synthetic";
@@ -942,11 +1086,14 @@ export function registerObserveFunction(
         } catch (err) {
           const reason = observeBudgetReason(err);
           if (!reason) throw err;
-          logger.warn("Observation persistence failed fast under write pressure", {
-            obsId,
-            sessionId: payload.sessionId,
-            reason,
-          });
+          logger.warn(
+            "Observation persistence failed fast under write pressure",
+            {
+              obsId,
+              sessionId: payload.sessionId,
+              reason,
+            },
+          );
           await recordObserveDegraded(kv, reason);
           return degradedObserveResult(payload, metadata, obsId, reason);
         }
@@ -964,7 +1111,11 @@ export function registerObserveFunction(
             group_id: STREAM.viewerGroup,
             id: `raw-${obsId}`,
             type: "raw_observation",
-            data: { type: "raw", observation: raw, sessionId: payload.sessionId },
+            data: {
+              type: "raw",
+              observation: raw,
+              sessionId: payload.sessionId,
+            },
           });
         }
 
@@ -992,7 +1143,7 @@ export function registerObserveFunction(
           }
         }
 
-        if (!shouldPersistRawObservations()) {
+        if (!shouldPersistRawObservations() && !isAutoCompressEnabled()) {
           compressionMode = "synthetic";
         } else if (isAutoCompressEnabled()) {
           const pauseReason =
@@ -1012,11 +1163,14 @@ export function registerObserveFunction(
               if (!reason) throw err;
               writePressureReason = reason;
               compressionMode = "deferred";
-              logger.warn("Synthetic compression deferred under write pressure", {
-                obsId,
-                sessionId: payload.sessionId,
-                reason,
-              });
+              logger.warn(
+                "Synthetic compression deferred under write pressure",
+                {
+                  obsId,
+                  sessionId: payload.sessionId,
+                  reason,
+                },
+              );
             });
             logger.warn("Auto compression downgraded under hot-path pressure", {
               obsId,
@@ -1032,11 +1186,16 @@ export function registerObserveFunction(
                 error: pauseReason || "observe_inline_compress_deferred",
               });
             }
-            logger[pauseReason ? "warn" : "info"](writePressureReason ? "Auto compression skipped under write pressure" : "Auto compression queued", {
-              obsId,
-              sessionId: payload.sessionId,
-              reason: pauseReason || "observe_inline_compress_deferred",
-            });
+            logger[pauseReason ? "warn" : "info"](
+              writePressureReason
+                ? "Auto compression skipped under write pressure"
+                : "Auto compression queued",
+              {
+                obsId,
+                sessionId: payload.sessionId,
+                reason: pauseReason || "observe_inline_compress_deferred",
+              },
+            );
           } else {
             compressionMode = "llm";
             tracker?.increment(payload.sessionId);
@@ -1067,17 +1226,23 @@ export function registerObserveFunction(
                 if (!reason) throw err;
                 writePressureReason = reason;
                 compressionMode = "deferred";
-                logger.warn("Synthetic compression deferred under write pressure", {
+                logger.warn(
+                  "Synthetic compression deferred under write pressure",
+                  {
+                    obsId,
+                    sessionId: payload.sessionId,
+                    reason,
+                  },
+                );
+              });
+              logger.warn(
+                "Synthetic compression stored under hot-path pressure",
+                {
                   obsId,
                   sessionId: payload.sessionId,
-                  reason,
-                });
-              });
-              logger.warn("Synthetic compression stored under hot-path pressure", {
-                obsId,
-                sessionId: payload.sessionId,
-                reason: hotPathPressure.reason,
-              });
+                  reason: hotPathPressure.reason,
+                },
+              );
             } else {
               compressionMode = "deferred";
               if (!writePressureReason) {
@@ -1087,27 +1252,46 @@ export function registerObserveFunction(
                   error: hotPathPressure.reason,
                 });
               }
-              logger.warn("Synthetic compression deferred under hot-path pressure", {
-                obsId,
-                sessionId: payload.sessionId,
-                reason: hotPathPressure.reason,
-              });
+              logger.warn(
+                "Synthetic compression deferred under hot-path pressure",
+                {
+                  obsId,
+                  sessionId: payload.sessionId,
+                  reason: hotPathPressure.reason,
+                },
+              );
             }
           } else {
-            await withObserveBudget(
-              storeSyntheticObservation(sdk, kv, payload, obsId, raw),
-              "observe_write_budget_exceeded_during_synthetic_observation",
-            ).catch((err) => {
-              const reason = observeBudgetReason(err);
-              if (!reason) throw err;
-              writePressureReason = reason;
+            if (deferDerivedWork) {
               compressionMode = "deferred";
-              logger.warn("Synthetic compression deferred under write pressure", {
-                obsId,
-                sessionId: payload.sessionId,
-                reason,
+              runDeferredObserveWork(
+                "Synthetic compression failed after deferred scheduling",
+                storeSyntheticObservation(sdk, kv, payload, obsId, raw),
+                {
+                  obsId,
+                  sessionId: payload.sessionId,
+                  reason: hotPathPressure?.reason || "observe_derived_deferred",
+                },
+              );
+            } else {
+              await withObserveBudget(
+                storeSyntheticObservation(sdk, kv, payload, obsId, raw),
+                "observe_write_budget_exceeded_during_synthetic_observation",
+              ).catch((err) => {
+                const reason = observeBudgetReason(err);
+                if (!reason) throw err;
+                writePressureReason = reason;
+                compressionMode = "deferred";
+                logger.warn(
+                  "Synthetic compression deferred under write pressure",
+                  {
+                    obsId,
+                    sessionId: payload.sessionId,
+                    reason,
+                  },
+                );
               });
-            });
+            }
           }
         }
       }
@@ -1137,7 +1321,7 @@ export function registerObserveFunction(
       });
       if (writePressureReason) {
         await recordObserveDegraded(kv, writePressureReason);
-      } else {
+      } else if (metadata.persistenceClass === "persistent") {
         await recordObserveAccepted(kv);
       }
       return {

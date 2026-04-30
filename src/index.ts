@@ -109,6 +109,7 @@ import {
   registerDeferredWorkFunction,
 } from "./functions/deferred-work.js";
 import { registerMaintenanceCatchUpFunction } from "./functions/maintenance-catch-up.js";
+import { registerObserveDerivedDrainFunction } from "./functions/observe-derived-drain.js";
 import { registerApiTriggers } from "./triggers/api.js";
 import { registerEventTriggers } from "./triggers/events.js";
 import { startViewerServer } from "./viewer/server.js";
@@ -263,6 +264,7 @@ async function main() {
   registerCodexIntegrationProofFunction(sdk, kv);
   registerConsolidatedMemoryBackfillFunction(sdk, kv);
   registerDeferredWorkFunction(sdk, kv);
+  registerObserveDerivedDrainFunction(sdk, kv);
 
   if (isGraphExtractionEnabled()) {
     registerGraphFunction(sdk, kv, provider);
@@ -476,7 +478,7 @@ async function main() {
     `[agentmemory] Ready. ${embeddingProvider ? "Triple-stream (BM25+Vector+Graph)" : "BM25+Graph"} search active.`,
   );
   console.log(
-    `[agentmemory] Endpoints: 148 REST`,
+    `[agentmemory] Endpoints: 150 REST`,
   );
 
   const viewerPort = config.restPort + 2;
@@ -648,6 +650,29 @@ async function main() {
       { baseMs: 300_000, minMs: 60_000, maxMs: 900_000, label: "Retrieval block retry" },
     );
     console.log(`[agentmemory] Retrieval block retry: enabled (every 5m, adaptive)`);
+  }
+
+  let observeDerivedDrainHandle: AdaptiveTimerHandle | undefined;
+  if (process.env.OBSERVE_DERIVED_DRAIN_ENABLED !== "false") {
+    observeDerivedDrainHandle = createAdaptiveTimer(
+      async () =>
+       runMaintenanceTask("Observe derived drain", async () => {
+         const result = await sdk.trigger<
+            { lane: "observe-derived"; maxBatchSize: number; timeBudgetMs: number },
+            { workDone?: number }
+          >({
+            function_id: "mem::maintenance-catch-up",
+            payload: {
+              lane: "observe-derived",
+              maxBatchSize: 1,
+              timeBudgetMs: 750,
+            },
+          });
+          return result?.workDone || 0;
+       }),
+      { baseMs: 300_000, minMs: 120_000, maxMs: 900_000, label: "Observe derived drain" },
+    );
+    console.log(`[agentmemory] Observe derived drain: enabled (every 5m, adaptive)`);
   }
 
   let graphCatchUpHandle: AdaptiveTimerHandle | undefined;
@@ -858,6 +883,7 @@ async function main() {
     consolidationHandle?.stop();
     compressRetryHandle?.stop();
     retrievalBlockRetryHandle?.stop();
+    observeDerivedDrainHandle?.stop();
     graphCatchUpHandle?.stop();
     evictionHandle?.stop();
     indexVerifyHandle?.stop();

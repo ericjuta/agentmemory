@@ -118,6 +118,63 @@ describe("operational hardening APIs", () => {
     });
   });
 
+  it("exposes full deferred work status through an authenticated operational API", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    await kv.set(KV.compressRetry, "obs_1", {
+      obsId: "obs_1",
+      sessionId: "ses_1",
+      retries: 0,
+      failedAt: "2026-04-25T00:00:00.000Z",
+    });
+    await kv.set(KV.retrievalBlockRetry, "rblk_1", {
+      blockId: "rblk_1",
+      sourceType: "memory",
+      retries: 0,
+      firstFailedAt: "2026-04-25T00:00:00.000Z",
+      lastFailedAt: "2026-04-25T00:00:00.000Z",
+      lastError: "timeout",
+    });
+    let forwarded: unknown;
+    registerApiTriggers(sdk as never, kv as never, "secret");
+    sdk.registerFunction("mem::deferred-work-status", async (payload) => {
+      forwarded = payload;
+      return getDeferredWorkStatus(kv as never, payload as never);
+    });
+
+    const response = (await sdk.trigger("api::deferred-work-status", {
+      body: {
+        refresh: true,
+        lightweight: false,
+        ignored: "drop",
+      },
+      headers: { authorization: "Bearer secret" },
+    })) as {
+      status_code: number;
+      body: { compression: { queued: number }; retrievalBlocks: { queued: number }; totalQueued: number };
+    };
+
+    expect(response.status_code).toBe(200);
+    expect(response.body.compression.queued).toBe(1);
+    expect(response.body.retrievalBlocks.queued).toBe(1);
+    expect(response.body.totalQueued).toBe(2);
+    expect(forwarded).toEqual({ refresh: true, lightweight: false });
+  });
+
+  it("validates deferred work status API options", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerApiTriggers(sdk as never, kv as never);
+
+    const response = (await sdk.trigger("api::deferred-work-status", {
+      body: { refresh: "true" },
+      headers: {},
+    })) as { status_code: number; body: { error: string } };
+
+    expect(response.status_code).toBe(400);
+    expect(response.body.error).toContain("refresh");
+  });
+
   it("runs one bounded compression drain wake through maintenance", async () => {
     const sdk = mockSdk();
     const kv = mockKV();
@@ -172,6 +229,51 @@ describe("operational hardening APIs", () => {
 
     expect(response.status_code).toBe(400);
     expect(response.body.error).toContain("maxBatchSize");
+  });
+
+  it("runs one bounded observe-derived drain wake through maintenance", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    let forwarded: unknown;
+    sdk.registerFunction("mem::maintenance-catch-up", async (payload) => {
+      forwarded = payload;
+      return { success: true, lane: "observe-derived", workDone: 2 };
+    });
+    registerApiTriggers(sdk as never, kv as never, "secret");
+
+    const response = (await sdk.trigger("api::observe-derived-drain", {
+      body: {
+        batchSize: "3",
+        timeBudgetMs: 1000,
+        ignored: "drop",
+      },
+      headers: { authorization: "Bearer secret" },
+    })) as {
+      status_code: number;
+      body: { result: { workDone: number } };
+    };
+
+    expect(response.status_code).toBe(200);
+    expect(response.body.result.workDone).toBe(2);
+    expect(forwarded).toEqual({
+      lane: "observe-derived",
+      maxBatchSize: 3,
+      timeBudgetMs: 1000,
+    });
+  });
+
+  it("validates observe-derived drain options", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerApiTriggers(sdk as never, kv as never);
+
+    const response = (await sdk.trigger("api::observe-derived-drain", {
+      body: { batchSize: 0 },
+      headers: {},
+    })) as { status_code: number; body: { error: string } };
+
+    expect(response.status_code).toBe(400);
+    expect(response.body.error).toContain("batchSize");
   });
 
   it("forwards whitelisted retrieval block shard migration options", async () => {

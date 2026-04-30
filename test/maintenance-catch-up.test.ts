@@ -59,7 +59,15 @@ describe("mem::maintenance-catch-up", () => {
       batchSize: 40,
       timeBudgetMs: 8000,
       ignoreBackoff: true,
-      refreshFromState: false,
+      refreshFromState: true,
+    });
+    const laneState = await kv.get(KV.maintenanceLaneState, "retrieval");
+    expect(laneState).toMatchObject({
+      lane: "retrieval",
+      lastWorkDone: 11,
+      currentBatchSize: 40,
+      successStreak: 1,
+      pressureStreak: 0,
     });
   });
 

@@ -857,6 +857,41 @@ export function registerApiTriggers(
     },
   });
 
+  sdk.registerFunction("api::deferred-work-status",
+    async (req: ApiRequest): Promise<Response> => {
+      const denied = checkAuth(req, secret);
+      if (denied) return denied;
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      for (const field of ["refresh", "lightweight"] as const) {
+        if (body[field] !== undefined && typeof body[field] !== "boolean") {
+          return {
+            status_code: 400,
+            body: { error: field + " must be a boolean when provided" },
+          };
+        }
+      }
+      const payload: Record<string, unknown> = {};
+      if (typeof body.refresh === "boolean") payload.refresh = body.refresh;
+      if (typeof body.lightweight === "boolean") {
+        payload.lightweight = body.lightweight;
+      }
+      const result = await sdk.trigger({
+        function_id: "mem::deferred-work-status",
+        payload,
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::deferred-work-status",
+    config: {
+      api_path: "/agentmemory/deferred-work/status",
+      http_method: "POST",
+      middleware_function_ids: ["middleware::api-auth"],
+    },
+  });
+
   sdk.registerFunction("api::observe",
     async (req: ApiRequest<HookPayload>): Promise<Response> => {
       const body = (req.body ?? {}) as unknown as Record<string, unknown>;
@@ -1304,6 +1339,37 @@ export function registerApiTriggers(
     type: "http",
     function_id: "api::compression-drain",
     config: { api_path: "/agentmemory/maintenance/compression-drain", http_method: "POST" },
+  });
+
+  sdk.registerFunction("api::observe-derived-drain",
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const batchSize = parseOptionalPositiveInt(body.batchSize ?? body.maxBatchSize);
+      const timeBudgetMs = parseOptionalPositiveInt(body.timeBudgetMs);
+      if (batchSize === null || timeBudgetMs === null) {
+        return {
+          status_code: 400,
+          body: {
+            error: "batchSize, maxBatchSize, and timeBudgetMs must be positive integers when provided",
+          },
+        };
+      }
+      const payload: Record<string, unknown> = { lane: "observe-derived" };
+      if (batchSize !== undefined) payload.maxBatchSize = batchSize;
+      if (timeBudgetMs !== undefined) payload.timeBudgetMs = timeBudgetMs;
+      const result = await sdk.trigger({
+        function_id: "mem::maintenance-catch-up",
+        payload,
+      });
+      return { status_code: 200, body: { result } };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::observe-derived-drain",
+    config: { api_path: "/agentmemory/maintenance/observe-derived-drain", http_method: "POST" },
   });
 
   sdk.registerFunction("api::session::start",

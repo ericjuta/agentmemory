@@ -30,6 +30,10 @@ export interface DeferredWorkStatus {
     queued: number;
     error?: string;
   };
+  observeDerived: {
+    queued: number;
+    error?: string;
+  };
   observeCapture: ObserveHotPathStatus | { error: string };
   totalQueued: number;
 }
@@ -72,7 +76,10 @@ async function compressionStatus(
           ? {
               laneState,
               ...(typeof laneState.queuedDeltaSinceLastWake === "number"
-                ? { queuedDeltaSinceLastWake: laneState.queuedDeltaSinceLastWake }
+                ? {
+                    queuedDeltaSinceLastWake:
+                      laneState.queuedDeltaSinceLastWake,
+                  }
                 : {}),
               ...(typeof laneState.drainRatePerHour === "number"
                 ? { drainRatePerHour: laneState.drainRatePerHour }
@@ -110,8 +117,18 @@ async function compressionStatus(
     }
     return {
       queued: entries.length,
-      ...(oldestFailedAt ? { oldestFailedAt, oldestAgeMs: Math.max(0, nowMs - (oldestMs ?? nowMs)) } : {}),
-      ...(newestFailedAt ? { newestFailedAt, newestAgeMs: Math.max(0, nowMs - (newestMs ?? nowMs)) } : {}),
+      ...(oldestFailedAt
+        ? {
+            oldestFailedAt,
+            oldestAgeMs: Math.max(0, nowMs - (oldestMs ?? nowMs)),
+          }
+        : {}),
+      ...(newestFailedAt
+        ? {
+            newestFailedAt,
+            newestAgeMs: Math.max(0, nowMs - (newestMs ?? nowMs)),
+          }
+        : {}),
       ...(laneState
         ? {
             laneState,
@@ -147,7 +164,8 @@ async function countScope(
       .get<MaintenanceLaneState>(KV.maintenanceLaneState, laneStateKey)
       .catch(() => null);
     const queued =
-      typeof laneState?.lastQueued === "number" && Number.isFinite(laneState.lastQueued)
+      typeof laneState?.lastQueued === "number" &&
+      Number.isFinite(laneState.lastQueued)
         ? Math.max(0, laneState.lastQueued)
         : 0;
     return { queued };
@@ -176,20 +194,28 @@ async function buildDeferredWorkStatus(
   options: DeferredWorkStatusOptions = {},
 ): Promise<DeferredWorkStatus> {
   const nowMs = Date.now();
-  const [compression, retrievalBlocks, graphExtraction] = await Promise.all([
-    compressionStatus(kv, nowMs, options),
-    countScope(kv, KV.retrievalBlockRetry, options, "retrieval"),
-    countScope(kv, KV.graphExtractionRetry, options, "graph"),
-  ]);
+  const [compression, retrievalBlocks, graphExtraction, observeDerived] =
+    await Promise.all([
+      compressionStatus(kv, nowMs, options),
+      countScope(kv, KV.retrievalBlockRetry, options, "retrieval"),
+      countScope(kv, KV.graphExtractionRetry, options, "graph"),
+      countScope(kv, KV.observeDerivedRetry, options, "observe-derived"),
+    ]);
   const totalQueued =
-    compression.queued + retrievalBlocks.queued + graphExtraction.queued;
+    compression.queued +
+    retrievalBlocks.queued +
+    graphExtraction.queued +
+    observeDerived.queued;
   const includeCompressionQueue =
-    process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_INCLUDE_COMPRESSION"] === "1" ||
-    process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_INCLUDE_COMPRESSION"] === "true" ||
-    process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_INCLUDE_COMPRESSION"] === "yes";
+    process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_INCLUDE_COMPRESSION"] ===
+      "1" ||
+    process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_INCLUDE_COMPRESSION"] ===
+      "true" ||
+    process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_INCLUDE_COMPRESSION"] ===
+      "yes";
   const observeQueued = includeCompressionQueue
     ? totalQueued
-    : retrievalBlocks.queued + graphExtraction.queued;
+    : retrievalBlocks.queued + graphExtraction.queued + observeDerived.queued;
   const observePressure = observePressureFromQueued(observeQueued);
   const observeCapture: ObserveHotPathStatus = observePressure
     ? {
@@ -209,6 +235,7 @@ async function buildDeferredWorkStatus(
     compression,
     retrievalBlocks,
     graphExtraction,
+    observeDerived,
     observeCapture,
     totalQueued,
   };
@@ -245,7 +272,9 @@ export function clearDeferredWorkStatusCache(kv?: StateKV): void {
 }
 
 export function registerDeferredWorkFunction(sdk: ISdk, kv: StateKV): void {
-  sdk.registerFunction("mem::deferred-work-status", async () =>
-    getDeferredWorkStatus(kv),
+  sdk.registerFunction(
+    "mem::deferred-work-status",
+    async (options?: DeferredWorkStatusOptions) =>
+      getDeferredWorkStatus(kv, options ?? {}),
   );
 }

@@ -250,6 +250,20 @@ export interface GraphExtractionRetryEntry {
   lastError: string;
 }
 
+export interface ObserveDerivedRetryEntry {
+  observationId: string;
+  sessionId: string;
+  project: string;
+  cwd: string;
+  hookType: HookType;
+  raw: RawObservation;
+  retries: number;
+  firstDeferredAt: string;
+  lastDeferredAt: string;
+  lastError: string;
+  nextAttemptAt?: string;
+}
+
 export interface ObservePressureState {
   status: "enabled" | "degraded";
   timeoutStreak: number;
@@ -262,7 +276,7 @@ export interface ObservePressureState {
 }
 
 export interface MaintenanceLaneState {
-  lane: "compression";
+  lane: "compression" | "retrieval" | "graph" | "observe-derived" | "observe_derived";
   lastWakeAt?: string;
   lastSuccessAt?: string;
   lastWorkDone?: number;

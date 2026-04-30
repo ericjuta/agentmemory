@@ -30,7 +30,7 @@ describe("getDeferredWorkStatus", () => {
 
     expect(first.totalQueued).toBe(1);
     expect(second).toBe(first);
-    expect(list).toHaveBeenCalledTimes(3);
+    expect(list).toHaveBeenCalledTimes(4);
   });
 
   it("refreshes after the cache ttl expires", async () => {
@@ -41,11 +41,11 @@ describe("getDeferredWorkStatus", () => {
 
     await getDeferredWorkStatus(kv as never);
     await getDeferredWorkStatus(kv as never);
-    expect(list).toHaveBeenCalledTimes(3);
+    expect(list).toHaveBeenCalledTimes(4);
 
     await vi.advanceTimersByTimeAsync(1001);
     await getDeferredWorkStatus(kv as never);
-    expect(list).toHaveBeenCalledTimes(6);
+    expect(list).toHaveBeenCalledTimes(8);
 
     vi.useRealTimers();
   });
@@ -91,7 +91,8 @@ describe("getDeferredWorkStatus", () => {
     const previousIncludeCompression =
       process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_INCLUDE_COMPRESSION"];
     process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_CRITICAL"] = "1";
-    process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_INCLUDE_COMPRESSION"] = "true";
+    process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_INCLUDE_COMPRESSION"] =
+      "true";
     const kv = mockKV();
     try {
       await kv.set(KV.maintenanceLaneState, "compression", {
@@ -123,12 +124,13 @@ describe("getDeferredWorkStatus", () => {
           previousQueueCritical;
       }
       if (previousIncludeCompression === undefined) {
-        delete process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_INCLUDE_COMPRESSION"];
+        delete process.env[
+          "AGENTMEMORY_OBSERVE_BACKPRESSURE_INCLUDE_COMPRESSION"
+        ];
       } else {
         process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_INCLUDE_COMPRESSION"] =
           previousIncludeCompression;
       }
     }
   });
-
 });

@@ -6,6 +6,7 @@ export const KV = {
   observations: (sessionId: string) => `mem:obs:${sessionId}`,
   observeReceipts: (sessionId: string) => `mem:observe-receipts:${sessionId}`,
   observePressureState: "mem:observe-pressure-state",
+  observeDerivedRetry: "mem:observe-derived-retry",
   memories: "mem:memories",
   summaries: "mem:summaries",
   config: "mem:config",
