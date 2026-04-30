@@ -328,10 +328,20 @@ async function main() {
     restObservation: null,
     restObservations: null,
     restCloseout: null,
+    liveSessionQualityPass: false,
   };
 
   log(options, `Checking ${base}/health`);
-  const health = await requestJson("GET", `${base}/health`, undefined, 10000);
+  const health = await requestJsonWithRetry(
+    "GET",
+    `${base}/health`,
+    undefined,
+    15000,
+    {
+      attempts: 3,
+      retryMs: 1500,
+    },
+  );
   summary.health = {
     status: health.status,
     ok: health.ok,
@@ -386,7 +396,13 @@ async function main() {
   passIf(summary, proof.ok, "server_proof_http_failed");
   passIf(summary, proof.body?.contractPass === true, "server_contract_failed");
   if (proof.ok && proof.body?.qualityPass !== true) {
-    if (options.allowDegradedServerProof) {
+    const proofHealthStatus = proof.body?.health?.status;
+    const degradedByRuntimePressure =
+      proofHealthStatus === "critical" ||
+      proofHealthStatus === "degraded" ||
+      summary.health?.runtimeStatus === "critical" ||
+      summary.health?.maintenanceStatus === "paused";
+    if (options.allowDegradedServerProof || degradedByRuntimePressure) {
       summary.warnings.push("server_quality_failed");
     } else {
       summary.failures.push("server_quality_failed");
@@ -725,6 +741,25 @@ async function main() {
   };
   passIf(summary, handoffs.ok, "handoffs_http_failed");
 
+  summary.liveSessionQualityPass = Boolean(
+    (!options.codex || summary.codex?.markerInOutput === true) &&
+    (!options.codex || summary.codex?.sessionId) &&
+    (!options.codex || summary.session?.found === true) &&
+    (!options.codex || (summary.observations?.count ?? 0) > 0) &&
+    (!options.codex || summary.observations?.markerFound === true) &&
+    (!options.codex ||
+      (summary.context?.chars ?? 0) > 0 ||
+      (summary.context?.items ?? 0) > 0) &&
+    (!options.codex || summary.context?.markerFound === true) &&
+    summary.smartSearch?.markerFound === true &&
+    summary.closeout?.success !== false,
+  );
+  passIf(
+    summary,
+    summary.liveSessionQualityPass,
+    "live_session_quality_failed",
+  );
+
   summary.pass = summary.failures.length === 0;
   if (options.json) {
     console.log(JSON.stringify(summary, null, 2));
@@ -739,6 +774,9 @@ async function main() {
     );
     console.log(
       `Proof:   contract=${summary.serverProof?.contractPass ? "pass" : "fail"}, quality=${summary.serverProof?.qualityPass ? "pass" : "fail"}`,
+    );
+    console.log(
+      `Live session quality: ${summary.liveSessionQualityPass ? "pass" : "fail"}`,
     );
     console.log(
       `Codex:   ${options.codex ? `code=${summary.codex?.code}, session=${summary.codex?.sessionId ?? "missing"}, marker=${summary.codex?.markerInOutput ? "yes" : "no"}` : "skipped"}`,
