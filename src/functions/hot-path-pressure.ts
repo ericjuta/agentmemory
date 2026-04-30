@@ -10,6 +10,8 @@ export interface HotPathPressure {
   runtimeStatus?: string;
   deferredWorkTotal?: number;
   queueThreshold?: number;
+  rss?: number;
+  rssThreshold?: number;
 }
 
 export interface ObserveHotPathPressure extends HotPathPressure {
@@ -39,6 +41,8 @@ const DEFAULT_CONTEXT_QUEUE_THRESHOLD = 300;
 const DEFAULT_OBSERVE_DERIVED_QUEUE_THRESHOLD = 300;
 const DEFAULT_OBSERVE_SHED_QUEUE_THRESHOLD = 1000;
 const DEFAULT_PRESSURE_CACHE_MS = 2000;
+const DEFAULT_RSS_WARN_BYTES = 2 * 1024 * 1024 * 1024;
+const DEFAULT_RSS_CRITICAL_BYTES = 6 * 1024 * 1024 * 1024;
 
 const pressureCache = new WeakMap<
   StateKV,
@@ -98,6 +102,44 @@ function envFlagEnabled(name: string): boolean {
   return raw === "1" || raw === "true" || raw === "yes";
 }
 
+function readBytesEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function rssPressure(
+  rss: number | undefined,
+  threshold: number,
+  label: "warn" | "critical",
+): HotPathPressure | null {
+  if (!rss || rss < threshold) return null;
+  return {
+    reason: `rss_${label}_${rss}_gte_${threshold}`,
+    rss,
+    rssThreshold: threshold,
+  };
+}
+
+function healthRssPressure(
+  health: Awaited<ReturnType<typeof getLatestHealth>> | null,
+): HotPathPressure | null {
+  const rss = health?.memory?.rss;
+  return (
+    rssPressure(
+      rss,
+      readBytesEnv("AGENTMEMORY_HOT_PATH_RSS_CRITICAL_BYTES", DEFAULT_RSS_CRITICAL_BYTES),
+      "critical",
+    ) ||
+    rssPressure(
+      rss,
+      readBytesEnv("AGENTMEMORY_HOT_PATH_RSS_WARN_BYTES", DEFAULT_RSS_WARN_BYTES),
+      "warn",
+    )
+  );
+}
+
 function retrievalContextQueued(
   deferredWork: Awaited<ReturnType<typeof getDeferredWorkStatus>>,
   includeCompressionQueue: boolean,
@@ -141,6 +183,8 @@ export async function getContextHotPathPressure(
   ].join(":");
   return cachedPressure(kv, pressureKey, async () => {
     const health = await getLatestHealth(kv).catch(() => null);
+    const rss = healthRssPressure(health);
+    if (rss) return { ...rss, runtimeStatus: health?.status };
     const pauseReason = getMaintenancePauseReason(health);
     if (pauseReason) {
       return { reason: pauseReason, runtimeStatus: health?.status };
@@ -175,6 +219,14 @@ export async function getObserveHotPathPressure(
   ].join(":");
   return cachedPressure(kv, pressureKey, async () => {
     const health = await getLatestHealth(kv).catch(() => null);
+    const rss = healthRssPressure(health);
+    if (rss) {
+      return {
+        ...rss,
+        runtimeStatus: health?.status,
+        mode: rss.reason.startsWith("rss_critical_") ? "shed" : "defer_derived",
+      };
+    }
     const pauseReason = getMaintenancePauseReason(health);
     if (pauseReason) {
       return {

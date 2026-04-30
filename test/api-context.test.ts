@@ -146,6 +146,48 @@ describe("api::context", () => {
     });
   });
 
+  it("returns deferred context when the API context call stalls", async () => {
+    const previousTimeout = process.env.AGENTMEMORY_CONTEXT_API_TIMEOUT_MS;
+    process.env.AGENTMEMORY_CONTEXT_API_TIMEOUT_MS = "5";
+    const sdk = mockSdk();
+    const kv = mockKV();
+    try {
+      sdk.registerFunction("mem::context", async () => new Promise(() => {}));
+      registerApiTriggers(sdk as never, kv as never);
+
+      const response = (await sdk.trigger("api::context", {
+        body: {
+          sessionId: "session-api-context-timeout",
+          project: "/project",
+          query: "retrieval trace",
+        },
+        headers: {},
+      })) as {
+        status_code: number;
+        body: {
+          context: string;
+          degraded?: boolean;
+          skipped?: boolean;
+          reason?: string;
+        };
+      };
+
+      expect(response.status_code).toBe(200);
+      expect(response.body).toMatchObject({
+        context: "",
+        degraded: true,
+        skipped: true,
+        reason: "context_deferred_timeout",
+      });
+    } finally {
+      if (previousTimeout === undefined) {
+        delete process.env.AGENTMEMORY_CONTEXT_API_TIMEOUT_MS;
+      } else {
+        process.env.AGENTMEMORY_CONTEXT_API_TIMEOUT_MS = previousTimeout;
+      }
+    }
+  });
+
   it("keeps context available for normal deferred backlog by default", async () => {
     const previousQueueHigh =
       process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_QUEUE_HIGH"];
@@ -243,7 +285,7 @@ describe("api::context", () => {
     }
   });
 
-  it("keeps explicit manual recall available during deferred queue pressure", async () => {
+  it("defers explicit manual recall during deferred queue pressure", async () => {
     const previousQueueHigh =
       process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_QUEUE_HIGH"];
     process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_QUEUE_HIGH"] = "1";
@@ -270,14 +312,16 @@ describe("api::context", () => {
       })) as {
         status_code: number;
         body: {
+          context?: string;
           skipped?: boolean;
           reason?: string;
         };
       };
 
       expect(response.status_code).toBe(200);
-      expect(response.body.skipped).toBeUndefined();
-      expect(response.body.reason).toBeUndefined();
+      expect(response.body.context).toBe("");
+      expect(response.body.skipped).toBe(true);
+      expect(response.body.reason).toBe("hot_path_backpressure");
     } finally {
       if (previousQueueHigh === undefined) {
         delete process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_QUEUE_HIGH"];

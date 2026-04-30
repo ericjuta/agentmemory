@@ -1018,7 +1018,8 @@ export function registerObserveFunction(
         }
       }
 
-      const persistRawTurnCapsule = shouldPersistRawTurnCapsule(payload);
+      const persistRawTurnCapsule =
+        !hotPathPressure && shouldPersistRawTurnCapsule(payload);
       const deferDerivedWork = Boolean(hotPathPressure);
       let writePressureReason: string | undefined;
       if (
@@ -1151,33 +1152,7 @@ export function registerObserveFunction(
             writePressureReason ||
             compressionTrackerPauseReason(tracker) ||
             (await getLlmWorkPauseReason(kv));
-          if (hotPathPressure && isQueuePressure(hotPathPressure.reason)) {
-            compressionMode = "synthetic";
-            await withObserveBudget(
-              storeSyntheticObservation(sdk, kv, payload, obsId, raw, {
-                syncEmbedding: false,
-              }),
-              "observe_write_budget_exceeded_during_synthetic_observation",
-            ).catch((err) => {
-              const reason = observeBudgetReason(err);
-              if (!reason) throw err;
-              writePressureReason = reason;
-              compressionMode = "deferred";
-              logger.warn(
-                "Synthetic compression deferred under write pressure",
-                {
-                  obsId,
-                  sessionId: payload.sessionId,
-                  reason,
-                },
-              );
-            });
-            logger.warn("Auto compression downgraded under hot-path pressure", {
-              obsId,
-              sessionId: payload.sessionId,
-              reason: hotPathPressure.reason,
-            });
-          } else if (pauseReason || !shouldCompressInlineOnObserve()) {
+          if (pauseReason || !shouldCompressInlineOnObserve()) {
             compressionMode = "deferred";
             if (!writePressureReason) {
               await enqueueCompressionRetry(kv, {
@@ -1214,53 +1189,22 @@ export function registerObserveFunction(
           }
         } else {
           if (hotPathPressure) {
-            if (isQueuePressure(hotPathPressure.reason)) {
-              compressionMode = "synthetic";
-              await withObserveBudget(
-                storeSyntheticObservation(sdk, kv, payload, obsId, raw, {
-                  syncEmbedding: false,
-                }),
-                "observe_write_budget_exceeded_during_synthetic_observation",
-              ).catch((err) => {
-                const reason = observeBudgetReason(err);
-                if (!reason) throw err;
-                writePressureReason = reason;
-                compressionMode = "deferred";
-                logger.warn(
-                  "Synthetic compression deferred under write pressure",
-                  {
-                    obsId,
-                    sessionId: payload.sessionId,
-                    reason,
-                  },
-                );
+            compressionMode = "deferred";
+            if (!writePressureReason) {
+              await enqueueCompressionRetry(kv, {
+                observationId: obsId,
+                sessionId: payload.sessionId,
+                error: hotPathPressure.reason,
               });
-              logger.warn(
-                "Synthetic compression stored under hot-path pressure",
-                {
-                  obsId,
-                  sessionId: payload.sessionId,
-                  reason: hotPathPressure.reason,
-                },
-              );
-            } else {
-              compressionMode = "deferred";
-              if (!writePressureReason) {
-                await enqueueCompressionRetry(kv, {
-                  observationId: obsId,
-                  sessionId: payload.sessionId,
-                  error: hotPathPressure.reason,
-                });
-              }
-              logger.warn(
-                "Synthetic compression deferred under hot-path pressure",
-                {
-                  obsId,
-                  sessionId: payload.sessionId,
-                  reason: hotPathPressure.reason,
-                },
-              );
             }
+            logger.warn(
+              "Synthetic compression deferred under hot-path pressure",
+              {
+                obsId,
+                sessionId: payload.sessionId,
+                reason: hotPathPressure.reason,
+              },
+            );
           } else {
             if (deferDerivedWork) {
               compressionMode = "deferred";

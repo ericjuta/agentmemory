@@ -343,6 +343,65 @@ describe("Codex payload compatibility", () => {
     );
   });
 
+  it("defers session bootstrap under runtime pressure while preserving the session", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    await kv.set(KV.health, "latest", {
+      status: "degraded",
+      alerts: ["cpu_warn_85%"],
+      connectionState: "connected",
+      kvConnectivity: { status: "ok", consecutiveFailures: 0 },
+      snapshotPersistence: { status: "ok", consecutiveFailures: 0 },
+      eventLoopLagMs: 0,
+      cpu: { percent: 85, userMicros: 0, systemMicros: 0 },
+      memory: { heapUsed: 0, heapTotal: 1, heapLimit: 1, external: 0, rss: 0 },
+      pipeline: { compressActive: 0, compressPending: 0, totalInflight: 0 },
+      workers: [],
+      uptimeSeconds: 1,
+    });
+    registerApiTriggers(sdk as never, kv as never);
+
+    let nextCalled = false;
+    sdk.registerFunction("mem::next", async () => {
+      nextCalled = true;
+      return { success: true, suggestion: null };
+    });
+
+    const response = (await sdk.trigger("api::session::start", {
+      body: {
+        sessionId: "session-bootstrap-pressure",
+        project: "/project",
+        cwd: "/project",
+        branch: "main",
+      },
+      headers: {},
+    })) as {
+      status_code: number;
+      body: {
+        context: string;
+        bootstrap: {
+          partial?: boolean;
+          omitted?: string[];
+          warnings?: string[];
+        };
+      };
+    };
+
+    expect(response.status_code).toBe(200);
+    expect(response.body.context).toBe("");
+    expect(response.body.bootstrap.partial).toBe(true);
+    expect(response.body.bootstrap.omitted).toContain("bootstrap");
+    expect(response.body.bootstrap.warnings).toContain(
+      "session_start_bootstrap_deferred_under_pressure",
+    );
+    expect(response.body.bootstrap.warnings).toContain(
+      "session_start_context_deferred",
+    );
+    expect(nextCalled).toBe(false);
+    const session = await kv.get<Session>(KV.sessions, "session-bootstrap-pressure");
+    expect(session?.status).toBe("active");
+  });
+
   it("fails open when session start bootstrap stalls", async () => {
     const previousTimeout = process.env.AGENTMEMORY_SESSION_START_BOOTSTRAP_TIMEOUT_MS;
     process.env.AGENTMEMORY_SESSION_START_BOOTSTRAP_TIMEOUT_MS = "5";

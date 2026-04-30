@@ -2,12 +2,37 @@ import type { ISdk } from "iii-sdk";
 import type { StateKV } from "../state/kv.js";
 import { KV } from "../state/schema.js";
 import type { Action, ActionEdge, Checkpoint, Lease } from "../types.js";
+import { getContextHotPathPressure, type HotPathPressure } from "./hot-path-pressure.js";
 
 export interface FrontierItem {
   action: Action;
   score: number;
   blockers: string[];
   leased: boolean;
+}
+
+type FrontierPressureResult = {
+  success: true;
+  degraded: true;
+  skipped: true;
+  reason: "hot_path_backpressure";
+  pressure: HotPathPressure;
+  frontier: FrontierItem[];
+  totalActions: number;
+  totalUnblocked: number;
+};
+
+function emptyFrontierForPressure(pressure: HotPathPressure): FrontierPressureResult {
+  return {
+    success: true,
+    degraded: true,
+    skipped: true,
+    reason: "hot_path_backpressure",
+    pressure,
+    frontier: [],
+    totalActions: 0,
+    totalUnblocked: 0,
+  };
 }
 
 export function registerFrontierFunction(sdk: ISdk, kv: StateKV): void {
@@ -18,6 +43,11 @@ export function registerFrontierFunction(sdk: ISdk, kv: StateKV): void {
       limit?: number;
       includeLeasedByOthers?: boolean;
     }) => {
+      const pressure = await getContextHotPathPressure(kv, {
+        ignoreDeferredQueue: true,
+      });
+      if (pressure) return emptyFrontierForPressure(pressure);
+
       const actions = await kv.list<Action>(KV.actions);
       const edges = await kv.list<ActionEdge>(KV.actionEdges);
       const leases = await kv.list<Lease>(KV.leases);
@@ -122,11 +152,15 @@ export function registerFrontierFunction(sdk: ISdk, kv: StateKV): void {
         { project?: string; agentId?: string; limit?: number },
         {
           success: boolean;
-          frontier: FrontierItem[];
-          totalActions: number;
-          totalUnblocked: number;
-        }
-      >({ function_id: "mem::frontier", payload: {
+            frontier: FrontierItem[];
+            totalActions: number;
+            totalUnblocked: number;
+            degraded?: boolean;
+            skipped?: boolean;
+            reason?: string;
+            pressure?: HotPathPressure;
+          }
+        >({ function_id: "mem::frontier", payload: {
         project: data.project,
         agentId: data.agentId,
         limit: 1,
@@ -144,8 +178,18 @@ export function registerFrontierFunction(sdk: ISdk, kv: StateKV): void {
         return {
           success: true,
           suggestion: null,
-          message: "No actionable work found",
+          message: result.skipped
+            ? "Action frontier skipped under hot-path pressure"
+            : "No actionable work found",
           totalActions: result.totalActions || 0,
+          ...(result.degraded
+            ? {
+                degraded: true,
+                skipped: true,
+                reason: result.reason,
+                pressure: result.pressure,
+              }
+            : {}),
         };
       }
 

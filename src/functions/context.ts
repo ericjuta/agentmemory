@@ -70,7 +70,6 @@ function ignoresDeferredQueuePressure(
   data: ContextRequest,
   project: string,
 ): boolean {
-  if (data.intent === "manual_recall") return true;
   if (!isCodexProject(project)) return false;
   return process.env.AGENTMEMORY_CODEX_CONTEXT_QUEUE_BACKPRESSURE !== "true";
 }

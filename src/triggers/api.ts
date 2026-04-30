@@ -17,7 +17,11 @@ import { KV } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
 import { getLatestHealth } from "../health/monitor.js";
 import { getDeferredWorkStatus } from "../functions/deferred-work.js";
-import { getObserveHotPathStatus } from "../functions/hot-path-pressure.js";
+import {
+  getContextHotPathPressure,
+  getObserveHotPathStatus,
+  type HotPathPressure,
+} from "../functions/hot-path-pressure.js";
 import {
   getDerivedKvWritePauseReason,
   getGraphExtractionPauseReason,
@@ -49,12 +53,14 @@ type BoundedResult<T> = {
 
 type SessionBootstrapOptions = {
   includeContext?: boolean;
+  pressure?: HotPathPressure | null;
 };
 
 const SESSION_START_BRANCH_DETECTION_TIMEOUT_MS = 750;
 const SESSION_START_PERSIST_TIMEOUT_MS = 1000;
 const SESSION_START_BOOTSTRAP_TIMEOUT_MS = 1000;
 const SESSION_CLOSEOUT_STEP_TIMEOUT_MS = 1500;
+const CONTEXT_API_TIMEOUT_MS = 1500;
 const CODEX_CONTEXT_DEFAULT_BUDGET = 6000;
 const CODEX_CONTEXT_MAX_DEFAULT_BUDGET = 8000;
 const HEALTH_COMPONENT_TIMEOUT_MS = readBoundedPositiveIntEnv(
@@ -129,6 +135,55 @@ function emptySessionBootstrap(warnings: string[] = []): SessionBootstrap {
       ? { partial: true, omitted: ["bootstrap"], warnings }
       : {}),
   };
+}
+
+function deferredContextResponse(reason: string, pressure?: unknown) {
+  return {
+    context: "",
+    items: [],
+    blocks: 0,
+    tokens: 0,
+    trace: undefined,
+    degraded: true,
+    fallback: "empty",
+    skipped: true,
+    reason,
+    ...(pressure === undefined ? {} : { pressure }),
+  };
+}
+
+async function triggerContextForApi(
+  sdk: ISdk,
+  payload: {
+    sessionId: string;
+    project?: string;
+    budget?: number;
+    query?: string;
+    intent?: RetrievalIntent;
+    files?: string[];
+    terms?: string[];
+  },
+): Promise<unknown> {
+  const result = await settleWithin(
+    sdk.trigger({
+      function_id: "mem::context",
+      payload,
+    }),
+    readBoundedPositiveIntEnv(
+      "AGENTMEMORY_CONTEXT_API_TIMEOUT_MS",
+      CONTEXT_API_TIMEOUT_MS,
+      100,
+      10_000,
+    ),
+    () => deferredContextResponse("context_deferred_timeout"),
+  );
+  return result.status === "ok"
+    ? result.value
+    : deferredContextResponse(
+        result.status === "timeout"
+          ? "context_deferred_timeout"
+          : "context_deferred_error",
+      );
 }
 
 function markSessionBootstrapPartial(
@@ -557,6 +612,11 @@ async function buildSessionBootstrap(
   budget?: number,
   options: SessionBootstrapOptions = {},
 ): Promise<SessionBootstrap> {
+  if (options.pressure) {
+    return emptySessionBootstrap([
+      "session_start_bootstrap_deferred_under_pressure",
+    ]);
+  }
   const contextPromise =
     options.includeContext === false
       ? Promise.resolve({
@@ -682,8 +742,14 @@ async function buildSessionBootstrapForStart(
   const includeContext = envFlagEnabled(
     "AGENTMEMORY_SESSION_START_INCLUDE_CONTEXT",
   );
+  const pressure = await getContextHotPathPressure(kv, {
+    ignoreDeferredQueue: isCodexProject(session.project),
+  });
   const result = await settleWithin(
-    buildSessionBootstrap(sdk, kv, session, budget, { includeContext }),
+    buildSessionBootstrap(sdk, kv, session, budget, {
+      includeContext,
+      pressure,
+    }),
     readBoundedPositiveIntEnv(
       "AGENTMEMORY_SESSION_START_BOOTSTRAP_TIMEOUT_MS",
       SESSION_START_BOOTSTRAP_TIMEOUT_MS,
@@ -697,6 +763,13 @@ async function buildSessionBootstrapForStart(
       result.value,
       "context",
       "session_start_context_deferred",
+    );
+  }
+  if (result.status === "ok" && pressure) {
+    markSessionBootstrapPartial(
+      result.value,
+      "bootstrap",
+      "session_start_bootstrap_deferred_under_pressure",
     );
   }
   return result;
@@ -1012,10 +1085,7 @@ export function registerApiTriggers(
           body: { error: parsed.error },
         };
       }
-      const result = await sdk.trigger({
-        function_id: "mem::context",
-        payload: parsed.payload,
-      });
+      const result = await triggerContextForApi(sdk, parsed.payload);
       return { status_code: 200, body: result };
     },
   );
@@ -1050,19 +1120,16 @@ export function registerApiTriggers(
           body: { error: parsed.error },
         };
       }
-      const result = await sdk.trigger({
-        function_id: "mem::context",
-        payload: {
-          ...parsed.payload,
-          budget:
-            parsed.payload.budget ??
-            readBoundedPositiveIntEnv(
-              "AGENTMEMORY_CONTEXT_REFRESH_DEFAULT_BUDGET",
-              1500,
-              100,
-              12000,
-            ),
-        },
+      const result = await triggerContextForApi(sdk, {
+        ...parsed.payload,
+        budget:
+          parsed.payload.budget ??
+          readBoundedPositiveIntEnv(
+            "AGENTMEMORY_CONTEXT_REFRESH_DEFAULT_BUDGET",
+            1500,
+            100,
+            12000,
+          ),
       });
       return { status_code: 200, body: result };
     },

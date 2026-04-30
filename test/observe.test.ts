@@ -504,7 +504,7 @@ describe("observe freshness plumbing", () => {
     }
   });
 
-  it("stores synthetic derived observe work when retry queues are hot", async () => {
+  it("defers synthetic derived observe work when retry queues are hot", async () => {
     const previousAutoCompress = process.env["AGENTMEMORY_AUTO_COMPRESS"];
     const previousQueueHigh =
       process.env["AGENTMEMORY_OBSERVE_BACKPRESSURE_QUEUE_HIGH"];
@@ -559,8 +559,7 @@ describe("observe freshness plumbing", () => {
       );
       expect(observations).toHaveLength(1);
       expect(observations[0].type).toBe("file_edit");
-      expect(observations[0].title).toBeTruthy();
-      expect(await kv.list<any>(KV.retrievalBlocks)).toHaveLength(2);
+      expect(await kv.list<any>(KV.retrievalBlocks)).toHaveLength(0);
       expect(await kv.list<any>(KV.compressRetry)).toHaveLength(0);
     } finally {
       if (previousAutoCompress === undefined) {
@@ -656,6 +655,64 @@ describe("observe freshness plumbing", () => {
     }
   });
 
+  it("defers derived observe work instead of shedding at RSS warning pressure", async () => {
+    const restoreWarn = preserveEnv("AGENTMEMORY_HOT_PATH_RSS_WARN_BYTES");
+    const restoreCritical = preserveEnv("AGENTMEMORY_HOT_PATH_RSS_CRITICAL_BYTES");
+    process.env["AGENTMEMORY_HOT_PATH_RSS_WARN_BYTES"] = "100";
+    process.env["AGENTMEMORY_HOT_PATH_RSS_CRITICAL_BYTES"] = "1000";
+
+    const sdk = mockSdk();
+    const kv = mockKV();
+    try {
+      await kv.set(KV.health, "latest", {
+        status: "healthy",
+        alerts: [],
+        memory: { rss: 200 },
+      });
+      registerObserveFunction(sdk as never, kv as never);
+
+      const result = (await sdk.trigger("mem::observe", {
+        hookType: "post_tool_use",
+        sessionId: "session-rss-warn",
+        project: "/project",
+        cwd: "/project",
+        timestamp: "2026-03-29T12:01:40.000Z",
+        source: "codex-native",
+        payloadVersion: "1",
+        eventId: "evt-rss-warn-edit",
+        persistenceClass: "persistent",
+        capabilities: ["structured_post_tool_payload", "event_identity"],
+        data: {
+          session_id: "session-rss-warn",
+          turn_id: "turn-pressure",
+          cwd: "/project",
+          model: "gpt-5.4",
+          tool_name: "Edit",
+          tool_use_id: "toolu_rss_warn",
+          tool_input: { file_path: "/project/src/app.ts" },
+          tool_output: { changed_files: ["/project/src/app.ts"] },
+        },
+      })) as {
+        persisted: boolean;
+        skipped?: boolean;
+        deferred?: boolean;
+        reason?: string;
+        pressure?: { mode?: string; reason?: string };
+      };
+
+      expect(result.persisted).toBe(true);
+      expect(result.skipped).toBeUndefined();
+      expect(result.deferred).toBe(true);
+      expect(result.reason).toBe("hot_path_backpressure");
+      expect(result.pressure?.mode).toBe("defer_derived");
+      expect(result.pressure?.reason).toContain("rss_warn_");
+      expect(await kv.list<any>(KV.retrievalBlocks)).toHaveLength(0);
+    } finally {
+      restoreWarn();
+      restoreCritical();
+    }
+  });
+
   it("defers derived indexing for persistent observations under critical health", async () => {
     const previousAutoCompress = process.env["AGENTMEMORY_AUTO_COMPRESS"];
     process.env["AGENTMEMORY_AUTO_COMPRESS"] = "false";
@@ -704,7 +761,7 @@ describe("observe freshness plumbing", () => {
       expect(
         await kv.list<any>(KV.observations("session-critical-health")),
       ).toHaveLength(1);
-      expect(await kv.list<any>(KV.retrievalBlockRetry)).toHaveLength(2);
+      expect(await kv.list<any>(KV.retrievalBlockRetry)).toHaveLength(0);
       expect(await kv.list<any>(KV.retrievalBlocks)).toHaveLength(0);
     } finally {
       if (previousAutoCompress === undefined) {
