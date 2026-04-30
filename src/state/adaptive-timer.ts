@@ -10,13 +10,21 @@ export interface AdaptiveTimerOptions {
   label: string;
 }
 
+export type AdaptiveTimerResult =
+  | number
+  | {
+      workDone: number;
+      nextIntervalMs?: number;
+    };
+
 export interface AdaptiveTimerHandle {
   stop: () => void;
   currentInterval: () => number;
+  tickForTest?: () => Promise<void>;
 }
 
 export function createAdaptiveTimer(
-  fn: () => Promise<number>,
+  fn: () => Promise<AdaptiveTimerResult>,
   opts: AdaptiveTimerOptions,
 ): AdaptiveTimerHandle {
   let interval = opts.baseMs;
@@ -26,11 +34,24 @@ export function createAdaptiveTimer(
   const tick = async () => {
     if (stopped) return;
     try {
-      const workDone = await fn();
-      if (workDone > 0) {
-        interval = Math.max(opts.minMs, interval * 0.75);
+      const result = await fn();
+      if (
+        typeof result === "object" &&
+        typeof result.nextIntervalMs === "number" &&
+        Number.isFinite(result.nextIntervalMs) &&
+        result.nextIntervalMs > 0
+      ) {
+        interval = Math.min(
+          opts.maxMs,
+          Math.max(opts.minMs, result.nextIntervalMs),
+        );
       } else {
-        interval = Math.min(opts.maxMs, interval * 1.5);
+        const workDone = typeof result === "number" ? result : result.workDone;
+        if (workDone > 0) {
+          interval = Math.max(opts.minMs, interval * 0.75);
+        } else {
+          interval = Math.min(opts.maxMs, interval * 1.5);
+        }
       }
     } catch (err) {
       console.error(`[agentmemory] ${opts.label} failed:`, err);
@@ -51,5 +72,6 @@ export function createAdaptiveTimer(
       clearTimeout(timer);
     },
     currentInterval: () => interval,
+    ...(process.env.NODE_ENV === "test" ? { tickForTest: tick } : {}),
   };
 }
