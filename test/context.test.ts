@@ -49,7 +49,8 @@ describe("context freshness", () => {
       project,
       createdAt: "2026-04-29T09:00:00.000Z",
       title: "Codex pressure cache context",
-      narrative: "Cached Codex context remains available while pressure sheds retrieval.",
+      narrative:
+        "Cached Codex context remains available while pressure sheds retrieval.",
       keyDecisions: [],
       filesModified: [],
       concepts: ["codex"],
@@ -188,7 +189,12 @@ describe("context freshness", () => {
       intent: "file_enrich",
       files: ["/codex/a.rs"],
       budget: 800,
-    })) as { context: string; degraded: boolean; fallback: string; pressure: { reason: string } };
+    })) as {
+      context: string;
+      degraded: boolean;
+      fallback: string;
+      pressure: { reason: string };
+    };
 
     expect(result.context).toBe("");
     expect(result.degraded).toBe(true);
@@ -256,6 +262,54 @@ describe("context freshness", () => {
     expect(result.trace).toMatchObject({
       fallback: "current-session-observations",
       observationIds: ["obs-marker"],
+    });
+  });
+
+  it("returns current-session observations when retrieval context is empty", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerContextFunction(sdk as never, kv as never, 800);
+
+    const session: Session = {
+      id: "session-empty-retrieval-current-observation",
+      project: "/project",
+      cwd: "/project",
+      startedAt: "2026-04-30T10:00:00.000Z",
+      status: "completed",
+      observationCount: 1,
+    };
+    await kv.set(KV.sessions, session.id, session);
+    await kv.set(KV.observations(session.id), "obs-marker", {
+      id: "obs-marker",
+      sessionId: session.id,
+      timestamp: "2026-04-30T10:00:01.000Z",
+      type: "conversation",
+      title: "prompt_submit",
+      facts: ["agentmemory-codex-full-smoke-marker persisted"],
+      narrative: "Codex printed the full smoke marker.",
+      concepts: ["codex"],
+      files: [],
+      importance: 6,
+    } satisfies CompressedObservation);
+
+    const result = (await sdk.trigger("mem::context", {
+      sessionId: session.id,
+      project: session.project,
+      query: "agentmemory-codex-full-smoke-marker",
+      budget: 800,
+    })) as {
+      context: string;
+      items: unknown[];
+      degraded: boolean;
+      fallback: string;
+      trace: { fallback: string; observationIds: string[] };
+    };
+
+    expect(result.context).toContain("agentmemory-codex-full-smoke-marker");
+    expect(result.items.length).toBeGreaterThanOrEqual(1);
+    expect(result.items[0]).toMatchObject({ id: "obs-marker" });
+    expect(result.trace).toMatchObject({
+      currentSessionObservationOverlay: ["obs-marker"],
     });
   });
 
@@ -443,7 +497,8 @@ describe("context freshness", () => {
       project: "/project",
       createdAt: "2026-03-27T10:30:00.000Z",
       title: "Older session summary",
-      narrative: "An older summary should not displace the current turn capsule.",
+      narrative:
+        "An older summary should not displace the current turn capsule.",
       keyDecisions: ["Used summaries for old context"],
       filesModified: ["/project/src/legacy.ts"],
       concepts: ["summaries"],
@@ -498,7 +553,8 @@ describe("context freshness", () => {
       createdAt: "2026-03-28T09:45:01.000Z",
       updatedAt: "2026-03-28T09:45:03.000Z",
       userPrompt: "Investigate graph freshness",
-      assistantConclusion: "Recent session freshness now uses turn-centric context.",
+      assistantConclusion:
+        "Recent session freshness now uses turn-centric context.",
       files: ["/project/src/triggers/api.ts"],
       concepts: ["freshness"],
       hadFailure: false,
@@ -545,7 +601,8 @@ describe("context freshness", () => {
       createdAt: "2026-03-28T10:00:01.000Z",
       updatedAt: "2026-03-28T10:00:03.000Z",
       userPrompt: "Debug duplicate observations",
-      assistantConclusion: "Capsule should suppress duplicate warm observations.",
+      assistantConclusion:
+        "Capsule should suppress duplicate warm observations.",
       files: [],
       concepts: [],
       hadFailure: false,
@@ -564,7 +621,8 @@ describe("context freshness", () => {
       type: "task",
       title: "Duplicate warm observation",
       facts: [],
-      narrative: "This should be skipped because the capsule already covers it.",
+      narrative:
+        "This should be skipped because the capsule already covers it.",
       concepts: [],
       files: [],
       importance: 8,
@@ -582,7 +640,11 @@ describe("context freshness", () => {
       files: [],
       importance: 8,
     };
-    await kv.set(KV.observations(currentSession.id), "obs-dup", duplicateObservation);
+    await kv.set(
+      KV.observations(currentSession.id),
+      "obs-dup",
+      duplicateObservation,
+    );
     await kv.set(
       KV.observations(currentSession.id),
       "obs-distinct",
@@ -881,7 +943,8 @@ describe("context freshness", () => {
       type: "discovery",
       title: "Graph retrieval implementation detail",
       facts: [],
-      narrative: "Updated /project/src/functions/graph-retrieval.ts for Codex ranking.",
+      narrative:
+        "Updated /project/src/functions/graph-retrieval.ts for Codex ranking.",
       concepts: ["graph retrieval", "codex ranking"],
       files: ["/project/src/functions/graph-retrieval.ts"],
       importance: 6,
@@ -917,7 +980,9 @@ describe("context freshness", () => {
       query: "graph-retrieval.ts codex ranking",
     })) as { context: string };
 
-    const matchIndex = result.context.indexOf("Graph retrieval implementation detail");
+    const matchIndex = result.context.indexOf(
+      "Graph retrieval implementation detail",
+    );
     const otherIndex = result.context.indexOf("General memory status update");
     expect(matchIndex).toBeGreaterThan(-1);
     if (otherIndex !== -1) {
@@ -997,7 +1062,8 @@ describe("context freshness", () => {
       createdAt: "2026-03-29T12:00:01.000Z",
       updatedAt: "2026-03-29T12:00:02.000Z",
       userPrompt: "Explain retrieval ranking",
-      assistantConclusion: "Need explicit trace output for selected and skipped context.",
+      assistantConclusion:
+        "Need explicit trace output for selected and skipped context.",
       files: ["/project/src/functions/context.ts"],
       concepts: ["retrieval trace"],
       hadFailure: false,
@@ -1030,7 +1096,8 @@ describe("context freshness", () => {
       type: "task",
       title: "Covered warm observation",
       facts: [],
-      narrative: "This should be skipped because the working set already covers it.",
+      narrative:
+        "This should be skipped because the working set already covers it.",
       concepts: ["retrieval trace"],
       files: ["/project/src/functions/context.ts"],
       importance: 7,
@@ -1161,7 +1228,8 @@ describe("context freshness", () => {
       project: "/project",
       scopeType: "mission",
       scopeId: "msn_older",
-      summary: "Older mission packet that should lose to the current session resume packet.",
+      summary:
+        "Older mission packet that should lose to the current session resume packet.",
       recentChanges: ["An older migration completed."],
       knownFacts: ["Mission packet exists."],
       relevantFiles: ["/project/src/functions/missions.ts"],
@@ -1192,7 +1260,9 @@ describe("context freshness", () => {
     expect(result.context).toContain(currentPacket.recommendedNextStep);
     expect(result.context).not.toContain(olderMissionPacket.summary);
     expect(
-      result.trace.selected.some((candidate) => candidate.id === "handoff:hdf-current"),
+      result.trace.selected.some(
+        (candidate) => candidate.id === "handoff:hdf-current",
+      ),
     ).toBe(true);
   });
 

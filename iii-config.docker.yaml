@@ -45,3 +45,7 @@ workers:
       metrics_enabled: true
       logs_enabled: true
       logs_console_output: false
+  - name: iii-exec
+    config:
+      watch: []
+      exec: []

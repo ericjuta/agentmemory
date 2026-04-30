@@ -37,12 +37,17 @@ const DEFAULT_TARGETS = {
 };
 
 const DEFAULT_STEP_TIMEOUT_MS = 4000;
+const STEP_TIMEOUT_MULTIPLIER = 3;
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-function positiveInteger(value: unknown, fallback: number, max: number): number {
+function positiveInteger(
+  value: unknown,
+  fallback: number,
+  max: number,
+): number {
   if (typeof value === "number" && Number.isFinite(value) && value > 0) {
     return Math.min(Math.floor(value), max);
   }
@@ -77,12 +82,18 @@ function latencyTargets(value: unknown): typeof DEFAULT_TARGETS {
   };
 }
 
-function statusFor(success: boolean, latencyMs: number, targetMs: number): CheckStatus {
+function statusFor(
+  success: boolean,
+  latencyMs: number,
+  targetMs: number,
+): CheckStatus {
   if (!success) return "fail";
   return latencyMs > targetMs ? "warn" : "pass";
 }
 
-async function timed<T>(fn: () => Promise<T>): Promise<{ latencyMs: number; value?: T; error?: string }> {
+async function timed<T>(
+  fn: () => Promise<T>,
+): Promise<{ latencyMs: number; value?: T; error?: string }> {
   const started = Date.now();
   try {
     const value = await fn();
@@ -118,7 +129,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function numberValue(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
 }
 
 function arrayLength(value: unknown): number | undefined {
@@ -161,7 +174,9 @@ function passFromSteps(steps: Record<string, StepResult>): boolean {
 }
 
 function sessionStarted(step: StepResult): boolean {
-  return step.status !== "fail" || step.error?.startsWith("step_timeout_after_");
+  return (
+    step.status !== "fail" || step.error?.startsWith("step_timeout_after_")
+  );
 }
 
 function latencyWarnings(steps: Record<string, StepResult>): string[] {
@@ -173,7 +188,7 @@ function latencyWarnings(steps: Record<string, StepResult>): string[] {
 function blockCount(value: Record<string, unknown>): number | undefined {
   return typeof value.blocks === "number"
     ? value.blocks
-    : arrayLength(value.blocks) ?? arrayLength(value.items);
+    : (arrayLength(value.blocks) ?? arrayLength(value.items));
 }
 
 function contextStatus(value: Record<string, unknown>): ContextStatus {
@@ -233,168 +248,212 @@ export function registerCodexIntegrationProofFunction(
   sdk: ISdk,
   kv: StateKV,
 ): void {
-  sdk.registerFunction("mem::codex-integration-proof", async (payload: Payload = {}) => {
-    const project = stringValue(payload.project) || stringValue(payload.cwd) || DEFAULT_CODEX_PROJECT;
-    const cwd = stringValue(payload.cwd) || project;
-    const branch = stringValue(payload.branch);
-    const query = stringValue(payload.query) || DEFAULT_QUERY;
-    const sessionId =
-      stringValue(payload.sessionId) || `codex-integration-proof-${Date.now()}`;
-    const contextBudget = positiveInteger(payload.contextBudget, 8000, 50000);
-    const searchLimit = positiveInteger(payload.searchLimit, 5, 10);
-    const targets = latencyTargets(payload.latencyTargetsMs);
-    const generatedAt = new Date().toISOString();
+  sdk.registerFunction(
+    "mem::codex-integration-proof",
+    async (payload: Payload = {}) => {
+      const project =
+        stringValue(payload.project) ||
+        stringValue(payload.cwd) ||
+        DEFAULT_CODEX_PROJECT;
+      const cwd = stringValue(payload.cwd) || project;
+      const branch = stringValue(payload.branch);
+      const query = stringValue(payload.query) || DEFAULT_QUERY;
+      const sessionId =
+        stringValue(payload.sessionId) ||
+        `codex-integration-proof-${Date.now()}`;
+      const contextBudget = positiveInteger(payload.contextBudget, 8000, 50000);
+      const searchLimit = positiveInteger(payload.searchLimit, 5, 10);
+      const targets = latencyTargets(payload.latencyTargetsMs);
+      const generatedAt = new Date().toISOString();
+      const stepTimeouts = {
+        sessionStart: Math.max(
+          DEFAULT_STEP_TIMEOUT_MS,
+          targets.sessionStart * STEP_TIMEOUT_MULTIPLIER,
+        ),
+        context: Math.max(
+          DEFAULT_STEP_TIMEOUT_MS,
+          targets.context * STEP_TIMEOUT_MULTIPLIER,
+        ),
+        smartSearch: Math.max(
+          DEFAULT_STEP_TIMEOUT_MS,
+          targets.smartSearch * STEP_TIMEOUT_MULTIPLIER,
+        ),
+        retrievalProof: Math.max(
+          DEFAULT_STEP_TIMEOUT_MS,
+          targets.smartSearch * STEP_TIMEOUT_MULTIPLIER,
+        ),
+      };
 
-    const health = await getLatestHealth(kv).catch(() => null);
-    const healthRecord = health as
-      | {
-          status?: string;
-          alerts?: unknown[];
-          eventLoopLagMs?: number;
-          kvConnectivity?: { status?: string; latencyMs?: number };
-          observeCapture?: { status?: string };
-        }
-      | null;
+      const health = await getLatestHealth(kv).catch(() => null);
+      const healthRecord = health as {
+        status?: string;
+        alerts?: unknown[];
+        eventLoopLagMs?: number;
+        kvConnectivity?: { status?: string; latencyMs?: number };
+        observeCapture?: { status?: string };
+      } | null;
 
-    const sessionStart = stepFromTrigger(
-      await timedBounded(() =>
-        sdk.trigger("api::session::start", {
-          body: { sessionId, project, cwd, ...(branch ? { branch } : {}) },
-          headers: {},
+      const sessionStart = stepFromTrigger(
+        await timedBounded(
+          () =>
+            sdk.trigger("api::session::start", {
+              body: { sessionId, project, cwd, ...(branch ? { branch } : {}) },
+              headers: {},
+            }),
+          stepTimeouts.sessionStart,
+        ),
+        targets.sessionStart,
+        (value) => {
+          const body = isRecord(value.body) ? value.body : value;
+          return (
+            (value.status_code === 200 ||
+              value.status === 200 ||
+              value.status_code === undefined) &&
+            isRecord(body.session) &&
+            typeof body.context === "string" &&
+            isRecord(body.bootstrap)
+          );
+        },
+        (value) => {
+          const body = isRecord(value.body) ? value.body : value;
+          const bootstrap = isRecord(body.bootstrap) ? body.bootstrap : {};
+          return {
+            envelope: Object.keys(body).filter((key) =>
+              ["bootstrap", "context", "session"].includes(key),
+            ),
+            contextChars: textLength(body.context),
+            bootstrapKeys: Object.keys(bootstrap),
+            latestHandoffPresent: Boolean(bootstrap.latestHandoff),
+            warnings: Array.isArray(bootstrap.warnings)
+              ? bootstrap.warnings
+              : [],
+          };
+        },
+      );
+
+      const context = stepFromTrigger(
+        await timedBounded(
+          () =>
+            sdk.trigger({
+              function_id: "mem::context",
+              payload: {
+                sessionId,
+                project,
+                ...(branch ? { branch } : {}),
+                query,
+                budget: contextBudget,
+                intent: "manual_recall",
+              },
+            }),
+          stepTimeouts.context,
+        ),
+        targets.context,
+        (value) =>
+          contextStatus(value) !== "empty" && contextDataAvailable(value),
+        (value) => contextDetails(value, healthRecord),
+      );
+      if (
+        context.status === "pass" &&
+        context.details.contextStatus === "degraded"
+      ) {
+        context.status = "warn";
+      }
+
+      const smartSearch = stepFromTrigger(
+        await timedBounded(
+          () =>
+            sdk.trigger({
+              function_id: "mem::smart-search",
+              payload: {
+                project,
+                ...(branch ? { branch } : {}),
+                query,
+                limit: searchLimit,
+              },
+            }),
+          stepTimeouts.smartSearch,
+        ),
+        targets.smartSearch,
+        (value) => Array.isArray(value.results) && value.results.length > 0,
+        (value) => ({
+          results: arrayLength(value.results),
+          mode: typeof value.mode === "string" ? value.mode : undefined,
         }),
-      ),
-      targets.sessionStart,
-      (value) => {
-        const body = isRecord(value.body) ? value.body : value;
-        return (
-          (value.status_code === 200 || value.status === 200 || value.status_code === undefined) &&
-          isRecord(body.session) &&
-          typeof body.context === "string" &&
-          isRecord(body.bootstrap)
-        );
-      },
-      (value) => {
-        const body = isRecord(value.body) ? value.body : value;
-        const bootstrap = isRecord(body.bootstrap) ? body.bootstrap : {};
-        return {
-          envelope: Object.keys(body).filter((key) =>
-            ["bootstrap", "context", "session"].includes(key),
-          ),
-          contextChars: textLength(body.context),
-          bootstrapKeys: Object.keys(bootstrap),
-          latestHandoffPresent: Boolean(bootstrap.latestHandoff),
-          warnings: Array.isArray(bootstrap.warnings) ? bootstrap.warnings : [],
-        };
-      },
-    );
+      );
 
-    const context = stepFromTrigger(
-      await timedBounded(() =>
+      const retrievalProof = await timedBounded(() =>
         sdk.trigger({
-          function_id: "mem::context",
-          payload: {
-            sessionId,
-            project,
-            ...(branch ? { branch } : {}),
-            query,
-            budget: contextBudget,
-            intent: "manual_recall",
-          },
-        }),
-      ),
-      targets.context,
-      (value) => contextStatus(value) !== "empty" && contextDataAvailable(value),
-      (value) => contextDetails(value, healthRecord),
-    );
-    if (
-      context.status === "pass" &&
-      context.details.contextStatus === "degraded"
-    ) {
-      context.status = "warn";
-    }
-
-    const smartSearch = stepFromTrigger(
-      await timedBounded(() =>
-        sdk.trigger({
-          function_id: "mem::smart-search",
+          function_id: "mem::retrieval-proof",
           payload: {
             project,
             ...(branch ? { branch } : {}),
             query,
             limit: searchLimit,
+            includeSearch: false,
           },
         }),
-      ),
-      targets.smartSearch,
-      (value) => Array.isArray(value.results) && value.results.length > 0,
-      (value) => ({
-        results: arrayLength(value.results),
-        mode: typeof value.mode === "string" ? value.mode : undefined,
-      }),
-    );
+      );
+      const retrievalRecord = isRecord(retrievalProof.value)
+        ? retrievalProof.value
+        : {};
+      const retrievalMaintenance = isRecord(retrievalRecord.maintenance)
+        ? retrievalRecord.maintenance
+        : {};
+      const retrievalStep: StepResult = retrievalProof.error
+        ? {
+            status: "fail",
+            latencyMs: retrievalProof.latencyMs,
+            error: retrievalProof.error,
+            details: {},
+          }
+        : {
+            status: retrievalRecord.pass === false ? "warn" : "pass",
+            latencyMs: retrievalProof.latencyMs,
+            details: {
+              pass: retrievalRecord.pass,
+              maintenanceStatus: retrievalMaintenance.status,
+              queuedCount: retrievalMaintenance.queuedCount,
+              blockingQueuedCount: retrievalMaintenance.blockingQueuedCount,
+            },
+          };
 
-    const retrievalProof = await timedBounded(() =>
-      sdk.trigger({
-        function_id: "mem::retrieval-proof",
-        payload: {
-          project,
-          ...(branch ? { branch } : {}),
-          query,
-          limit: searchLimit,
-          includeSearch: false,
+      const steps = {
+        sessionStart,
+        context,
+        smartSearch,
+        retrievalProof: retrievalStep,
+      };
+      const warnings = [
+        ...latencyWarnings(steps).map((name) => `latency_${name}`),
+        ...(context.details.contextStatus === "degraded"
+          ? ["context_degraded"]
+          : []),
+        ...(retrievalStep.status === "warn" ? ["retrieval_proof_warning"] : []),
+      ];
+
+      return {
+        success: true,
+        generatedAt,
+        project,
+        branch,
+        sessionId,
+        targetsMs: targets,
+        stepTimeoutsMs: stepTimeouts,
+        pass: passFromSteps(steps),
+        contractPass: sessionStarted(sessionStart),
+        qualityPass: context.status !== "fail" && smartSearch.status !== "fail",
+        latencyWarnings: latencyWarnings(steps),
+        warnings,
+        health: {
+          status: healthRecord?.status ?? "unknown",
+          alerts: healthRecord?.alerts ?? [],
+          eventLoopLagMs: healthRecord?.eventLoopLagMs,
+          kvStatus: healthRecord?.kvConnectivity?.status,
+          kvLatencyMs: healthRecord?.kvConnectivity?.latencyMs,
+          observeCaptureStatus: healthRecord?.observeCapture?.status,
         },
-      }),
-    );
-    const retrievalRecord = isRecord(retrievalProof.value) ? retrievalProof.value : {};
-    const retrievalMaintenance = isRecord(retrievalRecord.maintenance)
-      ? retrievalRecord.maintenance
-      : {};
-    const retrievalStep: StepResult = retrievalProof.error
-      ? {
-          status: "fail",
-          latencyMs: retrievalProof.latencyMs,
-          error: retrievalProof.error,
-          details: {},
-        }
-      : {
-          status: retrievalRecord.pass === false ? "warn" : "pass",
-          latencyMs: retrievalProof.latencyMs,
-          details: {
-            pass: retrievalRecord.pass,
-            maintenanceStatus: retrievalMaintenance.status,
-            queuedCount: retrievalMaintenance.queuedCount,
-            blockingQueuedCount: retrievalMaintenance.blockingQueuedCount,
-          },
-        };
-
-    const steps = { sessionStart, context, smartSearch, retrievalProof: retrievalStep };
-    const warnings = [
-      ...latencyWarnings(steps).map((name) => `latency_${name}`),
-      ...(context.details.contextStatus === "degraded" ? ["context_degraded"] : []),
-      ...(retrievalStep.status === "warn" ? ["retrieval_proof_warning"] : []),
-    ];
-
-    return {
-      success: true,
-      generatedAt,
-      project,
-      branch,
-      sessionId,
-      targetsMs: targets,
-      pass: passFromSteps(steps),
-      contractPass: sessionStarted(sessionStart),
-      qualityPass: context.status !== "fail" && smartSearch.status !== "fail",
-      latencyWarnings: latencyWarnings(steps),
-      warnings,
-      health: {
-        status: healthRecord?.status ?? "unknown",
-        alerts: healthRecord?.alerts ?? [],
-        eventLoopLagMs: healthRecord?.eventLoopLagMs,
-        kvStatus: healthRecord?.kvConnectivity?.status,
-        kvLatencyMs: healthRecord?.kvConnectivity?.latencyMs,
-        observeCaptureStatus: healthRecord?.observeCapture?.status,
-      },
-      steps,
-    };
-  });
+        steps,
+      };
+    },
+  );
 }

@@ -24,6 +24,8 @@ Options:
   --search-attempts <n>     Poll attempts for smart-search proof (default: ${DEFAULT_SEARCH_ATTEMPTS})
   --poll-ms <n>             Delay between search attempts (default: ${DEFAULT_POLL_MS})
   --skip-codex              Skip spawning Codex and run only REST contract checks
+  --allow-degraded-server-proof
+                            Warn instead of fail when /codex-integration/proof quality is degraded
   --json                    Print a machine-readable JSON summary
   --no-default-codex-flags  Do not add "-a never --sandbox read-only"
   --help                    Show this help
@@ -48,7 +50,10 @@ function positiveInt(value, name) {
 
 function parseArgs(argv) {
   const options = {
-    baseUrl: process.env.AGENTMEMORY_SMOKE_BASE_URL || process.env.AGENTMEMORY_URL || DEFAULT_BASE_URL,
+    baseUrl:
+      process.env.AGENTMEMORY_SMOKE_BASE_URL ||
+      process.env.AGENTMEMORY_URL ||
+      DEFAULT_BASE_URL,
     codexBin: process.env.CODEX_BIN || "codex",
     project: process.cwd(),
     branch: undefined,
@@ -57,6 +62,7 @@ function parseArgs(argv) {
     searchAttempts: DEFAULT_SEARCH_ATTEMPTS,
     pollMs: DEFAULT_POLL_MS,
     codex: true,
+    allowDegradedServerProof: false,
     json: false,
     defaultCodexFlags: true,
     codexArgs: [],
@@ -103,6 +109,9 @@ function parseArgs(argv) {
       case "--skip-codex":
         options.codex = false;
         break;
+      case "--allow-degraded-server-proof":
+        options.allowDegradedServerProof = true;
+        break;
       case "--json":
         options.json = true;
         break;
@@ -130,7 +139,10 @@ function sleep(ms) {
 }
 
 function snippet(value) {
-  return String(value || "").replace(/\s+/g, " ").trim().slice(0, 700);
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 700);
 }
 
 function containsMarker(value, marker) {
@@ -138,7 +150,8 @@ function containsMarker(value, marker) {
 }
 
 async function requestJson(method, url, body, timeoutMs = 15000) {
-  const headers = body === undefined ? {} : { "content-type": "application/json" };
+  const headers =
+    body === undefined ? {} : { "content-type": "application/json" };
   if (process.env.AGENTMEMORY_SECRET) {
     headers.authorization = `Bearer ${process.env.AGENTMEMORY_SECRET}`;
   }
@@ -178,7 +191,13 @@ async function requestJson(method, url, body, timeoutMs = 15000) {
   };
 }
 
-async function requestJsonWithRetry(method, url, body, timeoutMs, options = {}) {
+async function requestJsonWithRetry(
+  method,
+  url,
+  body,
+  timeoutMs,
+  options = {},
+) {
   const attempts = options.attempts ?? 2;
   const retryMs = options.retryMs ?? 1500;
   let last = null;
@@ -219,11 +238,26 @@ function runProcess(command, args, options) {
     });
     child.on("error", (error) => {
       clearTimeout(timer);
-      resolve({ code: null, signal: null, stdout, stderr, error: error.message, timedOut, ms: Date.now() - startedAt });
+      resolve({
+        code: null,
+        signal: null,
+        stdout,
+        stderr,
+        error: error.message,
+        timedOut,
+        ms: Date.now() - startedAt,
+      });
     });
     child.on("close", (code, signal) => {
       clearTimeout(timer);
-      resolve({ code, signal, stdout, stderr, timedOut, ms: Date.now() - startedAt });
+      resolve({
+        code,
+        signal,
+        stdout,
+        stderr,
+        timedOut,
+        ms: Date.now() - startedAt,
+      });
     });
   });
 }
@@ -303,9 +337,15 @@ async function main() {
     ok: health.ok,
     runtimeStatus: health.body?.runtimeStatus ?? health.body?.status ?? null,
     servingStatus: health.body?.servingStatus ?? null,
-    maintenanceStatus: health.body?.maintenanceStatus ?? health.body?.maintenance?.status ?? null,
+    maintenanceStatus:
+      health.body?.maintenanceStatus ??
+      health.body?.maintenance?.status ??
+      null,
     observeCaptureStatus: health.body?.observeCapture?.status ?? null,
-    totalQueued: health.body?.deferredWork?.totalQueued ?? health.body?.maintenance?.totalQueued ?? null,
+    totalQueued:
+      health.body?.deferredWork?.totalQueued ??
+      health.body?.maintenance?.totalQueued ??
+      null,
     writeGates: health.body?.writeGates ?? null,
   };
   passIf(summary, health.ok, "health_http_failed");
@@ -323,7 +363,11 @@ async function main() {
       query: options.marker,
       contextBudget: 8000,
       searchLimit: 5,
-      latencyTargetsMs: { sessionStart: 1000, context: 3000, smartSearch: 2500 },
+      latencyTargetsMs: {
+        sessionStart: 1000,
+        context: 3000,
+        smartSearch: 2500,
+      },
     },
     45000,
     { attempts: 2, retryMs: 2000 },
@@ -342,16 +386,25 @@ async function main() {
   passIf(summary, proof.ok, "server_proof_http_failed");
   passIf(summary, proof.body?.contractPass === true, "server_contract_failed");
   if (proof.ok && proof.body?.qualityPass !== true) {
-    summary.warnings.push("server_quality_failed");
+    if (options.allowDegradedServerProof) {
+      summary.warnings.push("server_quality_failed");
+    } else {
+      summary.failures.push("server_quality_failed");
+    }
   }
 
   let codexSessionId = null;
   if (options.codex) {
     const args = codexArgs(options);
-    log(options, `Running ${options.codexBin} ${args.map((arg) => (arg.includes(" ") ? JSON.stringify(arg) : arg)).join(" ")}`);
+    log(
+      options,
+      `Running ${options.codexBin} ${args.map((arg) => (arg.includes(" ") ? JSON.stringify(arg) : arg)).join(" ")}`,
+    );
     const codex = await runProcess(options.codexBin, args, options);
     codexSessionId = extractSessionId(codex.stderr, codex.stdout);
-    const markerInOutput = codex.stdout.includes(options.marker) || codex.stderr.includes(options.marker);
+    const markerInOutput =
+      codex.stdout.includes(options.marker) ||
+      codex.stderr.includes(options.marker);
     summary.codex = {
       code: codex.code,
       signal: codex.signal,
@@ -363,7 +416,11 @@ async function main() {
       stdoutSnippet: snippet(codex.stdout),
       stderrSnippet: snippet(codex.stderr),
     };
-    passIf(summary, codex.code === 0 && !codex.timedOut && !codex.error, "codex_exec_failed");
+    passIf(
+      summary,
+      codex.code === 0 && !codex.timedOut && !codex.error,
+      "codex_exec_failed",
+    );
     passIf(summary, markerInOutput, "codex_marker_missing");
     passIf(summary, Boolean(codexSessionId), "codex_session_id_missing");
   }
@@ -388,16 +445,36 @@ async function main() {
     ok: start.ok,
     sessionId: start.body?.session?.id ?? null,
     sessionStatus: start.body?.session?.status ?? null,
-    contextChars: typeof start.body?.context === "string" ? start.body.context.length : null,
-    bootstrapKeys: start.body?.bootstrap && typeof start.body.bootstrap === "object"
-      ? Object.keys(start.body.bootstrap)
-      : [],
+    contextChars:
+      typeof start.body?.context === "string"
+        ? start.body.context.length
+        : null,
+    bootstrapKeys:
+      start.body?.bootstrap && typeof start.body.bootstrap === "object"
+        ? Object.keys(start.body.bootstrap)
+        : [],
   };
   passIf(summary, start.ok, "rest_session_start_http_failed");
-  passIf(summary, start.body?.session?.id === restSessionId, "rest_session_start_id_mismatch");
-  passIf(summary, start.body?.session?.status === "active", "rest_session_start_not_active");
-  passIf(summary, typeof start.body?.context === "string", "rest_session_start_context_missing");
-  passIf(summary, Boolean(start.body?.bootstrap), "rest_session_start_bootstrap_missing");
+  passIf(
+    summary,
+    start.body?.session?.id === restSessionId,
+    "rest_session_start_id_mismatch",
+  );
+  passIf(
+    summary,
+    start.body?.session?.status === "active",
+    "rest_session_start_not_active",
+  );
+  passIf(
+    summary,
+    typeof start.body?.context === "string",
+    "rest_session_start_context_missing",
+  );
+  passIf(
+    summary,
+    Boolean(start.body?.bootstrap),
+    "rest_session_start_bootstrap_missing",
+  );
 
   const observe = await requestJson(
     "POST",
@@ -421,7 +498,9 @@ async function main() {
         tool_name: "Bash",
         tool_use_id: restToolUseId,
         tool_input: { command: "printf marker" },
-        tool_output: { stdout: `AgentMemory full Codex integration marker: ${options.marker}` },
+        tool_output: {
+          stdout: `AgentMemory full Codex integration marker: ${options.marker}`,
+        },
         marker: options.marker,
       },
     },
@@ -434,7 +513,11 @@ async function main() {
     reason: observe.body?.reason ?? null,
     obsId: observe.body?.obsId ?? observe.body?.id ?? null,
   };
-  passIf(summary, observe.status === 201 || observe.status === 202, "rest_observe_http_failed");
+  passIf(
+    summary,
+    observe.status === 201 || observe.status === 202,
+    "rest_observe_http_failed",
+  );
   if (observe.status === 202 && observe.body?.reason !== "ingest_disabled") {
     summary.failures.push("rest_observe_unexpected_202");
   }
@@ -458,7 +541,9 @@ async function main() {
     if (containsMarker(search.body, options.marker)) break;
     if (attempt < options.searchAttempts) await sleep(options.pollMs);
   }
-  const searchResults = Array.isArray(search?.body?.results) ? search.body.results : [];
+  const searchResults = Array.isArray(search?.body?.results)
+    ? search.body.results
+    : [];
   summary.smartSearch = {
     status: search?.status ?? null,
     ok: search?.ok === true,
@@ -468,14 +553,26 @@ async function main() {
   };
   passIf(summary, search?.ok === true, "smart_search_http_failed");
   if (observe.status !== 202) {
-    passIf(summary, containsMarker(search?.body, options.marker), "smart_search_marker_missing");
+    passIf(
+      summary,
+      containsMarker(search?.body, options.marker),
+      "smart_search_marker_missing",
+    );
   }
 
   if (codexSessionId) {
     log(options, "Checking Codex session persistence");
-    const sessions = await requestJson("GET", `${base}/sessions?limit=80`, undefined, 15000);
-    const sessionList = Array.isArray(sessions.body?.sessions) ? sessions.body.sessions : [];
-    const storedSession = sessionList.find((session) => session?.id === codexSessionId) || null;
+    const sessions = await requestJson(
+      "GET",
+      `${base}/sessions?limit=80`,
+      undefined,
+      15000,
+    );
+    const sessionList = Array.isArray(sessions.body?.sessions)
+      ? sessions.body.sessions
+      : [];
+    const storedSession =
+      sessionList.find((session) => session?.id === codexSessionId) || null;
     summary.session = {
       status: sessions.status,
       ok: sessions.ok,
@@ -493,7 +590,9 @@ async function main() {
       undefined,
       20000,
     );
-    const observationList = Array.isArray(observations.body?.observations) ? observations.body.observations : [];
+    const observationList = Array.isArray(observations.body?.observations)
+      ? observations.body.observations
+      : [];
     summary.observations = {
       status: observations.status,
       ok: observations.ok,
@@ -524,16 +623,28 @@ async function main() {
     summary.context = {
       status: context.status,
       ok: context.ok,
-      chars: typeof context.body?.context === "string" ? context.body.context.length : 0,
-      items: Array.isArray(context.body?.items) ? context.body.items.length : null,
+      chars:
+        typeof context.body?.context === "string"
+          ? context.body.context.length
+          : 0,
+      items: Array.isArray(context.body?.items)
+        ? context.body.items.length
+        : null,
       markerFound: containsMarker(context.body, options.marker),
-      contextStatus: context.body?.status ?? context.body?.contextStatus ?? null,
+      contextStatus:
+        context.body?.status ?? context.body?.contextStatus ?? null,
     };
     passIf(summary, context.ok, "context_http_failed");
     if (summary.observations?.count > 0) {
-      passIf(summary, summary.context.chars > 0 || summary.context.items > 0, "context_empty_for_observed_session");
+      passIf(
+        summary,
+        summary.context.chars > 0 || summary.context.items > 0,
+        "context_empty_for_observed_session",
+      );
     } else if (summary.context.chars === 0 && summary.context.items === 0) {
-      summary.warnings.push("context_empty_because_codex_session_has_no_observations");
+      summary.warnings.push(
+        "context_empty_because_codex_session_has_no_observations",
+      );
     }
 
     log(options, "Closing out Codex session");
@@ -573,7 +684,11 @@ async function main() {
   passIf(summary, restObservations.ok, "rest_observations_http_failed");
   if (observe.status !== 202) {
     passIf(summary, restObservationList.length > 0, "rest_observations_empty");
-    passIf(summary, containsMarker(restObservationList, options.marker), "rest_observations_marker_missing");
+    passIf(
+      summary,
+      containsMarker(restObservationList, options.marker),
+      "rest_observations_marker_missing",
+    );
   }
 
   const restCloseout = await requestJson(
@@ -599,7 +714,9 @@ async function main() {
     undefined,
     15000,
   );
-  const packets = Array.isArray(handoffs.body?.handoffPackets) ? handoffs.body.handoffPackets : [];
+  const packets = Array.isArray(handoffs.body?.handoffPackets)
+    ? handoffs.body.handoffPackets
+    : [];
   summary.handoffs = {
     status: handoffs.status,
     ok: handoffs.ok,
@@ -613,18 +730,36 @@ async function main() {
     console.log(JSON.stringify(summary, null, 2));
   } else {
     console.log("");
-    console.log(`AgentMemory Codex CLI full integration eval: ${summary.pass ? "pass" : "fail"}`);
+    console.log(
+      `AgentMemory Codex CLI full integration eval: ${summary.pass ? "pass" : "fail"}`,
+    );
     console.log(`Marker:  ${summary.marker}`);
-    console.log(`Health:  http=${summary.health?.status}, runtime=${summary.health?.runtimeStatus}, maintenance=${summary.health?.maintenanceStatus}`);
-    console.log(`Proof:   contract=${summary.serverProof?.contractPass ? "pass" : "fail"}, quality=${summary.serverProof?.qualityPass ? "pass" : "fail"}`);
-    console.log(`Codex:   ${options.codex ? `code=${summary.codex?.code}, session=${summary.codex?.sessionId ?? "missing"}, marker=${summary.codex?.markerInOutput ? "yes" : "no"}` : "skipped"}`);
-    console.log(`REST:    session=${summary.restSession?.sessionStatus ?? "?"}, observe=${summary.restObservation?.status ?? "?"}, stored=${summary.restObservations?.count ?? "?"}, closeout=${summary.restCloseout?.success ? "ok" : "fail"}`);
-    console.log(`Search:  results=${summary.smartSearch?.results ?? "?"}, marker=${summary.smartSearch?.markerFound ? "yes" : "no"}`);
-    console.log(`Observe: count=${summary.observations?.count ?? "?"}, marker=${summary.observations?.markerFound ? "yes" : "no"}`);
-    console.log(`Context: chars=${summary.context?.chars ?? "?"}, items=${summary.context?.items ?? "?"}`);
+    console.log(
+      `Health:  http=${summary.health?.status}, runtime=${summary.health?.runtimeStatus}, maintenance=${summary.health?.maintenanceStatus}`,
+    );
+    console.log(
+      `Proof:   contract=${summary.serverProof?.contractPass ? "pass" : "fail"}, quality=${summary.serverProof?.qualityPass ? "pass" : "fail"}`,
+    );
+    console.log(
+      `Codex:   ${options.codex ? `code=${summary.codex?.code}, session=${summary.codex?.sessionId ?? "missing"}, marker=${summary.codex?.markerInOutput ? "yes" : "no"}` : "skipped"}`,
+    );
+    console.log(
+      `REST:    session=${summary.restSession?.sessionStatus ?? "?"}, observe=${summary.restObservation?.status ?? "?"}, stored=${summary.restObservations?.count ?? "?"}, closeout=${summary.restCloseout?.success ? "ok" : "fail"}`,
+    );
+    console.log(
+      `Search:  results=${summary.smartSearch?.results ?? "?"}, marker=${summary.smartSearch?.markerFound ? "yes" : "no"}`,
+    );
+    console.log(
+      `Observe: count=${summary.observations?.count ?? "?"}, marker=${summary.observations?.markerFound ? "yes" : "no"}`,
+    );
+    console.log(
+      `Context: chars=${summary.context?.chars ?? "?"}, items=${summary.context?.items ?? "?"}`,
+    );
     console.log(`Closeout: ${summary.closeout?.success ? "ok" : "fail"}`);
-    if (summary.warnings.length > 0) console.log(`Warnings: ${summary.warnings.join(", ")}`);
-    if (summary.failures.length > 0) console.log(`Failures: ${summary.failures.join(", ")}`);
+    if (summary.warnings.length > 0)
+      console.log(`Warnings: ${summary.warnings.join(", ")}`);
+    if (summary.failures.length > 0)
+      console.log(`Failures: ${summary.failures.join(", ")}`);
   }
 
   if (!summary.pass) process.exit(1);
