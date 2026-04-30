@@ -43,6 +43,7 @@ services:
     env_file:
       - ./.env.local
     environment:
+      NODE_OPTIONS: --max-old-space-size=8192
       AGENTMEMORY_URL: http://iii-engine:3111
       VIEWER_UPSTREAM_URL: http://iii-engine:3111
       VIEWER_HOST: 0.0.0.0
