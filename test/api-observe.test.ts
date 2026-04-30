@@ -83,4 +83,65 @@ describe("api::observe native contract", () => {
     expect(response.status_code).toBe(400);
     expect(response.body.error).toContain("Unsupported codex-native payloadVersion");
   });
+
+  it("bounds oversized native data before triggering observe", async () => {
+    const previousStringLimit = process.env["AGENTMEMORY_OBSERVE_API_DATA_STRING_LIMIT"];
+    const previousArrayLimit = process.env["AGENTMEMORY_OBSERVE_API_DATA_ARRAY_LIMIT"];
+    process.env["AGENTMEMORY_OBSERVE_API_DATA_STRING_LIMIT"] = "32";
+    process.env["AGENTMEMORY_OBSERVE_API_DATA_ARRAY_LIMIT"] = "2";
+    const sdk = mockSdk();
+    const kv = mockKV();
+    try {
+      registerObserveFunction(sdk as never, kv as never);
+      registerApiTriggers(sdk as never, kv as never);
+
+      const response = (await sdk.trigger("api::observe", {
+        body: {
+          hookType: "post_tool_use",
+          sessionId: "session-large",
+          project: "/project",
+          cwd: "/project",
+          timestamp: "2026-03-29T12:00:01.000Z",
+          source: "codex-native",
+          payload_version: "1",
+          event_id: "evt-large",
+          persistence_class: "persistent",
+          data: {
+            session_id: "session-large",
+            turn_id: "turn-large",
+            cwd: "/project",
+            model: "gpt-5.4",
+            tool_name: "Bash",
+            tool_use_id: "toolu_large",
+            tool_input: { command: "npm test" },
+            tool_output: {
+              stdout: "x".repeat(200),
+              changed_files: ["/project/a.ts", "/project/b.ts", "/project/c.ts"],
+              status: "ok",
+            },
+          },
+        },
+        headers: {},
+      })) as { status_code: number };
+
+      expect(response.status_code).toBe(201);
+      const observations = await kv.list<any>(KV.observations("session-large"));
+      expect(observations).toHaveLength(1);
+      expect(observations[0].narrative).toContain("[agentmemory truncated]");
+      expect(observations[0].files).toContain("/project/a.ts");
+      expect(observations[0].files).toContain("/project/b.ts");
+      expect(observations[0].files).not.toContain("/project/c.ts");
+    } finally {
+      if (previousStringLimit === undefined) {
+        delete process.env["AGENTMEMORY_OBSERVE_API_DATA_STRING_LIMIT"];
+      } else {
+        process.env["AGENTMEMORY_OBSERVE_API_DATA_STRING_LIMIT"] = previousStringLimit;
+      }
+      if (previousArrayLimit === undefined) {
+        delete process.env["AGENTMEMORY_OBSERVE_API_DATA_ARRAY_LIMIT"];
+      } else {
+        process.env["AGENTMEMORY_OBSERVE_API_DATA_ARRAY_LIMIT"] = previousArrayLimit;
+      }
+    }
+  });
 });

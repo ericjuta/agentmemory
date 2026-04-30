@@ -455,6 +455,79 @@ function parseOptionalPersistenceClass(
   return null;
 }
 
+const DEFAULT_OBSERVE_API_DATA_STRING_LIMIT = 12_000;
+const DEFAULT_OBSERVE_API_DATA_ARRAY_LIMIT = 100;
+const DEFAULT_OBSERVE_API_DATA_OBJECT_KEYS_LIMIT = 80;
+const DEFAULT_OBSERVE_API_DATA_DEPTH_LIMIT = 8;
+const OBSERVE_API_TRUNCATED_MARKER = "[agentmemory truncated]";
+
+function readObserveApiPositiveIntegerEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function truncateObserveApiString(value: string, limit: number): string {
+  if (value.length <= limit) return value;
+  return value.slice(0, limit) + "\n" + OBSERVE_API_TRUNCATED_MARKER + " " + (value.length - limit) + " chars]";
+}
+
+function boundObserveApiDataValue(
+  value: unknown,
+  options: {
+    stringLimit: number;
+    arrayLimit: number;
+    objectKeysLimit: number;
+    depthLimit: number;
+  },
+  depth = 0,
+): unknown {
+  if (typeof value === "string") return truncateObserveApiString(value, options.stringLimit);
+  if (typeof value !== "object" || value === null) return value;
+  if (depth >= options.depthLimit) return OBSERVE_API_TRUNCATED_MARKER;
+  if (Array.isArray(value)) {
+    const bounded = value
+      .slice(0, options.arrayLimit)
+      .map((item) => boundObserveApiDataValue(item, options, depth + 1));
+    if (value.length > options.arrayLimit) {
+      bounded.push(OBSERVE_API_TRUNCATED_MARKER + " " + (value.length - options.arrayLimit) + " items]");
+    }
+    return bounded;
+  }
+  const bounded: Record<string, unknown> = {};
+  const entries = Object.entries(value);
+  for (const [key, entryValue] of entries.slice(0, options.objectKeysLimit)) {
+    bounded[key] = boundObserveApiDataValue(entryValue, options, depth + 1);
+  }
+  if (entries.length > options.objectKeysLimit) {
+    bounded["__agentmemory_truncated_keys"] =
+      entries.length - options.objectKeysLimit;
+  }
+  return bounded;
+}
+
+function boundObserveApiData(data: unknown): unknown {
+  return boundObserveApiDataValue(data, {
+    stringLimit: readObserveApiPositiveIntegerEnv(
+      "AGENTMEMORY_OBSERVE_API_DATA_STRING_LIMIT",
+      DEFAULT_OBSERVE_API_DATA_STRING_LIMIT,
+    ),
+    arrayLimit: readObserveApiPositiveIntegerEnv(
+      "AGENTMEMORY_OBSERVE_API_DATA_ARRAY_LIMIT",
+      DEFAULT_OBSERVE_API_DATA_ARRAY_LIMIT,
+    ),
+    objectKeysLimit: readObserveApiPositiveIntegerEnv(
+      "AGENTMEMORY_OBSERVE_API_DATA_OBJECT_KEYS_LIMIT",
+      DEFAULT_OBSERVE_API_DATA_OBJECT_KEYS_LIMIT,
+    ),
+    depthLimit: readObserveApiPositiveIntegerEnv(
+      "AGENTMEMORY_OBSERVE_API_DATA_DEPTH_LIMIT",
+      DEFAULT_OBSERVE_API_DATA_DEPTH_LIMIT,
+    ),
+  });
+}
+
 function sortByUpdatedAt<T extends { updatedAt?: string; createdAt?: string }>(
   items: T[],
 ): T[] {
@@ -843,7 +916,7 @@ export function registerApiTriggers(
         project,
         cwd,
         timestamp,
-        data: body.data,
+        data: boundObserveApiData(body.data),
         source,
         payloadVersion,
         eventId,

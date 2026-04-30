@@ -67,4 +67,22 @@ describe("event triggers", () => {
 
     expect(sdk.triggerVoid).not.toHaveBeenCalled();
   });
+
+  it("does not subscribe persisted observations back into mem::observe", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+
+    registerEventTriggers(sdk as never, kv as never);
+
+    const registeredTriggers = sdk.registerTrigger.mock.calls.map(
+      ([trigger]) => trigger,
+    );
+    expect(
+      registeredTriggers.some(
+        (trigger) =>
+          trigger.config?.topic === "agentmemory.observation" ||
+          trigger.function_id === "event::observation",
+      ),
+    ).toBe(false);
+  });
 });

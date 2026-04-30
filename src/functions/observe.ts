@@ -117,6 +117,11 @@ const OPERATOR_DIAGNOSTIC_PATTERNS = [
   /git\s+status\s+--short\s+--branch\b/i,
   /git\s+log\s+--oneline\b/i,
 ];
+const DEFAULT_OBSERVE_RAW_STRING_LIMIT = 12_000;
+const DEFAULT_OBSERVE_RAW_ARRAY_LIMIT = 100;
+const DEFAULT_OBSERVE_RAW_OBJECT_KEYS_LIMIT = 80;
+const DEFAULT_OBSERVE_RAW_DEPTH_LIMIT = 8;
+const TRUNCATED_MARKER = "[agentmemory truncated]";
 
 function bestEffortTrigger(
   sdk: ISdk,
@@ -387,6 +392,68 @@ function readPositiveIntegerEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function truncateString(value: string, limit: number): string {
+  if (value.length <= limit) return value;
+  return value.slice(0, limit) + `\n${TRUNCATED_MARKER} ${value.length - limit} chars]`;
+}
+
+function boundObserveRawValue(
+  value: unknown,
+  options: {
+    stringLimit: number;
+    arrayLimit: number;
+    objectKeysLimit: number;
+    depthLimit: number;
+  },
+  depth = 0,
+): unknown {
+  if (typeof value === "string") return truncateString(value, options.stringLimit);
+  if (typeof value !== "object" || value === null) return value;
+  if (depth >= options.depthLimit) return TRUNCATED_MARKER;
+
+  if (Array.isArray(value)) {
+    const bounded = value
+      .slice(0, options.arrayLimit)
+      .map((item) => boundObserveRawValue(item, options, depth + 1));
+    if (value.length > options.arrayLimit) {
+      bounded.push(`${TRUNCATED_MARKER} ${value.length - options.arrayLimit} items]`);
+    }
+    return bounded;
+  }
+
+  const bounded: Record<string, unknown> = {};
+  const entries = Object.entries(value);
+  for (const [key, entryValue] of entries.slice(0, options.objectKeysLimit)) {
+    bounded[key] = boundObserveRawValue(entryValue, options, depth + 1);
+  }
+  if (entries.length > options.objectKeysLimit) {
+    bounded["__agentmemory_truncated_keys"] =
+      entries.length - options.objectKeysLimit;
+  }
+  return bounded;
+}
+
+function boundObserveRawPayload(value: unknown): unknown {
+  return boundObserveRawValue(value, {
+    stringLimit: readPositiveIntegerEnv(
+      "AGENTMEMORY_OBSERVE_RAW_STRING_LIMIT",
+      DEFAULT_OBSERVE_RAW_STRING_LIMIT,
+    ),
+    arrayLimit: readPositiveIntegerEnv(
+      "AGENTMEMORY_OBSERVE_RAW_ARRAY_LIMIT",
+      DEFAULT_OBSERVE_RAW_ARRAY_LIMIT,
+    ),
+    objectKeysLimit: readPositiveIntegerEnv(
+      "AGENTMEMORY_OBSERVE_RAW_OBJECT_KEYS_LIMIT",
+      DEFAULT_OBSERVE_RAW_OBJECT_KEYS_LIMIT,
+    ),
+    depthLimit: readPositiveIntegerEnv(
+      "AGENTMEMORY_OBSERVE_RAW_DEPTH_LIMIT",
+      DEFAULT_OBSERVE_RAW_DEPTH_LIMIT,
+    ),
+  });
+}
+
 async function withObserveBudget<T>(
   work: Promise<T>,
   reason: string,
@@ -520,6 +587,41 @@ function shouldSyncEmbeddingsOnObserve(): boolean {
   return process.env["AGENTMEMORY_OBSERVE_SYNC_EMBEDDINGS"] === "true";
 }
 
+function shouldPersistDerivedObserveWork(): boolean {
+  return (
+    process.env["AGENTMEMORY_OBSERVE_PERSIST_DERIVED"] === "1" ||
+    process.env["AGENTMEMORY_OBSERVE_PERSIST_DERIVED"] === "true" ||
+    process.env["AGENTMEMORY_OBSERVE_PERSIST_DERIVED"] === "yes"
+  );
+}
+
+function shouldPersistRawTurnCapsule(payload: HookPayload): boolean {
+  if (shouldPersistDerivedObserveWork()) return true;
+  return (
+    payload.hookType === "prompt_submit" ||
+    payload.hookType === "assistant_result" ||
+    payload.hookType === "stop" ||
+    payload.hookType === "task_completed" ||
+    payload.hookType === "session_end"
+  );
+}
+
+function shouldPersistRawObservations(): boolean {
+  return (
+    process.env["AGENTMEMORY_OBSERVE_PERSIST_RAW"] === "1" ||
+    process.env["AGENTMEMORY_OBSERVE_PERSIST_RAW"] === "true" ||
+    process.env["AGENTMEMORY_OBSERVE_PERSIST_RAW"] === "yes"
+  );
+}
+
+function shouldIndexObserveInline(): boolean {
+  return (
+    process.env["AGENTMEMORY_OBSERVE_INLINE_DERIVED"] === "1" ||
+    process.env["AGENTMEMORY_OBSERVE_INLINE_DERIVED"] === "true" ||
+    process.env["AGENTMEMORY_OBSERVE_INLINE_DERIVED"] === "yes"
+  );
+}
+
 function isQueuePressure(reason: string | undefined): boolean {
   return reason?.startsWith("deferred_queue_") ?? false;
 }
@@ -542,13 +644,15 @@ async function storeSyntheticObservation(
     assistantResponse: raw.assistantResponse,
   };
   await kv.set(KV.observations(payload.sessionId), obsId, storedSynthetic);
-  await indexCompressedObservation(kv, getSearchIndex(), storedSynthetic, {
-    syncEmbedding,
-  });
-  await upsertObservationRetrievalBlock(kv, storedSynthetic, payload.project, {
-    skipEmbedding: !syncEmbedding,
-  });
-  await upsertTurnCapsuleFromCompressed(kv, storedSynthetic);
+  if (shouldIndexObserveInline()) {
+    await indexCompressedObservation(kv, getSearchIndex(), storedSynthetic, {
+      syncEmbedding,
+    });
+    await upsertObservationRetrievalBlock(kv, storedSynthetic, payload.project, {
+      skipEmbedding: !syncEmbedding,
+    });
+    await upsertTurnCapsuleFromCompressed(kv, storedSynthetic);
+  }
   bestEffortTrigger(sdk, "stream::set", {
     stream_name: STREAM.name,
     group_id: STREAM.group(payload.sessionId),
@@ -672,9 +776,9 @@ export function registerObserveFunction(
     try {
       const jsonStr = JSON.stringify(payload.data);
       const sanitized = stripPrivateData(jsonStr);
-      sanitizedRaw = JSON.parse(sanitized);
+      sanitizedRaw = boundObserveRawPayload(JSON.parse(sanitized));
     } catch {
-      sanitizedRaw = stripPrivateData(String(payload.data));
+      sanitizedRaw = boundObserveRawPayload(stripPrivateData(String(payload.data)));
     }
 
     const raw: RawObservation = {
@@ -793,7 +897,7 @@ export function registerObserveFunction(
         }
       }
 
-      const deferDerivedWork = Boolean(hotPathPressure);
+      const deferDerivedWork = Boolean(hotPathPressure) || !shouldPersistRawTurnCapsule(payload);
       let writePressureReason: string | undefined;
       if (metadata.persistenceClass !== "diagnostics_only" && !deferDerivedWork) {
         await withObserveBudget(
@@ -821,10 +925,20 @@ export function registerObserveFunction(
       let compressionMode: "llm" | "synthetic" | "deferred" = "synthetic";
       if (metadata.persistenceClass === "persistent") {
         try {
-          await withObserveBudget(
-            kv.set(KV.observations(payload.sessionId), obsId, raw),
-            "observe_write_budget_exceeded_during_raw_observation",
-          );
+          if (shouldPersistRawObservations()) {
+            await withObserveBudget(
+              kv.set(KV.observations(payload.sessionId), obsId, raw),
+              "observe_write_budget_exceeded_during_raw_observation",
+            );
+          } else {
+            await withObserveBudget(
+              storeSyntheticObservation(sdk, kv, payload, obsId, raw, {
+                syncEmbedding: false,
+              }),
+              "observe_write_budget_exceeded_during_synthetic_observation",
+            );
+            compressionMode = "synthetic";
+          }
         } catch (err) {
           const reason = observeBudgetReason(err);
           if (!reason) throw err;
@@ -837,20 +951,22 @@ export function registerObserveFunction(
           return degradedObserveResult(payload, metadata, obsId, reason);
         }
 
-        bestEffortTrigger(sdk, "stream::set", {
-          stream_name: STREAM.name,
-          group_id: STREAM.group(payload.sessionId),
-          item_id: obsId,
-          data: { type: "raw", observation: raw },
-        });
+        if (shouldPersistRawObservations()) {
+          bestEffortTrigger(sdk, "stream::set", {
+            stream_name: STREAM.name,
+            group_id: STREAM.group(payload.sessionId),
+            item_id: obsId,
+            data: { type: "raw", observation: raw },
+          });
 
-        bestEffortTrigger(sdk, "stream::send", {
-          stream_name: STREAM.name,
-          group_id: STREAM.viewerGroup,
-          id: `raw-${obsId}`,
-          type: "raw_observation",
-          data: { type: "raw", observation: raw, sessionId: payload.sessionId },
-        });
+          bestEffortTrigger(sdk, "stream::send", {
+            stream_name: STREAM.name,
+            group_id: STREAM.viewerGroup,
+            id: `raw-${obsId}`,
+            type: "raw_observation",
+            data: { type: "raw", observation: raw, sessionId: payload.sessionId },
+          });
+        }
 
         const session = await kv.get<{ observationCount?: number }>(
           KV.sessions,
@@ -876,7 +992,9 @@ export function registerObserveFunction(
           }
         }
 
-        if (isAutoCompressEnabled()) {
+        if (!shouldPersistRawObservations()) {
+          compressionMode = "synthetic";
+        } else if (isAutoCompressEnabled()) {
           const pauseReason =
             hotPathPressure?.reason ||
             writePressureReason ||
@@ -907,12 +1025,14 @@ export function registerObserveFunction(
             });
           } else if (pauseReason || !shouldCompressInlineOnObserve()) {
             compressionMode = "deferred";
-            await enqueueCompressionRetry(kv, {
-              observationId: obsId,
-              sessionId: payload.sessionId,
-              error: pauseReason || "observe_inline_compress_deferred",
-            });
-            logger[pauseReason ? "warn" : "info"]("Auto compression queued", {
+            if (!writePressureReason) {
+              await enqueueCompressionRetry(kv, {
+                observationId: obsId,
+                sessionId: payload.sessionId,
+                error: pauseReason || "observe_inline_compress_deferred",
+              });
+            }
+            logger[pauseReason ? "warn" : "info"](writePressureReason ? "Auto compression skipped under write pressure" : "Auto compression queued", {
               obsId,
               sessionId: payload.sessionId,
               reason: pauseReason || "observe_inline_compress_deferred",
@@ -960,11 +1080,13 @@ export function registerObserveFunction(
               });
             } else {
               compressionMode = "deferred";
-              await enqueueCompressionRetry(kv, {
-                observationId: obsId,
-                sessionId: payload.sessionId,
-                error: hotPathPressure.reason,
-              });
+              if (!writePressureReason) {
+                await enqueueCompressionRetry(kv, {
+                  observationId: obsId,
+                  sessionId: payload.sessionId,
+                  error: hotPathPressure.reason,
+                });
+              }
               logger.warn("Synthetic compression deferred under hot-path pressure", {
                 obsId,
                 sessionId: payload.sessionId,

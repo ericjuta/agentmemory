@@ -110,7 +110,9 @@ describe("observe freshness plumbing", () => {
 
   it("bounds per-turn capsule signal arrays under repeated observe fanout", async () => {
     const previousLimit = process.env["AGENTMEMORY_TURN_CAPSULE_SIGNAL_LIMIT"];
+    const restorePersistDerived = preserveEnv("AGENTMEMORY_OBSERVE_PERSIST_DERIVED");
     process.env["AGENTMEMORY_TURN_CAPSULE_SIGNAL_LIMIT"] = "3";
+    process.env["AGENTMEMORY_OBSERVE_PERSIST_DERIVED"] = "true";
     const sdk = mockSdk();
     const kv = mockKV();
     try {
@@ -152,6 +154,7 @@ describe("observe freshness plumbing", () => {
       } else {
         process.env["AGENTMEMORY_TURN_CAPSULE_SIGNAL_LIMIT"] = previousLimit;
       }
+      restorePersistDerived();
     }
   });
 
@@ -331,7 +334,7 @@ describe("observe freshness plumbing", () => {
     });
   });
 
-  it("keeps normal persistent tool results on the hot recall path", async () => {
+  it("stores normal persistent tool results without inline derived indexing by default", async () => {
     const previousAutoCompress = process.env["AGENTMEMORY_AUTO_COMPRESS"];
     process.env["AGENTMEMORY_AUTO_COMPRESS"] = "false";
     const sdk = mockSdk();
@@ -367,13 +370,81 @@ describe("observe freshness plumbing", () => {
         persistenceClass: "persistent",
       });
       expect(await kv.list<any>(KV.observations("session-1"))).toHaveLength(1);
-      expect((await kv.list<any>(KV.retrievalBlocks)).length).toBeGreaterThan(0);
+      expect(await kv.list<any>(KV.retrievalBlocks)).toHaveLength(0);
     } finally {
       if (previousAutoCompress === undefined) {
         delete process.env["AGENTMEMORY_AUTO_COMPRESS"];
       } else {
         process.env["AGENTMEMORY_AUTO_COMPRESS"] = previousAutoCompress;
       }
+    }
+  });
+
+  it("stores compact synthetic observations by default for large observe payloads", async () => {
+    const restoreStringLimit = preserveEnv("AGENTMEMORY_OBSERVE_RAW_STRING_LIMIT");
+    const restoreArrayLimit = preserveEnv("AGENTMEMORY_OBSERVE_RAW_ARRAY_LIMIT");
+    const restoreObjectLimit = preserveEnv("AGENTMEMORY_OBSERVE_RAW_OBJECT_KEYS_LIMIT");
+    const restoreAutoCompress = preserveEnv("AGENTMEMORY_AUTO_COMPRESS");
+    const restoreInlineCompress = preserveEnv("AGENTMEMORY_OBSERVE_INLINE_COMPRESS");
+    const restorePersistRaw = preserveEnv("AGENTMEMORY_OBSERVE_PERSIST_RAW");
+    process.env["AGENTMEMORY_OBSERVE_RAW_STRING_LIMIT"] = "64";
+    process.env["AGENTMEMORY_OBSERVE_RAW_ARRAY_LIMIT"] = "3";
+    process.env["AGENTMEMORY_OBSERVE_RAW_OBJECT_KEYS_LIMIT"] = "10";
+    process.env["AGENTMEMORY_AUTO_COMPRESS"] = "true";
+    process.env["AGENTMEMORY_OBSERVE_INLINE_COMPRESS"] = "false";
+    delete process.env["AGENTMEMORY_OBSERVE_PERSIST_RAW"];
+
+    const sdk = mockSdk();
+    const kv = mockKV();
+    try {
+      registerObserveFunction(sdk as never, kv as never);
+
+      await sdk.trigger("mem::observe", {
+        hookType: "post_tool_use",
+        sessionId: "session-large-raw",
+        project: "/project",
+        cwd: "/project",
+        timestamp: "2026-03-29T12:00:08.000Z",
+        source: "codex-native",
+        payloadVersion: "1",
+        eventId: "evt-large-raw",
+        persistenceClass: "persistent",
+        capabilities: ["structured_post_tool_payload", "event_identity"],
+        data: {
+          session_id: "session-large-raw",
+          turn_id: "turn-large",
+          cwd: "/project",
+          model: "gpt-5.4",
+          tool_name: "Bash",
+          tool_use_id: "toolu_large",
+          tool_input: { command: "npm test" },
+          tool_output: {
+            stdout: "x".repeat(500),
+            changed_files: [
+              "/project/src/a.ts",
+              "/project/src/b.ts",
+              "/project/src/c.ts",
+              "/project/src/d.ts",
+            ],
+            status: "ok",
+          },
+        },
+      });
+
+      const observations = await kv.list<any>(KV.observations("session-large-raw"));
+      expect(observations).toHaveLength(1);
+      expect(observations[0].raw).toBeUndefined();
+      expect(observations[0].type).toBe("command_run");
+      expect(observations[0].facts).toContain("status: ok");
+      expect(observations[0].files).toContain("/project/src/a.ts");
+      expect(observations[0].narrative.length).toBeLessThanOrEqual(400);
+    } finally {
+      restoreStringLimit();
+      restoreArrayLimit();
+      restoreObjectLimit();
+      restoreAutoCompress();
+      restoreInlineCompress();
+      restorePersistRaw();
     }
   });
 
@@ -431,7 +502,7 @@ describe("observe freshness plumbing", () => {
       expect(observations).toHaveLength(1);
       expect(observations[0].type).toBe("file_edit");
       expect(observations[0].title).toBeTruthy();
-      expect(await kv.list<any>(KV.retrievalBlocks)).toHaveLength(1);
+      expect(await kv.list<any>(KV.retrievalBlocks)).toHaveLength(0);
       expect(await kv.list<any>(KV.compressRetry)).toHaveLength(0);
     } finally {
       if (previousAutoCompress === undefined) {
@@ -532,7 +603,7 @@ describe("observe freshness plumbing", () => {
     const sdk = mockSdk();
     const kv = mockKV();
     try {
-      await kv.set(KV.health, "latest", { status: "critical" });
+      await kv.set(KV.health, "latest", { status: "critical", alerts: ["critical"] });
       registerObserveFunction(sdk as never, kv as never);
 
       const result = (await sdk.trigger("mem::observe", {
@@ -568,7 +639,7 @@ describe("observe freshness plumbing", () => {
         reason: "hot_path_backpressure",
       });
       expect(await kv.list<any>(KV.observations("session-critical-health"))).toHaveLength(1);
-      expect(await kv.list<any>(KV.compressRetry)).toHaveLength(1);
+      expect(await kv.list<any>(KV.retrievalBlockRetry)).toHaveLength(0);
       expect(await kv.list<any>(KV.retrievalBlocks)).toHaveLength(0);
     } finally {
       if (previousAutoCompress === undefined) {
@@ -698,7 +769,9 @@ describe("observe freshness plumbing", () => {
 
   it("feeds synthetic compression signals back into the current turn capsule", async () => {
     const previousAutoCompress = process.env["AGENTMEMORY_AUTO_COMPRESS"];
+    const previousInlineDerived = process.env["AGENTMEMORY_OBSERVE_INLINE_DERIVED"];
     process.env["AGENTMEMORY_AUTO_COMPRESS"] = "false";
+    process.env["AGENTMEMORY_OBSERVE_INLINE_DERIVED"] = "true";
 
     const sdk = mockSdk();
     const kv = mockKV();
@@ -756,10 +829,15 @@ describe("observe freshness plumbing", () => {
       } else {
         process.env["AGENTMEMORY_AUTO_COMPRESS"] = previousAutoCompress;
       }
+      if (previousInlineDerived === undefined) {
+        delete process.env["AGENTMEMORY_OBSERVE_INLINE_DERIVED"];
+      } else {
+        process.env["AGENTMEMORY_OBSERVE_INLINE_DERIVED"] = previousInlineDerived;
+      }
     }
   });
 
-  it("fails fast when the required raw observe write exceeds the write budget", async () => {
+  it("fails fast when the required compact observe write exceeds the write budget", async () => {
     const restoreBudget = preserveEnv("AGENTMEMORY_OBSERVE_WRITE_BUDGET_MS");
     const restoreAutoCompress = preserveEnv("AGENTMEMORY_AUTO_COMPRESS");
     const restoreCooldown = preserveEnv("AGENTMEMORY_OBSERVE_COOLDOWN_MS");
@@ -816,7 +894,7 @@ describe("observe freshness plumbing", () => {
         deferred: true,
         reason: "observe_pressure",
       });
-      expect(result.pressure?.reason).toContain("raw_observation");
+      expect(result.pressure?.reason).toContain("synthetic_observation");
       expect(await baseKv.list<any>(KV.observations("session-slow"))).toHaveLength(0);
       await baseKv.delete(KV.observePressureState, "latest");
     } finally {

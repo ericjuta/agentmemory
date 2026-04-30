@@ -45,15 +45,6 @@ export function registerEventTriggers(
     config: { topic: "agentmemory.session.started" },
   });
 
-  sdk.registerFunction("event::observation", async (data: HookPayload) =>
-    sdk.trigger({ function_id: "mem::observe", payload: data }),
-  );
-  sdk.registerTrigger({
-    type: "durable:subscriber",
-    function_id: "event::observation",
-    config: { topic: "agentmemory.observation" },
-  });
-
   sdk.registerFunction("event::session::stopped", async (data: { sessionId: string }) => {
     if (tracker) {
       try {

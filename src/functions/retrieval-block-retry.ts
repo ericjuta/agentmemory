@@ -219,6 +219,26 @@ export function registerRetrievalBlockRetryFunction(
         await kv.set(KV.retrievalBlocks, block.id, block);
         await upsertRetrievalBlockScopeMembership(kv, block, null).catch(() => {});
       }
+      if (!block && entry.operation === "upsert") {
+        const refresh = await settleWithin(
+          reconcileRetrievalBlocksFromState(kv, {
+            indexChanged: false,
+            maxChanged: 1,
+            partial: true,
+            sessionLimit: 1,
+          }),
+          Math.max(0, remainingBudgetMs(deadlineMs) - MIN_RETRY_WORK_MS),
+          "Retrieval block retry upsert refresh",
+        );
+        if (refresh.timedOut) {
+          timedOut = true;
+          deferred++;
+          continue;
+        }
+        block = await kv
+          .get<RetrievalBlock>(KV.retrievalBlocks, entry.blockId)
+          .catch(() => null);
+      }
       if (!block) {
         await kv.delete(KV.retrievalBlockRetry, entry.blockId).catch(() => {});
         removed++;

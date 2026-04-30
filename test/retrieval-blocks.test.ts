@@ -216,9 +216,9 @@ describe("refreshRetrievalBlocksFromState", () => {
       expect.objectContaining({
         blockId: expectedBlock.id,
         operation: "upsert",
-        block: expectedBlock,
       }),
     ]);
+    expect((await mock.kv.get<any>(KV.retrievalBlockRetry, expectedBlock.id))?.block).toBeUndefined();
     expect(mock.stats().setCalls).toBe(1);
   });
 });

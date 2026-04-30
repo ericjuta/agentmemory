@@ -757,7 +757,6 @@ async function queueRetrievalBlockUpsert(
       blockId: block.id,
       sourceType: block.sourceType,
       operation: "upsert",
-      block,
       retries: existing?.retries ?? 0,
       firstFailedAt: existing?.firstFailedAt ?? now,
       lastFailedAt: now,
