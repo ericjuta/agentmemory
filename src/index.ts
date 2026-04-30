@@ -609,7 +609,7 @@ async function main() {
               maxBatchSize: number;
               timeBudgetMs: number;
             },
-            { workDone?: number; result?: { laneState?: { currentIntervalMs?: number } } }
+            { workDone?: number }
           >({
             function_id: "mem::maintenance-catch-up",
             payload: {
@@ -618,10 +618,7 @@ async function main() {
               timeBudgetMs: compressRetryMaintenanceTimeBudgetMs,
             },
           });
-          return {
-            workDone: result?.workDone || 0,
-            nextIntervalMs: result?.result?.laneState?.currentIntervalMs,
-          };
+          return result?.workDone || 0;
        }),
       {
         baseMs: compressRetryIntervalMs,

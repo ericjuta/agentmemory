@@ -77,8 +77,8 @@ function adaptiveCompressionBatch(
   const cpu = cpuPercent(snapshot);
   const lag = snapshot?.eventLoopLagMs ?? 0;
   const kvLatency = snapshot?.kvConnectivity?.latencyMs ?? 0;
-  if (cpu < 10 && lag < 10 && kvLatency < 20) return Math.min(maxBatchSize, 3);
-  if (cpu < 20 && lag < 20 && kvLatency < 50) return Math.min(maxBatchSize, 2);
+  if (cpu < 15 && lag < 10 && kvLatency < 20) return Math.min(maxBatchSize, 5);
+  if (cpu < 25 && lag < 20 && kvLatency < 50) return Math.min(maxBatchSize, 3);
   return 1;
 }
 
@@ -155,34 +155,9 @@ function compressionBatchFromState(
   laneState: MaintenanceLaneState | null,
 ): number {
   const adaptive = adaptiveCompressionBatch(health, maxBatchSize);
-  const stateBatch = laneState?.smoothingBatchSize ?? laneState?.currentBatchSize;
+  const stateBatch = laneState?.currentBatchSize;
   if (typeof stateBatch !== "number" || stateBatch <= 0) return adaptive;
   return Math.min(adaptive, maxBatchSize, Math.max(defaultCompressionBatchFloor(), stateBatch));
-}
-
-function nextCompressionSmoothingBatch(input: {
-  previous: MaintenanceLaneState | null;
-  batchSize: number;
-  workDone: number;
-  queuedDelta: number;
-  pressure: boolean;
-}): number {
-  const floor = defaultCompressionBatchFloor();
-  const max = positiveInteger(process.env.COMPRESS_RETRY_MAX_BATCH_SIZE, 40);
-  const previousBatch =
-    input.previous?.smoothingBatchSize ??
-    input.previous?.currentBatchSize ??
-    input.batchSize;
-  if (input.pressure) {
-    return Math.max(floor, Math.floor(Math.min(previousBatch, input.batchSize) / 2));
-  }
-  if (input.queuedDelta > 0) {
-    return Math.max(floor, Math.floor(Math.min(previousBatch, input.batchSize) * 0.75));
-  }
-  if (input.workDone > 0 && input.queuedDelta < 0 && (input.previous?.successStreak ?? 0) >= 2) {
-    return Math.min(max, Math.max(input.batchSize, previousBatch) + 1);
-  }
-  return Math.max(floor, Math.min(max, previousBatch, input.batchSize));
 }
 
 function stateAfterCompressionWake(input: {
@@ -206,14 +181,13 @@ function stateAfterCompressionWake(input: {
       ? Math.ceil((input.queuedAfter / drainRatePerHour) * 3_600_000)
       : null;
   const pressure = isStateKvPressure(input.errorReason);
+  const floor = defaultCompressionBatchFloor();
   const currentIntervalMs = input.previous?.currentIntervalMs ?? defaultCompressionIntervalMs();
-  const nextBatchSize = nextCompressionSmoothingBatch({
-    previous: input.previous,
-    batchSize: input.batchSize,
-    workDone: input.workDone,
-    queuedDelta,
-    pressure,
-  });
+  const nextBatchSize = pressure
+    ? Math.max(floor, Math.floor(input.batchSize / 2))
+    : input.workDone > 0 && (input.previous?.successStreak ?? 0) >= 2
+      ? Math.min(input.batchSize + 1, positiveInteger(process.env.COMPRESS_RETRY_MAX_BATCH_SIZE, 40))
+      : input.batchSize;
   const nextIntervalMs = pressure
     ? Math.min(maxCompressionIntervalMs(), Math.max(currentIntervalMs * 2, defaultCompressionIntervalMs()))
     : defaultCompressionIntervalMs();
@@ -225,7 +199,6 @@ function stateAfterCompressionWake(input: {
     lastSkippedReason: undefined,
     lastErrorReason: input.errorReason,
     currentBatchSize: nextBatchSize,
-    smoothingBatchSize: nextBatchSize,
     currentIntervalMs: nextIntervalMs,
     successStreak: input.workDone > 0 && !pressure ? (input.previous?.successStreak ?? 0) + 1 : 0,
     pressureStreak: pressure ? (input.previous?.pressureStreak ?? 0) + 1 : 0,
@@ -240,17 +213,12 @@ function compressionIdlePauseReason(
   snapshot: Awaited<ReturnType<typeof getLatestHealth>>,
 ): string | null {
   const cpu = cpuPercent(snapshot);
+  const consecutiveHighCpuSamples = snapshot?.cpu?.consecutiveHighSamples ?? 0;
   const lag = snapshot?.eventLoopLagMs ?? 0;
   const kvLatency = snapshot?.kvConnectivity?.latencyMs ?? 0;
-  const activeInvocations =
-    snapshot?.workers?.reduce((sum, worker) => {
-      const active = worker.active_invocations;
-      return sum + (typeof active === "number" && Number.isFinite(active) ? active : 0);
-    }, 0) ?? 0;
-  const pipelineInflight = snapshot?.pipeline?.totalInflight ?? 0;
   const maxCpu = positiveInteger(
     process.env.COMPRESS_RETRY_IDLE_MAX_CPU_PERCENT,
-    20,
+    25,
   );
   const maxLag = positiveInteger(
     process.env.COMPRESS_RETRY_IDLE_MAX_EVENT_LOOP_LAG_MS,
@@ -260,15 +228,7 @@ function compressionIdlePauseReason(
     process.env.COMPRESS_RETRY_IDLE_MAX_KV_LATENCY_MS,
     200,
   );
-  const maxActiveInvocations = positiveInteger(
-    process.env.COMPRESS_RETRY_IDLE_MAX_ACTIVE_INVOCATIONS,
-    0,
-  );
-  const maxPipelineInflight = positiveInteger(
-    process.env.COMPRESS_RETRY_IDLE_MAX_PIPELINE_INFLIGHT,
-    0,
-  );
-  if (cpu >= maxCpu) {
+  if (cpu >= maxCpu && consecutiveHighCpuSamples >= 2) {
     return `idle_required_cpu_${Math.round(cpu)}_gte_${maxCpu}`;
   }
   if (lag >= maxLag) {
@@ -276,12 +236,6 @@ function compressionIdlePauseReason(
   }
   if (kvLatency >= maxKvLatency) {
     return `idle_required_kv_latency_${Math.round(kvLatency)}_gte_${maxKvLatency}`;
-  }
-  if (activeInvocations > maxActiveInvocations) {
-    return `idle_required_active_invocations_${activeInvocations}_gt_${maxActiveInvocations}`;
-  }
-  if (pipelineInflight > maxPipelineInflight) {
-    return `idle_required_pipeline_inflight_${pipelineInflight}_gt_${maxPipelineInflight}`;
   }
   return null;
 }
@@ -400,9 +354,7 @@ export function registerMaintenanceCatchUpFunction(sdk: ISdk, kv: StateKV): void
       const timeBudgetMs =
         lane === "retrieval"
           ? Math.min(requestedBudgetMs, 8_000)
-          : lane === "compression"
-            ? Math.min(requestedBudgetMs, 2_000)
-            : Math.min(requestedBudgetMs, 5_000);
+          : Math.min(requestedBudgetMs, 5_000);
 
       const startedAt = Date.now();
       let result: unknown;

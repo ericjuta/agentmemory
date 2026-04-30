@@ -271,7 +271,6 @@ export interface MaintenanceLaneState {
   lastErrorReason?: string;
   currentIntervalMs?: number;
   currentBatchSize?: number;
-  smoothingBatchSize?: number;
   successStreak: number;
   pressureStreak: number;
   lastQueued?: number;
