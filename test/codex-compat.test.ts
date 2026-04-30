@@ -523,6 +523,127 @@ describe("Codex payload compatibility", () => {
     expect(second.body.steps.endSession).toBe("skipped");
   });
 
+  it("fails open when closeout derived steps exceed the step budget", async () => {
+    const previousTimeout = process.env.AGENTMEMORY_SESSION_CLOSEOUT_STEP_TIMEOUT_MS;
+    process.env.AGENTMEMORY_SESSION_CLOSEOUT_STEP_TIMEOUT_MS = "50";
+    try {
+      const sdk = mockSdk();
+      const kv = mockKV();
+      registerApiTriggers(sdk as never, kv as never);
+
+      const session: Session = {
+        id: "session-codex-closeout-timeout",
+        project: "/project",
+        cwd: "/project",
+        startedAt: "2026-03-29T12:00:00.000Z",
+        status: "active",
+        observationCount: 2,
+      };
+      await kv.set(KV.sessions, session.id, session);
+
+      const never = () => new Promise(() => undefined);
+      sdk.registerFunction("mem::summarize", never);
+      sdk.registerFunction("mem::auto-crystallize", never);
+      sdk.registerFunction("mem::consolidate-pipeline", never);
+
+      const response = (await sdk.trigger("api::session::closeout", {
+        body: { sessionId: session.id },
+        headers: {},
+      })) as {
+        status_code: number;
+        body: {
+          success: boolean;
+          steps: Record<string, string>;
+          errors: Array<{ step: string; message: string }>;
+        };
+      };
+
+      expect(response.status_code).toBe(200);
+      expect(response.body.success).toBe(true);
+      expect(response.body.steps).toMatchObject({
+        summarize: "skipped",
+        endSession: "ok",
+        crystallize: "skipped",
+        consolidate: "skipped",
+      });
+      expect(response.body.errors.map((error) => error.message)).toEqual([
+        "session_closeout_summarize_timeout",
+        "session_closeout_crystallize_timeout",
+        "session_closeout_consolidate_timeout",
+      ]);
+
+      const storedSession = await kv.get<Session>(KV.sessions, session.id);
+      expect(storedSession?.status).toBe("completed");
+    } finally {
+      if (previousTimeout === undefined) {
+        delete process.env.AGENTMEMORY_SESSION_CLOSEOUT_STEP_TIMEOUT_MS;
+      } else {
+        process.env.AGENTMEMORY_SESSION_CLOSEOUT_STEP_TIMEOUT_MS = previousTimeout;
+      }
+    }
+  });
+
+  it("fails open when closeout summarize stalls", async () => {
+    const previousTimeout = process.env["AGENTMEMORY_SESSION_CLOSEOUT_STEP_TIMEOUT_MS"];
+    process.env["AGENTMEMORY_SESSION_CLOSEOUT_STEP_TIMEOUT_MS"] = "50";
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerApiTriggers(sdk as never, kv as never);
+
+    const session: Session = {
+      id: "session-closeout-stall",
+      project: "/project",
+      cwd: "/project",
+      startedAt: "2026-03-29T12:00:00.000Z",
+      status: "active",
+      observationCount: 2,
+    };
+    await kv.set(KV.sessions, session.id, session);
+
+    sdk.registerFunction("mem::summarize", async () => {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      return { success: true };
+    });
+    sdk.registerFunction("mem::auto-crystallize", async () => ({ success: true }));
+    sdk.registerFunction("mem::consolidate-pipeline", async () => ({ success: true }));
+
+    try {
+      const startedAt = Date.now();
+      const result = (await sdk.trigger("api::session::closeout", {
+        body: { sessionId: session.id },
+        headers: {},
+      })) as {
+        status_code: number;
+        body: {
+          success: boolean;
+          steps: Record<string, string>;
+          errors: Array<{ step: string; message: string }>;
+        };
+      };
+
+      expect(Date.now() - startedAt).toBeLessThan(250);
+      expect(result.status_code).toBe(200);
+      expect(result.body.success).toBe(true);
+      expect(result.body.steps).toMatchObject({
+        summarize: "skipped",
+        endSession: "ok",
+        crystallize: "ok",
+        consolidate: "ok",
+      });
+      expect(result.body.errors).toContainEqual({
+        step: "summarize",
+        message: "session_closeout_summarize_timeout",
+      });
+      expect((await kv.get<Session>(KV.sessions, session.id))?.status).toBe("completed");
+    } finally {
+      if (previousTimeout === undefined) {
+        delete process.env["AGENTMEMORY_SESSION_CLOSEOUT_STEP_TIMEOUT_MS"];
+      } else {
+        process.env["AGENTMEMORY_SESSION_CLOSEOUT_STEP_TIMEOUT_MS"] = previousTimeout;
+      }
+    }
+  });
+
   it("returns a Codex integration proof bundle with separate contract, quality, and latency signals", async () => {
     const sdk = mockSdk();
     const kv = mockKV();

@@ -54,6 +54,7 @@ type SessionBootstrapOptions = {
 const SESSION_START_BRANCH_DETECTION_TIMEOUT_MS = 750;
 const SESSION_START_PERSIST_TIMEOUT_MS = 1000;
 const SESSION_START_BOOTSTRAP_TIMEOUT_MS = 1000;
+const SESSION_CLOSEOUT_STEP_TIMEOUT_MS = 1500;
 const CODEX_CONTEXT_DEFAULT_BUDGET = 6000;
 const CODEX_CONTEXT_MAX_DEFAULT_BUDGET = 8000;
 const HEALTH_COMPONENT_TIMEOUT_MS = readBoundedPositiveIntEnv(
@@ -1405,33 +1406,48 @@ export function registerApiTriggers(
       };
 
       const existingSummary = await kv.get(KV.summaries, sessionId).catch(() => null);
+      const closeoutStepTimeoutMs = readBoundedPositiveIntEnv(
+        "AGENTMEMORY_SESSION_CLOSEOUT_STEP_TIMEOUT_MS",
+        SESSION_CLOSEOUT_STEP_TIMEOUT_MS,
+        50,
+        10_000,
+      );
       if (session.status === "active" || !existingSummary) {
-        try {
-          const summarizeResult = (await sdk.trigger({
+        const summarize = await settleWithin(
+          sdk.trigger({
             function_id: "mem::summarize",
             payload: { sessionId },
-          })) as { success?: boolean; summary?: SessionCloseoutResult["summary"]; error?: string };
-          if (summarizeResult.success) {
-            result.steps.summarize = "ok";
-            result.summary = summarizeResult.summary;
-          } else if (summarizeResult.error === "no_observations" && existingSummary) {
-            result.steps.summarize = "skipped";
-          } else if (summarizeResult.error === "no_observations") {
-            result.steps.summarize = "skipped";
-          } else {
-            result.steps.summarize = "failed";
-            result.success = false;
-            result.errors.push({
-              step: "summarize",
-              message: summarizeResult.error || "summarize failed",
-            });
-          }
-        } catch (err) {
+          }) as Promise<{
+            success?: boolean;
+            summary?: SessionCloseoutResult["summary"];
+            error?: string;
+          }>,
+          closeoutStepTimeoutMs,
+          () => ({ success: false, error: "session_closeout_summarize_timeout" }),
+        );
+        const summarizeResult = summarize.value;
+        if (summarize.status === "error" || summarize.status === "timeout") {
+          result.steps.summarize = "skipped";
+          result.errors.push({
+            step: "summarize",
+            message:
+              summarize.status === "timeout"
+                ? "session_closeout_summarize_timeout"
+                : summarizeResult.error || "summarize failed",
+          });
+        } else if (summarizeResult.success) {
+          result.steps.summarize = "ok";
+          result.summary = summarizeResult.summary;
+        } else if (summarizeResult.error === "no_observations" && existingSummary) {
+          result.steps.summarize = "skipped";
+        } else if (summarizeResult.error === "no_observations") {
+          result.steps.summarize = "skipped";
+        } else {
           result.steps.summarize = "failed";
           result.success = false;
           result.errors.push({
             step: "summarize",
-            message: err instanceof Error ? err.message : String(err),
+            message: summarizeResult.error || "summarize failed",
           });
         }
       }
@@ -1453,57 +1469,69 @@ export function registerApiTriggers(
         }
       }
 
-      try {
-        const crystallizeResult = (await sdk.trigger({
+      const crystallize = await settleWithin(
+        sdk.trigger({
           function_id: "mem::auto-crystallize",
           payload: { project: session.project },
-        })) as { success?: boolean; error?: string };
-        if (crystallizeResult.success === false) {
-          result.steps.crystallize = "failed";
-          result.success = false;
-          result.errors.push({
-            step: "crystallize",
-            message: crystallizeResult.error || "auto-crystallize failed",
-          });
-        } else {
-          result.steps.crystallize = "ok";
-        }
-      } catch (err) {
+        }) as Promise<{ success?: boolean; error?: string }>,
+        closeoutStepTimeoutMs,
+        () => ({ success: false, error: "session_closeout_crystallize_timeout" }),
+      );
+      const crystallizeResult = crystallize.value;
+      if (crystallize.status === "error" || crystallize.status === "timeout") {
+        result.steps.crystallize = "skipped";
+        result.errors.push({
+          step: "crystallize",
+          message:
+            crystallize.status === "timeout"
+              ? "session_closeout_crystallize_timeout"
+              : crystallizeResult.error || "auto-crystallize failed",
+        });
+      } else if (crystallizeResult.success === false) {
         result.steps.crystallize = "failed";
         result.success = false;
         result.errors.push({
           step: "crystallize",
-          message: err instanceof Error ? err.message : String(err),
+          message: crystallizeResult.error || "auto-crystallize failed",
         });
+      } else {
+        result.steps.crystallize = "ok";
       }
 
-      try {
-        const consolidateResult = (await sdk.trigger({
+      const consolidate = await settleWithin(
+        sdk.trigger({
           function_id: "mem::consolidate-pipeline",
           payload: { project: session.project },
-        })) as { success?: boolean; skipped?: boolean; reason?: string; error?: string };
-        if (consolidateResult.success === false && consolidateResult.skipped) {
-          result.steps.consolidate = "skipped";
-        } else if (consolidateResult.success === false) {
-          result.steps.consolidate = "failed";
-          result.success = false;
-          result.errors.push({
-            step: "consolidate",
-            message:
-              consolidateResult.error ||
-              consolidateResult.reason ||
-              "consolidation pipeline failed",
-          });
-        } else {
-          result.steps.consolidate = "ok";
-        }
-      } catch (err) {
+        }) as Promise<{ success?: boolean; skipped?: boolean; reason?: string; error?: string }>,
+        closeoutStepTimeoutMs,
+        () => ({ success: false, skipped: true, reason: "session_closeout_consolidate_timeout" }),
+      );
+      const consolidateResult = consolidate.value;
+      if (consolidate.status === "error" || consolidate.status === "timeout") {
+        result.steps.consolidate = "skipped";
+        result.errors.push({
+          step: "consolidate",
+          message:
+            consolidate.status === "timeout"
+              ? "session_closeout_consolidate_timeout"
+              : consolidateResult.error ||
+                consolidateResult.reason ||
+                "consolidation pipeline failed",
+        });
+      } else if (consolidateResult.success === false && consolidateResult.skipped) {
+        result.steps.consolidate = "skipped";
+      } else if (consolidateResult.success === false) {
         result.steps.consolidate = "failed";
         result.success = false;
         result.errors.push({
           step: "consolidate",
-          message: err instanceof Error ? err.message : String(err),
+          message:
+            consolidateResult.error ||
+            consolidateResult.reason ||
+            "consolidation pipeline failed",
         });
+      } else {
+        result.steps.consolidate = "ok";
       }
 
       return { status_code: 200, body: result };
