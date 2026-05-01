@@ -15,7 +15,7 @@ function usage() {
   node scripts/smoke-codex-cli-full-integration.mjs [options] [-- codex args...]
 
 Options:
-  --base-url <url>          AgentMemory origin, without /agentmemory (default: ${DEFAULT_BASE_URL})
+  --base-url <url>          AgentMemory origin, with or without /agentmemory (default: ${DEFAULT_BASE_URL})
   --codex-bin <path>        Codex binary to run (default: codex)
   --project <path>          Project/cwd scope to verify in AgentMemory (default: cwd)
   --branch <name>           Branch scope to query (default: current git branch when available, else main)
@@ -48,12 +48,19 @@ function positiveInt(value, name) {
   return parsed;
 }
 
+function normalizeAgentMemoryBase(raw) {
+  const trimmed = String(raw || "");
+  const stripped = trimmed.endsWith("/") ? trimmed.slice(0, -1) : trimmed;
+  return stripped.endsWith("/agentmemory") ? stripped : stripped + "/agentmemory";
+}
+
 function parseArgs(argv) {
   const options = {
-    baseUrl:
+    baseUrl: normalizeAgentMemoryBase(
       process.env.AGENTMEMORY_SMOKE_BASE_URL ||
-      process.env.AGENTMEMORY_URL ||
-      DEFAULT_BASE_URL,
+        process.env.AGENTMEMORY_URL ||
+        DEFAULT_BASE_URL,
+    ),
     codexBin: process.env.CODEX_BIN || "codex",
     project: process.cwd(),
     branch: undefined,
@@ -75,7 +82,7 @@ function parseArgs(argv) {
     const arg = args[i];
     switch (arg) {
       case "--base-url":
-        options.baseUrl = readArgValue(args, i, arg).replace(/\/$/, "");
+        options.baseUrl = normalizeAgentMemoryBase(readArgValue(args, i, arg));
         i++;
         break;
       case "--codex-bin":
@@ -306,7 +313,7 @@ async function main() {
   options.branch ||= await gitBranch(options.project);
   if (options.codex) await assertExecutable(options.codexBin);
 
-  const base = `${options.baseUrl}/agentmemory`;
+  const base = options.baseUrl;
   const summary = {
     pass: false,
     baseUrl: options.baseUrl,

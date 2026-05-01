@@ -14,7 +14,7 @@ function usage() {
   node scripts/smoke-codex-cli-integration.mjs [options] [-- codex args...]
 
 Options:
-  --base-url <url>          AgentMemory origin, without /agentmemory (default: ${DEFAULT_BASE_URL})
+  --base-url <url>          AgentMemory origin, with or without /agentmemory (default: ${DEFAULT_BASE_URL})
   --codex-bin <path>        Codex binary to run (default: codex)
   --mode <exec|prompt>      Run "codex exec" or top-level "codex [PROMPT]" (default: exec)
   --project <path>          Project/cwd scope to verify in AgentMemory (default: cwd)
@@ -45,6 +45,12 @@ function parsePositiveInt(value, name) {
   return parsed;
 }
 
+function normalizeAgentMemoryBase(raw) {
+  const trimmed = String(raw || "");
+  const stripped = trimmed.endsWith("/") ? trimmed.slice(0, -1) : trimmed;
+  return stripped.endsWith("/agentmemory") ? stripped : stripped + "/agentmemory";
+}
+
 function readArgValue(args, index, name) {
   const value = args[index + 1];
   if (value === undefined || value.startsWith("--")) {
@@ -55,7 +61,7 @@ function readArgValue(args, index, name) {
 
 function parseArgs(argv) {
   const options = {
-    baseUrl: process.env.AGENTMEMORY_SMOKE_BASE_URL || DEFAULT_BASE_URL,
+    baseUrl: normalizeAgentMemoryBase(process.env.AGENTMEMORY_SMOKE_BASE_URL || DEFAULT_BASE_URL),
     codexBin: process.env.CODEX_BIN || "codex",
     mode: "exec",
     project: process.cwd(),
@@ -80,7 +86,7 @@ function parseArgs(argv) {
     const arg = args[i];
     switch (arg) {
       case "--base-url":
-        options.baseUrl = readArgValue(args, i, arg).replace(/\/$/, "");
+        options.baseUrl = normalizeAgentMemoryBase(readArgValue(args, i, arg));
         i++;
         break;
       case "--codex-bin":
@@ -254,7 +260,7 @@ async function main() {
 
   await assertExecutable(options.codexBin);
 
-  const agentmemoryBase = `${options.baseUrl}/agentmemory`;
+  const agentmemoryBase = options.baseUrl;
   const summary = {
     pass: false,
     mode: options.mode,
