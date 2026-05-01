@@ -23,6 +23,8 @@ repo.
 npm install
 npm run build
 npm test
+npm run eval:retrieval
+npm run eval:codex-live-retrieval
 ```
 
 ```bash
@@ -30,6 +32,12 @@ npx @agentmemory/agentmemory
 npx @agentmemory/agentmemory status
 npx @agentmemory/agentmemory codex-proof --port 3111
 ```
+
+`npm run eval:codex-live-retrieval` exercises live REST `/context` and
+`/smart-search` against the checked-in Codex/AgentMemory fixture corpus. It
+writes the latest JSON summary to
+`/tmp/agentmemory-codex-live-retrieval-latest.json`; set
+`CODEX_LIVE_RETRIEVAL_JSONL` to also append per-case JSONL trace rows.
 
 After code changes, redeploy the Docker worker from the repo root:
 
@@ -87,6 +95,12 @@ Operator proof and repair endpoints are also part of the local support contract:
 - `POST /agentmemory/retrieval-blocks/diagnostics`
 - `POST /agentmemory/retrieval-blocks/retry`
 - `POST /agentmemory/compress-retry`
+
+`npm run eval:codex-live-retrieval` runs the P1 live Codex retrieval corpus
+through `POST /agentmemory/context` and `POST /agentmemory/smart-search`. It
+reports relevance, freshness, leakage, and latency, then writes case metrics,
+bounded previews, and REST result traces to
+`/tmp/agentmemory-codex-live-retrieval-latest.json`.
 
 ## Configuration
 

@@ -104,7 +104,52 @@ describe("mem::maintenance-catch-up", () => {
     });
   });
 
-  it("honors explicit compression lane while retrieval retry is pending", async () => {
+  it("pauses explicit compression lane while retrieval freshness is blocking", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    let forwarded: unknown;
+    registerMaintenanceCatchUpFunction(sdk as never, kv as never);
+    sdk.registerFunction("mem::compress-retry", async (payload) => {
+      forwarded = payload;
+      return { succeeded: 2 };
+    });
+
+    await setHealth(kv, "healthy", 10);
+    await kv.set(KV.retrievalBlockRetry, "rblk_1", {
+      blockId: "rblk_1",
+      sourceType: "observation",
+      retries: 0,
+      firstFailedAt: "2026-04-27T00:00:00.000Z",
+      lastFailedAt: "2026-04-27T00:00:00.000Z",
+      lastError: "timeout",
+    });
+    await kv.set(KV.compressRetry, "obs_1", {
+      obsId: "obs_1",
+      sessionId: "ses_1",
+      retries: 0,
+      failedAt: "2026-04-27T00:00:00.000Z",
+    });
+
+    const result = await sdk.trigger("mem::maintenance-catch-up", {
+      lane: "compression",
+    });
+
+    expect(result).toMatchObject({
+      skipped: true,
+      lane: "compression",
+      reason: "retrieval_freshness_blocked",
+      workDone: 0,
+    });
+    expect(forwarded).toBeUndefined();
+    const laneState = await kv.get(KV.maintenanceLaneState, "compression");
+    expect(laneState).toMatchObject({
+      lane: "compression",
+      lastSkippedReason: "retrieval_freshness_blocked",
+      lastQueued: 1,
+    });
+  });
+
+  it("lets explicit compression lane drain when only cold retrieval retry is pending", async () => {
     const sdk = mockSdk();
     const kv = mockKV();
     let forwarded: unknown;
@@ -138,9 +183,7 @@ describe("mem::maintenance-catch-up", () => {
       lane: "compression",
       workDone: 2,
     });
-    expect(forwarded).toMatchObject({
-      scanRaw: false,
-    });
+    expect(forwarded).toMatchObject({ scanRaw: false });
   });
 
   it("auto-selects graph before compression when graph catch-up is enabled", async () => {

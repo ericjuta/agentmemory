@@ -163,6 +163,69 @@ describe("retrieval block retry", () => {
     expect(await kv.get(KV.retrievalBlockRetry, block.id)).toBeNull();
   });
 
+  it("prioritizes hot retry entries over cold backlog when batch size is small", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    const provider: EmbeddingProvider = {
+      name: "test-embeddings",
+      dimensions: 3,
+      embed: vi.fn(async () => new Float32Array([0.1, 0.2, 0.3])),
+      embedBatch: vi.fn(async () => []),
+    };
+
+    configureRetrievalBlockIndexingRuntime({
+      embeddingProvider: provider,
+      vectorIndex: new VectorIndex(),
+      scheduleSave: vi.fn(),
+    });
+    registerRetrievalBlockRetryFunction(sdk as never, kv as never);
+
+    const coldBlock: RetrievalBlock = {
+      ...makeBlock("rblk-cold-backlog"),
+      sourceType: "semantic_memory",
+      sourceId: "sem-cold-backlog",
+      freshnessLane: "cold",
+    };
+    const hotBlock: RetrievalBlock = {
+      ...makeBlock("rblk-hot-freshness"),
+      sourceType: "turn_capsule",
+      sourceId: "turn-hot-freshness",
+      scope: "session",
+      freshnessLane: "hot",
+      sessionId: "session-hot-freshness",
+    };
+    await kv.set(KV.retrievalBlocks, coldBlock.id, coldBlock);
+    await kv.set(KV.retrievalBlocks, hotBlock.id, hotBlock);
+    await kv.set(KV.retrievalBlockRetry, coldBlock.id, {
+      blockId: coldBlock.id,
+      sourceType: coldBlock.sourceType,
+      retries: 0,
+      firstFailedAt: "2026-04-23T14:55:48.000Z",
+      lastFailedAt: "2026-04-23T14:55:48.000Z",
+      lastError: "StateKV state::set timed out after 5000ms",
+    } satisfies RetrievalBlockRetryEntry);
+    await kv.set(KV.retrievalBlockRetry, hotBlock.id, {
+      blockId: hotBlock.id,
+      sourceType: hotBlock.sourceType,
+      retries: 0,
+      firstFailedAt: "2026-04-24T14:55:48.000Z",
+      lastFailedAt: "2026-04-24T14:55:48.000Z",
+      lastError: "StateKV state::set timed out after 5000ms",
+    } satisfies RetrievalBlockRetryEntry);
+
+    const result = await sdk.trigger("mem::retrieval-block-retry", {
+      batchSize: 1,
+    });
+
+    expect(result).toMatchObject({
+      succeeded: 1,
+      processed: 1,
+      deferred: 1,
+    });
+    expect(await kv.get(KV.retrievalBlockRetry, hotBlock.id)).toBeNull();
+    expect(await kv.get(KV.retrievalBlockRetry, coldBlock.id)).toBeTruthy();
+  });
+
   it("increments retry counts for retriable failures and drops exhausted entries", async () => {
     const sdk = mockSdk();
     const kv = mockKV();

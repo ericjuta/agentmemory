@@ -34,6 +34,10 @@ import { VERSION } from "../version.js";
 import { timingSafeCompare } from "../auth.js";
 import { renderViewerDocument } from "../viewer/document.js";
 import { detectWorktreeInfo } from "../functions/branch-utils.js";
+import {
+  buildContextPressureFallback,
+  type ContextRequest,
+} from "../functions/context.js";
 import { listScopedDecisions } from "../functions/decisions.js";
 import { listScopedGuardrails } from "../functions/guardrails.js";
 import { findLatestHandoffPacket } from "../functions/handoffs.js";
@@ -137,7 +141,7 @@ function emptySessionBootstrap(warnings: string[] = []): SessionBootstrap {
   };
 }
 
-function deferredContextResponse(reason: string, pressure?: unknown) {
+function emptyDeferredContextResponse(reason: string, pressure?: unknown) {
   return {
     context: "",
     items: [],
@@ -152,17 +156,33 @@ function deferredContextResponse(reason: string, pressure?: unknown) {
   };
 }
 
+async function deferredContextResponse(
+  kv: StateKV,
+  payload: ContextRequest,
+  reason: string,
+): Promise<unknown> {
+  const pressure = { reason };
+  try {
+    const fallback = await buildContextPressureFallback(
+      kv,
+      payload,
+      pressure,
+      reason,
+    );
+    if (fallback.context) {
+      const { skipped: _skipped, ...rest } = fallback;
+      return rest;
+    }
+    return fallback;
+  } catch {
+    return emptyDeferredContextResponse(reason, pressure);
+  }
+}
+
 async function triggerContextForApi(
   sdk: ISdk,
-  payload: {
-    sessionId: string;
-    project?: string;
-    budget?: number;
-    query?: string;
-    intent?: RetrievalIntent;
-    files?: string[];
-    terms?: string[];
-  },
+  kv: StateKV,
+  payload: ContextRequest,
 ): Promise<unknown> {
   const result = await settleWithin(
     sdk.trigger({
@@ -175,11 +195,13 @@ async function triggerContextForApi(
       100,
       10_000,
     ),
-    () => deferredContextResponse("context_deferred_timeout"),
+    () => emptyDeferredContextResponse("context_deferred_timeout"),
   );
   return result.status === "ok"
     ? result.value
     : deferredContextResponse(
+        kv,
+        payload,
         result.status === "timeout"
           ? "context_deferred_timeout"
           : "context_deferred_error",
@@ -1133,7 +1155,7 @@ export function registerApiTriggers(
           body: { error: parsed.error },
         };
       }
-      const result = await triggerContextForApi(sdk, parsed.payload);
+      const result = await triggerContextForApi(sdk, kv, parsed.payload);
       return { status_code: 200, body: result };
     },
   );
@@ -1168,7 +1190,7 @@ export function registerApiTriggers(
           body: { error: parsed.error },
         };
       }
-      const result = await triggerContextForApi(sdk, {
+      const result = await triggerContextForApi(sdk, kv, {
         ...parsed.payload,
         budget:
           parsed.payload.budget ??
@@ -4421,6 +4443,10 @@ export function registerApiTriggers(
       };
     }
     const payload: Record<string, unknown> = {};
+    for (const field of ["project", "cwd", "sessionId", "branch"] as const) {
+      const value = asNonEmptyString(body[field]);
+      if (value) payload[field] = value;
+    }
     if (batchSize !== undefined) payload.batchSize = batchSize;
     if (candidateScanLimit !== undefined) {
       payload.candidateScanLimit = candidateScanLimit;

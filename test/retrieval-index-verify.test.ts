@@ -437,6 +437,10 @@ describe("api::retrieval-index-verify", () => {
 
     const response = (await sdk.trigger("api::retrieval-vector-backfill", {
       body: {
+        project: "/project",
+        cwd: "/cwd",
+        sessionId: "session-1",
+        branch: "main",
         batchSize: "4",
         candidateScanLimit: 40,
         timeBudgetMs: "1000",
@@ -453,6 +457,10 @@ describe("api::retrieval-index-verify", () => {
     expect(response.status_code).toBe(200);
     expect(response.body.backfilled).toBe(1);
     expect(forwarded).toEqual({
+      project: "/project",
+      cwd: "/cwd",
+      sessionId: "session-1",
+      branch: "main",
       batchSize: 4,
       candidateScanLimit: 40,
       timeBudgetMs: 1000,

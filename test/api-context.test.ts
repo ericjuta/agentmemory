@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { CompressedObservation, Session } from "../src/types.js";
 import { registerContextFunction } from "../src/functions/context.js";
 import { registerApiTriggers } from "../src/triggers/api.js";
@@ -146,7 +146,7 @@ describe("api::context", () => {
     });
   });
 
-  it("returns deferred context when the API context call stalls", async () => {
+  it("returns bounded fallback context when the API context call stalls", async () => {
     const previousTimeout = process.env.AGENTMEMORY_CONTEXT_API_TIMEOUT_MS;
     process.env.AGENTMEMORY_CONTEXT_API_TIMEOUT_MS = "5";
     const sdk = mockSdk();
@@ -154,11 +154,32 @@ describe("api::context", () => {
     try {
       sdk.registerFunction("mem::context", async () => new Promise(() => {}));
       registerApiTriggers(sdk as never, kv as never);
+      const session: Session = {
+        id: "session-api-context-timeout",
+        project: "/project",
+        cwd: "/project",
+        startedAt: "2026-04-30T10:00:00.000Z",
+        status: "active",
+        observationCount: 1,
+      };
+      await kv.set(KV.sessions, session.id, session);
+      await kv.set(KV.observations(session.id), "obs-api-context-timeout", {
+        id: "obs-api-context-timeout",
+        sessionId: session.id,
+        timestamp: "2026-04-30T10:00:01.000Z",
+        type: "conversation",
+        title: "Context timeout fallback",
+        facts: ["context deferred timeout still returns scoped evidence"],
+        narrative: "The API fallback should avoid an empty degraded payload.",
+        concepts: ["retrieval trace"],
+        files: ["/project/src/triggers/api.ts"],
+        importance: 7,
+      } satisfies CompressedObservation);
 
       const response = (await sdk.trigger("api::context", {
         body: {
-          sessionId: "session-api-context-timeout",
-          project: "/project",
+          sessionId: session.id,
+          project: session.project,
           query: "retrieval trace",
         },
         headers: {},
@@ -168,17 +189,90 @@ describe("api::context", () => {
           context: string;
           degraded?: boolean;
           skipped?: boolean;
+          fallback?: string;
           reason?: string;
+          trace?: { pressureFallback?: { skippedExpensiveLanes?: string[] } };
         };
       };
 
       expect(response.status_code).toBe(200);
-      expect(response.body).toMatchObject({
-        context: "",
-        degraded: true,
-        skipped: true,
-        reason: "context_deferred_timeout",
-      });
+      expect(response.body.context).toContain("context deferred timeout");
+      expect(response.body.degraded).toBe(true);
+      expect(response.body.fallback).toBe("current-session-observations");
+      expect(response.body.skipped).toBeUndefined();
+      expect(response.body.reason).toBe("context_deferred_timeout");
+      expect(response.body.trace?.pressureFallback?.skippedExpensiveLanes).toContain(
+        "full_retrieval_block_scan",
+      );
+    } finally {
+      if (previousTimeout === undefined) {
+        delete process.env.AGENTMEMORY_CONTEXT_API_TIMEOUT_MS;
+      } else {
+        process.env.AGENTMEMORY_CONTEXT_API_TIMEOUT_MS = previousTimeout;
+      }
+    }
+  });
+
+  it("returns bounded fallback context when the API context call times out with eligible evidence", async () => {
+    const previousTimeout = process.env.AGENTMEMORY_CONTEXT_API_TIMEOUT_MS;
+    process.env.AGENTMEMORY_CONTEXT_API_TIMEOUT_MS = "5";
+    const sdk = mockSdk();
+    const kv = mockKV();
+    try {
+      const session: Session = {
+        id: "session-api-context-timeout-fallback",
+        project: "/project",
+        cwd: "/project",
+        startedAt: "2026-04-30T13:00:00.000Z",
+        status: "active",
+        observationCount: 1,
+      };
+      await kv.set(KV.sessions, session.id, session);
+      await kv.set(KV.observations(session.id), "obs-timeout-fallback", {
+        id: "obs-timeout-fallback",
+        sessionId: session.id,
+        timestamp: "2026-04-30T13:00:01.000Z",
+        type: "conversation",
+        title: "Context timeout fallback marker",
+        facts: ["bounded fallback evidence exists"],
+        narrative: "The API timeout path should still return scoped evidence.",
+        concepts: ["context timeout"],
+        files: [],
+        importance: 8,
+      } satisfies CompressedObservation);
+      const list = vi.spyOn(kv, "list");
+      sdk.registerFunction("mem::context", async () => new Promise(() => {}));
+      registerApiTriggers(sdk as never, kv as never);
+
+      const response = (await sdk.trigger("api::context", {
+        body: {
+          sessionId: session.id,
+          project: session.project,
+          query: "bounded fallback evidence",
+        },
+        headers: {},
+      })) as {
+        status_code: number;
+        body: {
+          context: string;
+          degraded?: boolean;
+          fallback?: string;
+          reason?: string;
+          skipped?: boolean;
+          trace?: { pressureFallback?: { skippedExpensiveLanes?: string[] } };
+        };
+      };
+
+      expect(response.status_code).toBe(200);
+      expect(response.body.context).toContain("bounded fallback evidence exists");
+      expect(response.body.degraded).toBe(true);
+      expect(response.body.fallback).toBe("current-session-observations");
+      expect(response.body.reason).toBe("context_deferred_timeout");
+      expect(response.body.skipped).toBeUndefined();
+      expect(response.body.trace?.pressureFallback?.skippedExpensiveLanes).toContain(
+        "full_retrieval_block_scan",
+      );
+      expect(list).not.toHaveBeenCalledWith(KV.retrievalBlocks);
     } finally {
       if (previousTimeout === undefined) {
         delete process.env.AGENTMEMORY_CONTEXT_API_TIMEOUT_MS;

@@ -7,7 +7,7 @@ import {
 import { getLatestHealth } from "../health/monitor.js";
 import type { StateKV } from "../state/kv.js";
 import { KV } from "../state/schema.js";
-import type { MaintenanceLaneState } from "../types.js";
+import type { MaintenanceLaneState, RetrievalBlockRetryEntry } from "../types.js";
 import { getDeferredWorkStatus } from "./deferred-work.js";
 
 type MaintenanceLane =
@@ -15,6 +15,9 @@ type MaintenanceLane =
   | "compression"
   | "graph"
   | "observe-derived";
+type FreshnessLane = "hot" | "warm" | "cold";
+
+const BLOCKING_FRESHNESS_LANES = new Set<FreshnessLane>(["hot", "warm"]);
 
 interface MaintenanceCatchUpPayload {
   lane?: unknown;
@@ -117,6 +120,10 @@ function maxCompressionIntervalMs(): number {
 function isStateKvPressure(reason: string | undefined): boolean {
   if (!reason) return false;
   return /statekv|state::|StateKV temporarily unavailable/i.test(reason);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 async function readCompressionLaneState(
@@ -387,6 +394,12 @@ function workDoneFromResult(lane: MaintenanceLane, result: unknown): number {
       : {};
   const numberField = (field: string): number =>
     typeof record[field] === "number" ? record[field] : 0;
+  const nestedNumberField = (value: unknown, field: string): number =>
+    value &&
+    typeof value === "object" &&
+    typeof (value as Record<string, unknown>)[field] === "number"
+      ? ((value as Record<string, number>)[field] ?? 0)
+      : 0;
   if (lane === "retrieval") {
     return (
       numberField("succeeded") +
@@ -394,7 +407,8 @@ function workDoneFromResult(lane: MaintenanceLane, result: unknown): number {
       numberField("retried") +
       numberField("diagnosticsRemoved") +
       numberField("refreshed") +
-      numberField("refreshIndexed")
+      numberField("refreshIndexed") +
+      nestedNumberField(record.vectorRepair, "workDone")
     );
   }
   if (lane === "compression") {
@@ -419,6 +433,84 @@ function queuedForLane(
   if (lane === "compression") return status.compression.queued;
   if (lane === "observe-derived") return status.observeDerived.queued;
   return status.graphExtraction.queued;
+}
+
+function laneForRetrievalRetryEntry(entry: RetrievalBlockRetryEntry): FreshnessLane {
+  if (entry.block?.freshnessLane) return entry.block.freshnessLane;
+  if (entry.sourceType === "turn_capsule" || entry.sourceType === "working_set") {
+    return "hot";
+  }
+  if (
+    entry.sourceType === "observation" ||
+    entry.sourceType === "guardrail" ||
+    entry.sourceType === "decision" ||
+    entry.sourceType === "dossier" ||
+    entry.sourceType === "handoff" ||
+    entry.sourceType === "branch_overlay"
+  ) {
+    return "warm";
+  }
+  return "cold";
+}
+
+async function retrievalFreshnessLag(
+  kv: StateKV,
+): Promise<{
+  queuedCount: number;
+  blockingQueuedCount: number;
+  byLane: Record<FreshnessLane, number>;
+}> {
+  const byLane: Record<FreshnessLane, number> = { hot: 0, warm: 0, cold: 0 };
+  const entries = await kv.list<RetrievalBlockRetryEntry>(KV.retrievalBlockRetry);
+  for (const entry of entries) byLane[laneForRetrievalRetryEntry(entry)] += 1;
+  return {
+    queuedCount: entries.length,
+    blockingQueuedCount: [...BLOCKING_FRESHNESS_LANES].reduce(
+      (sum, lane) => sum + byLane[lane],
+      0,
+    ),
+    byLane,
+  };
+}
+
+async function runRetrievalLane(
+  sdk: ISdk,
+  batchSize: number,
+  timeBudgetMs: number,
+): Promise<Record<string, unknown>> {
+  const retry = await sdk.trigger({
+    function_id: "mem::retrieval-block-retry",
+    payload: {
+      batchSize,
+      timeBudgetMs,
+      ignoreBackoff: true,
+      refreshFromState: true,
+    },
+  });
+  const retryRecord =
+    retry && typeof retry === "object" ? (retry as Record<string, unknown>) : {};
+  const vectorRepair = await sdk
+    .trigger({
+      function_id: "mem::retrieval-vector-repair-worker",
+      payload: {
+        workerId: "maintenance-catch-up",
+        maxBatchSize: Math.min(batchSize, 16),
+        candidateScanLimit: Math.max(80, Math.min(batchSize * 20, 1000)),
+        timeBudgetMs: Math.min(timeBudgetMs, 3000),
+        scheduleSave: true,
+        requireIdle: false,
+      },
+    })
+    .catch((error: unknown) => ({
+      success: false,
+      skipped: true,
+      reason: errorMessage(error),
+    }));
+  return {
+    ...retryRecord,
+    retry,
+    vectorRepair,
+  };
 }
 
 export function registerMaintenanceCatchUpFunction(
@@ -454,6 +546,25 @@ export function registerMaintenanceCatchUpFunction(
           workDone: 0,
           deferredWork,
         };
+      }
+      if (lane === "compression" && deferredWork.retrievalBlocks.queued > 0) {
+        const freshnessLag = await retrievalFreshnessLag(kv).catch(() => null);
+        if (freshnessLag && freshnessLag.blockingQueuedCount > 0) {
+          const laneState = await recordCompressionSkip(
+            kv,
+            "retrieval_freshness_blocked",
+            deferredWork.compression.queued,
+          );
+          return {
+            success: true,
+            skipped: true,
+            lane,
+            reason: "retrieval_freshness_blocked",
+            workDone: 0,
+            result: laneState ? { laneState, freshnessLag } : { freshnessLag },
+            deferredWork,
+          };
+        }
       }
 
       const cpu = cpuPercent(health);
@@ -520,15 +631,7 @@ export function registerMaintenanceCatchUpFunction(
       try {
         result =
           lane === "retrieval"
-            ? await sdk.trigger({
-                function_id: "mem::retrieval-block-retry",
-                payload: {
-                  batchSize,
-                  timeBudgetMs,
-                  ignoreBackoff: true,
-                  refreshFromState: true,
-                },
-              })
+            ? await runRetrievalLane(sdk, batchSize, timeBudgetMs)
             : lane === "compression"
               ? await sdk.trigger({
                   function_id: "mem::compress-retry",

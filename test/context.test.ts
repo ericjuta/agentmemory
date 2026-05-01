@@ -7,6 +7,7 @@ import type {
   HandoffPacket,
   ProceduralMemory,
   ProjectProfile,
+  RetrievalBlock,
   SemanticMemory,
   Session,
   SessionSummary,
@@ -17,6 +18,7 @@ import { KV } from "../src/state/schema.js";
 import { registerBeliefsFunctions } from "../src/functions/beliefs.js";
 import { registerContextFunction } from "../src/functions/context.js";
 import { clearDeferredWorkStatusCache } from "../src/functions/deferred-work.js";
+import { upsertRetrievalBlockScopeMembership } from "../src/functions/retrieval-block-scope-index.js";
 import { mockKV, mockSdk } from "./helpers/mocks.js";
 
 afterEach(() => {
@@ -311,6 +313,98 @@ describe("context freshness", () => {
     expect(result.trace).toMatchObject({
       currentSessionObservationOverlay: ["obs-marker"],
     });
+  });
+
+  it("uses scoped hot and warm retrieval blocks as pressure fallback without a full block scan", async () => {
+    process.env["AGENTMEMORY_CONTEXT_BACKPRESSURE_QUEUE_HIGH"] = "1";
+    process.env["AGENTMEMORY_HOT_PATH_PRESSURE_CACHE_MS"] = "0";
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerContextFunction(sdk as never, kv as never, 800);
+
+    const session: Session = {
+      id: "session-pressure-hot-warm-block",
+      project: "/project",
+      cwd: "/project",
+      startedAt: "2026-04-30T14:00:00.000Z",
+      status: "active",
+      observationCount: 0,
+    };
+    const block: RetrievalBlock = {
+      id: "rblk-pressure-hot-warm",
+      sourceType: "observation",
+      sourceId: "obs-pressure-hot-warm",
+      project: session.project,
+      sessionId: session.id,
+      scope: "project",
+      freshnessLane: "warm",
+      canonicalText:
+        "## Scoped warm fallback\nScoped hot/warm fallback evidence remains useful.",
+      title: "Scoped warm fallback",
+      files: ["src/functions/context.ts"],
+      concepts: ["pressure fallback"],
+      entities: ["pressure", "fallback"],
+      sourceObservationIds: ["obs-pressure-hot-warm"],
+      hadFailure: false,
+      hadDecision: false,
+      hadAssistantConclusion: false,
+      isResumeArtifact: false,
+      importance: 8,
+      createdAt: "2026-04-30T14:00:01.000Z",
+      updatedAt: "2026-04-30T14:00:01.000Z",
+      eventAt: "2026-04-30T14:00:01.000Z",
+    };
+    await kv.set(KV.sessions, session.id, session);
+    await kv.set(KV.retrievalBlocks, block.id, block);
+    await upsertRetrievalBlockScopeMembership(kv as never, block);
+    const noiseBlocks: RetrievalBlock[] = Array.from({ length: 6 }, (_, index) => ({
+      ...block,
+      id: `rblk-pressure-noise-${index}`,
+      sourceId: `obs-pressure-noise-${index}`,
+      canonicalText: `## Unrelated recent block ${index}\nThis block is newer but unrelated.`,
+      title: `Unrelated recent block ${index}`,
+      files: [],
+      concepts: ["unrelated"],
+      entities: ["unrelated"],
+      sourceObservationIds: [`obs-pressure-noise-${index}`],
+      importance: 9,
+      createdAt: `2026-04-30T14:00:1${index}.000Z`,
+      updatedAt: `2026-04-30T14:00:1${index}.000Z`,
+      eventAt: `2026-04-30T14:00:1${index}.000Z`,
+    }));
+    for (const noise of noiseBlocks) {
+      await kv.set(KV.retrievalBlocks, noise.id, noise);
+      await upsertRetrievalBlockScopeMembership(kv as never, noise);
+    }
+    await kv.set(KV.maintenanceLaneState, "retrieval", {
+      lane: "retrieval",
+      lastQueued: 1,
+      updatedAt: "2026-04-30T14:00:02.000Z",
+    });
+    const list = vi.spyOn(kv, "list");
+
+    const result = (await sdk.trigger("mem::context", {
+      sessionId: session.id,
+      project: session.project,
+      query: "pressure fallback",
+      budget: 800,
+    })) as {
+      context: string;
+      degraded: boolean;
+      fallback: string;
+      trace: { pressureFallback?: { candidateCounts?: Record<string, number> } };
+    };
+
+    expect(result.context).toContain("Scoped hot/warm fallback evidence");
+    expect(result.degraded).toBe(true);
+    expect(result.fallback).toBe("hot-warm-retrieval-blocks");
+    expect(
+      result.trace.pressureFallback?.candidateCounts?.selectedRetrievalBlocks,
+    ).toBe(6);
+    expect(result.trace.pressureFallback?.candidateCounts?.hotWarmRetrievalBlocks).toBe(
+      7,
+    );
+    expect(list).not.toHaveBeenCalledWith(KV.retrievalBlocks);
   });
 
   it("checks context queue pressure without listing retry queues", async () => {

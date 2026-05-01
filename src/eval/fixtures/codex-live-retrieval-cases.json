@@ -1,0 +1,68 @@
+[
+  {
+    "id": "recent-live-eval-suite",
+    "description": "Recent live Codex evaluation suite recall",
+    "project": "$AGENTMEMORY_REPO",
+    "query": "AgentMemory Codex live retrieval deploy 9247834 full integration eval liveSessionQualityPass",
+    "terms": ["deploy", "codex", "retrieval"],
+    "requiredSubstrings": ["Enhanced Context Retrieval and Codex Live Evaluation Suite"],
+    "freshnessSubstrings": ["2026-05-01"],
+    "staleSubstrings": ["marker-smoke-only success"]
+  },
+  {
+    "id": "selective-upstream-porting",
+    "description": "Recent selective upstream porting recall",
+    "project": "$AGENTMEMORY_REPO",
+    "branch": "main",
+    "query": "agentmemory branch policy wholesale upstream rebase selective ports current recap",
+    "terms": ["branch", "selective ports", "rebase"],
+    "requiredSubstrings": [
+      "Selective Upstream Porting and Worker Stabilization",
+      "anything worth to rebase"
+    ],
+    "freshnessSubstrings": ["2026-04-30"],
+    "staleSubstrings": ["unverified build-ready"]
+  },
+  {
+    "id": "root-cause-vector-backfill",
+    "description": "Failure and root-cause recall",
+    "project": "$AGENTMEMORY_REPO",
+    "query": "vector backfill OOM persistence spike root cause scheduleSave active scope repair",
+    "terms": ["vector backfill", "OOM", "scheduleSave"],
+    "requiredSubstrings": ["vector backfill", "OOM"],
+    "freshnessSubstrings": ["coverage gates"],
+    "staleSubstrings": ["replace iii-engine"]
+  },
+  {
+    "id": "file-module-context",
+    "description": "File/module-specific context",
+    "project": "$AGENTMEMORY_REPO",
+    "query": "src/functions/retrieval-vector-backfill.ts health gates active project vector coverage",
+    "files": ["src/functions/retrieval-vector-backfill.ts"],
+    "terms": ["health gates", "vector coverage"],
+    "requiredSubstrings": ["vector backfill", "health"],
+    "staleSubstrings": ["raw SQLite bypass"]
+  },
+  {
+    "id": "compression-retrieval-current",
+    "description": "Current compression and retrieval maintenance recall",
+    "project": "$AGENTMEMORY_REPO",
+    "query": "retrieval quality current state versus compression backlog immediate pressure",
+    "terms": ["retrieval quality", "compression backlog"],
+    "requiredSubstrings": [
+      "Memory compression and retrieval indexing",
+      "Enhanced Context Retrieval and Codex Live Evaluation Suite"
+    ],
+    "freshnessSubstrings": ["2026-05-01"],
+    "staleSubstrings": ["retrieval itself was the immediate problem"]
+  },
+  {
+    "id": "project-leakage-guard",
+    "description": "Project leakage guard against unrelated PM runtime notes",
+    "project": "$AGENTMEMORY_REPO",
+    "query": "agentmemory retrieval proof context latency vector freshness current live status",
+    "terms": ["agentmemory", "retrieval", "latency"],
+    "requiredSubstrings": ["agentmemory", "retrieval"],
+    "forbiddenSubstrings": ["pmOrderUsd", "BTC 5m", "inventory-sync"]
+  }
+]

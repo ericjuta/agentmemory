@@ -242,6 +242,23 @@ Acceptance:
   freshness, leakage, and latency.
 - The suite fails if context is empty for a known-evidence query.
 
+Implementation note:
+
+- `npm run eval:codex-live-retrieval` runs the P1 suite against live REST
+  `/agentmemory/context` and `/agentmemory/smart-search`.
+- The default fixture corpus is
+  `src/eval/fixtures/codex-live-retrieval-cases.json` and covers recent deploy
+  status, branch/commit recall, root-cause recall, file/module context,
+  stale-vs-current disambiguation, and cross-project leakage.
+- The command writes `/tmp/agentmemory-codex-live-retrieval-latest.json` and
+  `/tmp/agentmemory-codex-live-retrieval-latest.jsonl` by default.
+- Override the fixture or artifacts with
+  `CODEX_LIVE_RETRIEVAL_FIXTURE`, `CODEX_LIVE_RETRIEVAL_ARTIFACT`, and
+  `CODEX_LIVE_RETRIEVAL_JSONL`.
+- Latency is always reported; pass/fail gating for latency is opt-in with
+  `CODEX_LIVE_RETRIEVAL_REQUIRE_LATENCY=true`
+  so this P1 corpus does not claim the broader P0/SLO proof bundle by itself.
+
 ## Proof Bundle
 
 Before declaring this lane closed:

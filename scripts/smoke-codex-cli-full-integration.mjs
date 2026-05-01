@@ -649,6 +649,12 @@ async function main() {
       markerFound: containsMarker(context.body, options.marker),
       contextStatus:
         context.body?.status ?? context.body?.contextStatus ?? null,
+      degraded: context.body?.degraded === true,
+      fallback: context.body?.fallback ?? null,
+      pressureReason:
+        context.body?.pressure?.reason ??
+        context.body?.trace?.pressureFallback?.pressureReason ??
+        null,
     };
     passIf(summary, context.ok, "context_http_failed");
     if (summary.observations?.count > 0) {

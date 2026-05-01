@@ -175,7 +175,7 @@ function passFromSteps(steps: Record<string, StepResult>): boolean {
 
 function sessionStarted(step: StepResult): boolean {
   return (
-    step.status !== "fail" || step.error?.startsWith("step_timeout_after_")
+    step.status !== "fail" || Boolean(step.error?.startsWith("step_timeout_after_"))
   );
 }
 

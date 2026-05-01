@@ -4,6 +4,7 @@ import { getLatestHealth } from "../health/monitor.js";
 import { getWriteGatePauseReason } from "../health/write-gate.js";
 import type { StateKV } from "../state/kv.js";
 import { retrieveRelevantBlocks } from "./retrieval-engine.js";
+import { getDeferredWorkStatus } from "./deferred-work.js";
 
 interface RetrievalProofPayload {
   project?: unknown;
@@ -62,6 +63,9 @@ export function registerRetrievalProofFunction(sdk: ISdk, kv: StateKV): void {
     const generatedAt = new Date().toISOString();
 
     const health = await getLatestHealth(kv).catch(() => null);
+    const deferredWork = await getDeferredWorkStatus(kv, {
+      lightweight: true,
+    }).catch(() => null);
     const writeGates = {
       llmWork: getWriteGatePauseReason(health, "llm_work"),
       derivedKvWrites: getWriteGatePauseReason(health, "derived_kv_write"),
@@ -108,6 +112,38 @@ export function registerRetrievalProofFunction(sdk: ISdk, kv: StateKV): void {
       typeof freshnessLag?.blockingQueuedCount === "number"
         ? freshnessLag.blockingQueuedCount
         : queuedCount;
+    const compressionQueued =
+      deferredWork?.compression &&
+      typeof deferredWork.compression.queued === "number"
+        ? deferredWork.compression.queued
+        : null;
+    const compressionLaneState = deferredWork?.compression?.laneState;
+    const compressionMoving =
+      typeof deferredWork?.compression?.drainRatePerHour === "number" &&
+        deferredWork.compression.drainRatePerHour > 0 ||
+      typeof deferredWork?.compression?.queuedDeltaSinceLastWake === "number" &&
+        deferredWork.compression.queuedDeltaSinceLastWake < 0 ||
+      typeof compressionLaneState?.lastWorkDone === "number" &&
+        compressionLaneState.lastWorkDone > 0;
+    const compressionStalled =
+      compressionQueued !== null &&
+      compressionQueued > 0 &&
+      !compressionMoving &&
+      Boolean(
+        compressionLaneState?.lastSkippedReason ||
+          compressionLaneState?.lastErrorReason ||
+          (compressionLaneState?.pressureStreak ?? 0) > 0,
+      );
+    const maintenanceStatus =
+      blockingQueuedCount && blockingQueuedCount > 0
+        ? "retrieval_freshness_blocked"
+        : queuedCount && queuedCount > 0
+          ? "retrieval_freshness_draining"
+          : compressionQueued && compressionQueued > 0
+            ? compressionStalled
+              ? "compression_backlog_stalled"
+              : "compression_backlog_draining"
+            : "caught_up";
 
     let search:
       | {
@@ -188,12 +224,7 @@ export function registerRetrievalProofFunction(sdk: ISdk, kv: StateKV): void {
       },
       writeGates,
       maintenance: {
-        status:
-          blockingQueuedCount && blockingQueuedCount > 0
-            ? "blocking_freshness_lag"
-            : queuedCount && queuedCount > 0
-              ? "non_blocking_backlog"
-              : "caught_up",
+        status: maintenanceStatus,
         queuedCount,
         blockingQueuedCount,
         diagnosticQueuedCount:
@@ -201,6 +232,54 @@ export function registerRetrievalProofFunction(sdk: ISdk, kv: StateKV): void {
             ? freshnessLag.diagnosticQueuedCount
             : null,
         byLane: freshnessLag?.byLane ?? null,
+        retrievalFreshness: {
+          status:
+            blockingQueuedCount && blockingQueuedCount > 0
+              ? "blocked"
+              : queuedCount && queuedCount > 0
+                ? "draining"
+                : "caught_up",
+          queuedCount,
+          blockingQueuedCount,
+          diagnosticQueuedCount:
+            typeof freshnessLag?.diagnosticQueuedCount === "number"
+              ? freshnessLag.diagnosticQueuedCount
+              : null,
+          byLane: freshnessLag?.byLane ?? null,
+          oldestQueuedAt:
+            typeof freshnessLag?.oldestQueuedAt === "string"
+              ? freshnessLag.oldestQueuedAt
+              : null,
+          oldestAgeMs:
+            typeof freshnessLag?.oldestAgeMs === "number"
+              ? freshnessLag.oldestAgeMs
+              : null,
+        },
+        compressionBacklog: {
+          status:
+            compressionQueued && compressionQueued > 0
+              ? compressionStalled
+                ? "stalled"
+                : "draining"
+              : "caught_up",
+          queuedCount: compressionQueued,
+          queuedDeltaSinceLastWake:
+            typeof deferredWork?.compression?.queuedDeltaSinceLastWake ===
+            "number"
+              ? deferredWork.compression.queuedDeltaSinceLastWake
+              : null,
+          drainRatePerHour:
+            typeof deferredWork?.compression?.drainRatePerHour === "number"
+              ? deferredWork.compression.drainRatePerHour
+              : null,
+          estimatedDrainEtaMs:
+            deferredWork?.compression &&
+            "estimatedDrainEtaMs" in deferredWork.compression
+              ? deferredWork.compression.estimatedDrainEtaMs ?? null
+              : null,
+          lastSkippedReason: compressionLaneState?.lastSkippedReason ?? null,
+          lastErrorReason: compressionLaneState?.lastErrorReason ?? null,
+        },
       },
       coverageTarget,
       diagnostics: diagnosticsRecord,

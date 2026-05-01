@@ -40,6 +40,14 @@ const OPERATOR_DIAGNOSTIC_MARKERS = [
   "git log --oneline",
 ];
 
+type FreshnessLane = RetrievalBlock["freshnessLane"];
+
+const RETRY_LANE_PRIORITY: Record<FreshnessLane, number> = {
+  hot: 0,
+  warm: 1,
+  cold: 2,
+};
+
 type RetrievalBlockRetryPayload = {
   batchSize?: number;
   refreshFromState?: boolean;
@@ -83,6 +91,41 @@ function isOperatorDiagnosticRetryEntry(entry: RetrievalBlockRetryEntry): boolea
   return OPERATOR_DIAGNOSTIC_MARKERS.some((marker) =>
     haystack.includes(marker),
   );
+}
+
+function laneForRetryEntry(entry: RetrievalBlockRetryEntry): FreshnessLane {
+  if (entry.block?.freshnessLane) return entry.block.freshnessLane;
+  if (entry.sourceType === "turn_capsule" || entry.sourceType === "working_set") {
+    return "hot";
+  }
+  if (
+    entry.sourceType === "observation" ||
+    entry.sourceType === "guardrail" ||
+    entry.sourceType === "decision" ||
+    entry.sourceType === "dossier" ||
+    entry.sourceType === "handoff" ||
+    entry.sourceType === "branch_overlay"
+  ) {
+    return "warm";
+  }
+  return "cold";
+}
+
+function retryTimestamp(entry: RetrievalBlockRetryEntry): number {
+  const parsed = Date.parse(entry.firstFailedAt || entry.lastFailedAt || "");
+  return Number.isFinite(parsed) ? parsed : Number.MAX_SAFE_INTEGER;
+}
+
+function sortRetryEntriesByFreshness(
+  entries: RetrievalBlockRetryEntry[],
+): RetrievalBlockRetryEntry[] {
+  return [...entries].sort((a, b) => {
+    const laneDelta =
+      RETRY_LANE_PRIORITY[laneForRetryEntry(a)] -
+      RETRY_LANE_PRIORITY[laneForRetryEntry(b)];
+    if (laneDelta !== 0) return laneDelta;
+    return retryTimestamp(a) - retryTimestamp(b);
+  });
 }
 
 async function coalesceRetryEntries(
@@ -180,7 +223,7 @@ export function registerRetrievalBlockRetryFunction(
       KV.retrievalBlockRetry,
     );
     const coalescedEntries = await coalesceRetryEntries(kv, listedEntries);
-    const entries = coalescedEntries.entries;
+    const entries = sortRetryEntriesByFreshness(coalescedEntries.entries);
     const nowMs = Date.now();
     let retried = 0;
     let removed = coalescedEntries.diagnosticsRemoved;

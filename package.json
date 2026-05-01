@@ -23,6 +23,7 @@
     "ops:latency": "node scripts/probe-runtime-latency.mjs",
     "repair:retrieval-vectors": "node scripts/repair-retrieval-vectors.mjs",
     "test": "vitest run --exclude test/integration.test.ts",
+    "eval:codex-live-retrieval": "tsx src/eval/run-codex-live-retrieval.ts",
     "eval:retrieval": "tsx src/eval/run-retrieval-quality.ts",
     "eval:retrieval-quality": "tsx src/eval/run-retrieval-quality.ts",
     "test:watch": "vitest --exclude test/integration.test.ts",

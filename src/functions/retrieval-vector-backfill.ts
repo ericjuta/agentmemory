@@ -24,6 +24,10 @@ interface RetrievalVectorBackfillCursor {
 }
 
 interface RetrievalVectorBackfillPayload {
+  project?: unknown;
+  cwd?: unknown;
+  sessionId?: unknown;
+  branch?: unknown;
   batchSize?: unknown;
   candidateScanLimit?: unknown;
   timeBudgetMs?: unknown;
@@ -36,6 +40,12 @@ interface RetrievalVectorBackfillPayload {
 
 interface ScopeEntry {
   ids?: unknown;
+}
+
+interface CandidateScope {
+  project?: string;
+  sessionId?: string;
+  branch?: string;
 }
 
 function errorMessage(error: unknown): string {
@@ -76,8 +86,40 @@ function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.filter((value) => value.length > 0))];
 }
 
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
 function blockTime(block: RetrievalBlock): number {
   return new Date(block.updatedAt || block.eventAt || block.createdAt).getTime();
+}
+
+function lanePriority(block: RetrievalBlock): number {
+  if (block.freshnessLane === "hot") return 0;
+  if (block.freshnessLane === "warm") return 1;
+  return 2;
+}
+
+function scopeKey(kind: "global" | "project" | "session" | "branch", ...parts: string[]): string {
+  if (kind === "global") return "scope:global";
+  return `scope:${kind}:${parts.map((part) => encodeURIComponent(part)).join(":")}`;
+}
+
+function candidateScopeKeys(scope: CandidateScope): string[] {
+  const keys: string[] = [];
+  if (scope.sessionId) keys.push(scopeKey("session", scope.sessionId));
+  if (scope.project && scope.branch) {
+    keys.push(scopeKey("branch", scope.project, scope.branch));
+  }
+  if (scope.project && scope.project !== "global") {
+    keys.push(scopeKey("project", scope.project));
+  }
+  return uniqueStrings(keys);
+}
+
+function cursorKey(scope: CandidateScope): string {
+  if (!scope.project && !scope.sessionId && !scope.branch) return CURSOR_KEY;
+  return `${CURSOR_KEY}:${Buffer.from(JSON.stringify(scope)).toString("base64url")}`;
 }
 
 function rotateAfterCursor(ids: string[], cursor?: string): string[] {
@@ -99,15 +141,64 @@ function countPresentVectors(
   return present;
 }
 
-async function loadCandidateIds(kv: StateKV): Promise<{
+async function loadScopedCandidateIds(
+  kv: StateKV,
+  scope: CandidateScope,
+): Promise<{
+  ids: string[];
+  source: "active-scope-index" | "active-scope-index-unavailable";
+  error?: string;
+}> {
+  const keys = candidateScopeKeys(scope);
+  if (keys.length === 0) return { ids: [], source: "active-scope-index" };
+  const entries = await Promise.all(
+    keys.map(async (key) => {
+      try {
+        const entry =
+          (await kv.get<ScopeEntry>(KV.retrievalBlockScopeIndex, key).catch(() => null)) ??
+          (await kv.get<ScopeEntry>(KV.retrievalBlockIndex, key).catch(() => null));
+        return { key, entry };
+      } catch (error) {
+        return { key, error: errorMessage(error) };
+      }
+    }),
+  );
+  const failed = entries.find((entry) => "error" in entry);
+  if (failed && "error" in failed) {
+    return {
+      ids: [],
+      source: "active-scope-index-unavailable",
+      error: failed.error,
+    };
+  }
+  return {
+    ids: uniqueStrings(
+      entries.flatMap((entry) =>
+        Array.isArray(entry.entry?.ids)
+          ? entry.entry.ids.filter((id): id is string => typeof id === "string")
+          : [],
+      ),
+    ),
+    source: "active-scope-index",
+  };
+}
+
+async function loadCandidateIds(kv: StateKV, scope: CandidateScope): Promise<{
   ids: string[];
   source:
+    | "active-scope-index"
+    | "active-scope-index-unavailable"
     | "retrieval-bm25-index"
     | "scope-index"
     | "retrieval-block-scan"
     | "scope-index-unavailable";
   error?: string;
 }> {
+  if (scope.project || scope.sessionId) {
+    const scoped = await loadScopedCandidateIds(kv, scope);
+    if (scoped.ids.length > 0 || scoped.error) return scoped;
+  }
+
   const indexedIds = uniqueStrings(getRetrievalSearchIndex().documentIds()).sort();
   if (indexedIds.length > 0) {
     return { ids: indexedIds, source: "retrieval-bm25-index" };
@@ -185,10 +276,14 @@ async function selectMissingVectorBlocks(
         missing.push(block);
       }
     }
-    if (missing.length >= limit || inspected >= maxInspect) break;
+    if (inspected >= maxInspect) break;
   }
 
-  missing.sort((a, b) => blockTime(a) - blockTime(b));
+  missing.sort((a, b) => {
+    const laneDelta = lanePriority(a) - lanePriority(b);
+    if (laneDelta !== 0) return laneDelta;
+    return blockTime(b) - blockTime(a);
+  });
   return {
     blocks: missing.slice(0, limit),
     inspected,
@@ -256,6 +351,12 @@ export function registerRetrievalVectorBackfillFunction(
     );
     const scheduleSave = booleanValue(data.scheduleSave, false);
     const dryRun = booleanValue(data.dryRun, false);
+    const scope = {
+      project: stringValue(data.project) || stringValue(data.cwd),
+      sessionId: stringValue(data.sessionId),
+      branch: stringValue(data.branch),
+    };
+    const progressKey = cursorKey(scope);
 
     if (!runtime.embeddingProvider || !runtime.vectorIndex) {
       return {
@@ -281,12 +382,12 @@ export function registerRetrievalVectorBackfillFunction(
     }
 
     if (data.resetCursor === true) {
-      await kv.delete(KV.config, CURSOR_KEY).catch(() => {});
+      await kv.delete(KV.config, progressKey).catch(() => {});
     }
     const cursor = await kv
-      .get<RetrievalVectorBackfillCursor>(KV.config, CURSOR_KEY)
+      .get<RetrievalVectorBackfillCursor>(KV.config, progressKey)
       .catch(() => null);
-    const { ids, source, error } = await loadCandidateIds(kv);
+    const { ids, source, error } = await loadCandidateIds(kv, scope);
     if (error) {
       return {
         success: true,
@@ -351,7 +452,7 @@ export function registerRetrievalVectorBackfillFunction(
           updatedAt: now,
         };
     if (!dryRun) {
-      await kv.set(KV.config, CURSOR_KEY, nextCursor).catch(() => nextCursor);
+      await kv.set(KV.config, progressKey, nextCursor).catch(() => nextCursor);
     }
 
     const presentAfter = countPresentVectors(ids, runtime.vectorIndex);
@@ -379,6 +480,8 @@ export function registerRetrievalVectorBackfillFunction(
         eligibleCount > 0 ? presentAfter / eligibleCount >= coverageTarget : true,
       completedPass: selected.completedPass,
       cursor: nextCursor,
+      cursorKey: progressKey,
+      scope,
       elapsedMs: Date.now() - startedAt,
     };
   });

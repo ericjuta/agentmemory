@@ -111,7 +111,7 @@ describe("mem::retrieval-vector-backfill", () => {
     expect(provider.embed).toHaveBeenCalledTimes(1);
     expect(vectorIndex.size).toBe(2);
     expect(scheduleSave).toHaveBeenCalledTimes(1);
-    expect(result.cursor.lastBlockId).toBeDefined();
+    expect(result.cursor).toMatchObject({ updatedAt: expect.any(String) });
     expect(await kv.get(KV.config, "retrieval-vector-backfill-cursor")).toMatchObject({
       updatedAt: expect.any(String),
     });
@@ -360,5 +360,63 @@ describe("mem::retrieval-vector-backfill", () => {
       complete: false,
     });
     expect(provider.embed).not.toHaveBeenCalled();
+  });
+
+  it("prefers scoped hot and warm blocks before global cold backfill", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    const vectorIndex = new VectorIndex();
+    const provider: EmbeddingProvider = {
+      name: "test-embeddings",
+      dimensions: 3,
+      embed: vi.fn(async () => new Float32Array([0.1, 0.2, 0.3])),
+      embedBatch: vi.fn(async () => []),
+    };
+    configureRetrievalBlockIndexingRuntime({
+      embeddingProvider: provider,
+      vectorIndex,
+      scheduleSave: vi.fn(),
+    });
+    const coldGlobal: RetrievalBlock = {
+      ...makeBlock("rblk-cold-global", "2026-04-24T12:03:00.000Z"),
+      project: "global",
+      scope: "global",
+      freshnessLane: "cold",
+    };
+    const warmProject = makeBlock("rblk-warm-project", "2026-04-24T12:02:00.000Z");
+    const hotProject: RetrievalBlock = {
+      ...makeBlock("rblk-hot-project", "2026-04-24T12:01:00.000Z"),
+      sourceType: "turn_capsule",
+      freshnessLane: "hot",
+      sessionId: "session-hot",
+      scope: "session",
+    };
+    await storeBlocks(kv, [coldGlobal, warmProject, hotProject]);
+    registerRetrievalVectorBackfillFunction(sdk as never, kv as never);
+
+    const result = (await sdk.trigger("mem::retrieval-vector-backfill", {
+      project: "/project",
+      batchSize: 1,
+      candidateScanLimit: 10,
+      scheduleSave: true,
+    })) as {
+      source: string;
+      attempted: number;
+      backfilled: number;
+      cursorKey: string;
+    };
+
+    expect(result).toMatchObject({
+      source: "active-scope-index",
+      attempted: 1,
+      backfilled: 1,
+    });
+    expect(vectorIndex.has(hotProject.id)).toBe(true);
+    expect(vectorIndex.has(warmProject.id)).toBe(false);
+    expect(vectorIndex.has(coldGlobal.id)).toBe(false);
+    expect(result.cursorKey).toContain("retrieval-vector-backfill-cursor:");
+    expect(await kv.get(KV.config, result.cursorKey)).toMatchObject({
+      updatedAt: expect.any(String),
+    });
   });
 });

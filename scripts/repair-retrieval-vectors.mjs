@@ -307,6 +307,7 @@ async function backfill(config, resetCursor) {
     method: "POST",
     timeoutMs: Math.max(30000, config.timeBudgetMs + 10000),
     body: JSON.stringify({
+      project: config.project,
       batchSize: config.batchSize,
       candidateScanLimit: config.scanLimit,
       timeBudgetMs: config.timeBudgetMs,
