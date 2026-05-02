@@ -2,16 +2,38 @@ import type { EmbeddingProvider } from "../../types.js";
 import { getEnvVar } from "../../config.js";
 
 const BATCH_LIMIT = 100;
-const API_BASE = "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:batchEmbedContent";
+const API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
+const DEFAULT_MODEL = "text-embedding-004";
+
+function resolveModel(rawModel: string | undefined): string {
+  const configured = rawModel?.trim() || DEFAULT_MODEL;
+  return configured.startsWith("models/") ? configured : `models/${configured}`;
+}
+
+function resolveDimensions(rawDimensions: string | undefined): number {
+  if (rawDimensions === undefined) return 768;
+  const parsed = parseInt(rawDimensions, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(
+      `GEMINI_EMBEDDING_DIMENSIONS must be a positive integer, got: ${rawDimensions}`,
+    );
+  }
+  return parsed;
+}
 
 export class GeminiEmbeddingProvider implements EmbeddingProvider {
   readonly name = "gemini";
-  readonly dimensions = 768;
+  readonly dimensions: number;
+  private model: string;
   private apiKey: string;
 
   constructor(apiKey?: string) {
     this.apiKey = apiKey || getEnvVar("GEMINI_API_KEY") || "";
     if (!this.apiKey) throw new Error("GEMINI_API_KEY is required");
+    this.model = resolveModel(getEnvVar("GEMINI_EMBEDDING_MODEL"));
+    this.dimensions = resolveDimensions(
+      getEnvVar("GEMINI_EMBEDDING_DIMENSIONS"),
+    );
   }
 
   async embed(text: string): Promise<Float32Array> {
@@ -24,16 +46,19 @@ export class GeminiEmbeddingProvider implements EmbeddingProvider {
 
     for (let i = 0; i < texts.length; i += BATCH_LIMIT) {
       const chunk = texts.slice(i, i + BATCH_LIMIT);
-      const response = await fetch(`${API_BASE}?key=${this.apiKey}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          requests: chunk.map((t) => ({
-            model: "models/text-embedding-004",
-            content: { parts: [{ text: t }] },
-          })),
-        }),
-      });
+      const response = await fetch(
+        `${API_BASE}/${this.model}:batchEmbedContent?key=${this.apiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            requests: chunk.map((t) => ({
+              model: this.model,
+              content: { parts: [{ text: t }] },
+            })),
+          }),
+        },
+      );
 
       if (!response.ok) {
         const err = await response.text();

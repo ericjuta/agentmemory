@@ -149,3 +149,68 @@ describe("OpenAIEmbeddingProvider", () => {
     );
   });
 });
+
+describe("GeminiEmbeddingProvider", () => {
+  const originalEnv = { ...process.env };
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+    delete process.env["GEMINI_API_KEY"];
+    delete process.env["GEMINI_EMBEDDING_MODEL"];
+    delete process.env["GEMINI_EMBEDDING_DIMENSIONS"];
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+
+  it("uses GEMINI_EMBEDDING_MODEL in Gemini batchEmbedContent calls", async () => {
+    process.env["GEMINI_EMBEDDING_MODEL"] = "gemini-embedding-2-preview";
+    process.env["GEMINI_EMBEDDING_DIMENSIONS"] = "3072";
+    const provider = new GeminiEmbeddingProvider("test-key");
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ embeddings: [{ values: [0.1, 0.2] }] }), {
+        status: 200,
+      }),
+    );
+
+    await provider.embed("hello world");
+
+    const [url, options] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(options.body as string);
+
+    expect(url).toBe(
+      "https://generativelanguage.googleapis.com/v1beta/models/models/gemini-embedding-2-preview:batchEmbedContent?key=test-key",
+    );
+    expect(body.requests[0].model).toBe("models/gemini-embedding-2-preview");
+    expect(provider.dimensions).toBe(3072);
+
+    fetchSpy.mockRestore();
+  });
+
+  it("accepts GEMINI_EMBEDDING_MODEL already prefixed with models/", async () => {
+    process.env["GEMINI_EMBEDDING_MODEL"] = "models/gemini-embedding-2-preview";
+    const provider = new GeminiEmbeddingProvider("test-key");
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ embeddings: [{ values: [0.1, 0.2] }] }), {
+        status: 200,
+      }),
+    );
+
+    await provider.embed("hello world");
+
+    const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.requests[0].model).toBe("models/gemini-embedding-2-preview");
+
+    fetchSpy.mockRestore();
+  });
+
+  it("throws when GEMINI_EMBEDDING_DIMENSIONS is invalid", () => {
+    process.env["GEMINI_EMBEDDING_DIMENSIONS"] = "bad";
+    expect(() => new GeminiEmbeddingProvider("test-key")).toThrow(
+      /GEMINI_EMBEDDING_DIMENSIONS must be a positive integer/, 
+    );
+  });
+});
