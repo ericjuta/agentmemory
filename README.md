@@ -292,8 +292,13 @@ Compatibility: this release targets stable `iii-sdk` `^0.11.0` and iii-engine v0
 ### Try it in 30 seconds
 
 ```bash
-# Terminal 1: start the server
+# Terminal 1: start the server (published package)
 npx @agentmemory/agentmemory
+
+# Or terminal 1 (local source): start with explicit env reload path
+npm install
+npm run build
+npm run agentmemory:reload
 
 # Terminal 2: seed sample data and see recall in action
 npx @agentmemory/agentmemory demo
@@ -401,6 +406,10 @@ Then add the MCP config for your agent:
 ```bash
 git clone https://github.com/rohitg00/agentmemory.git && cd agentmemory
 npm install && npm run build && npm start
+
+# Env-safe operational path used in this repo:
+npm run agentmemory:reload
+# (equivalent one-shot start remains: npm run start)
 ```
 
 This starts agentmemory with a local `iii-engine` if `iii` is already installed, or falls back to Docker Compose if Docker is available. REST, streams, and the viewer bind to `127.0.0.1` by default.
