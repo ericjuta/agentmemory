@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { GraphRetrieval } from "../src/functions/graph-retrieval.js";
+import { GraphRetrieval, invalidateGraphSnapshotCache } from "../src/functions/graph-retrieval.js";
 import type { GraphNode, GraphEdge } from "../src/types.js";
 
 function mockKV(
@@ -204,5 +204,24 @@ describe("GraphRetrieval", () => {
 
     expect(listSpy.mock.calls.filter(([scope]) => scope === "mem:graph:nodes")).toHaveLength(1);
     expect(listSpy.mock.calls.filter(([scope]) => scope === "mem:graph:edges")).toHaveLength(1);
+  });
+
+  it("refreshes cache after explicit invalidation", async () => {
+    const nodes = [makeNode("n1", "React", "library", ["obs_1"])];
+    const kv = mockKV(nodes, []);
+    const retrieval = new GraphRetrieval(kv as never);
+
+    const before = await retrieval.searchByEntities(["React"]);
+    expect(before).toHaveLength(1);
+
+    await kv.set("mem:graph:nodes", "n2", makeNode("n2", "Vue", "library", ["obs_2"]));
+    const stillCached = await retrieval.searchByEntities(["Vue"]);
+    expect(stillCached).toEqual([]);
+
+    invalidateGraphSnapshotCache(kv as never);
+
+    const after = await retrieval.searchByEntities(["Vue"]);
+    expect(after).toHaveLength(1);
+    expect(after[0].obsId).toBe("obs_2");
   });
 });

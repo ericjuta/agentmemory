@@ -3,6 +3,7 @@ import type { StateKV } from "../state/kv.js";
 import { KV, generateId } from "../state/schema.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
 import { recordAudit } from "./audit.js";
+import { invalidateGraphSnapshotCache } from "./graph-retrieval.js";
 import type {
   MeshPeer,
   Memory,
@@ -360,8 +361,18 @@ export function registerMeshFunction(
           });
         }
       }
-      accepted += await lwwMergeGraphNodes(kv, data.graphNodes);
-      accepted += await lwwMergeList(kv, KV.graphEdges, data.graphEdges, "mem:gedge", "createdAt");
+      const graphNodesAccepted = await lwwMergeGraphNodes(kv, data.graphNodes);
+      const graphEdgesAccepted = await lwwMergeList(
+        kv,
+        KV.graphEdges,
+        data.graphEdges,
+        "mem:gedge",
+        "createdAt",
+      );
+      accepted += graphNodesAccepted + graphEdgesAccepted;
+      if (graphNodesAccepted > 0 || graphEdgesAccepted > 0) {
+        invalidateGraphSnapshotCache(kv);
+      }
       await recordAudit(kv, "mesh_sync", "mem::mesh-receive", [], {
         action: "mesh.receive",
         accepted,
@@ -456,6 +467,7 @@ async function applySyncData(
   scopes: string[],
 ): Promise<number> {
   let applied = 0;
+  let graphDataUpdated = false;
 
   if (scopes.includes("memories")) {
     applied += await lwwMergeList(kv, KV.memories, data.memories, "mem:memory", "updatedAt");
@@ -485,10 +497,23 @@ async function applySyncData(
     }
   }
   if (scopes.includes("graph:nodes")) {
-    applied += await lwwMergeGraphNodes(kv, data.graphNodes);
+    const graphNodesAccepted = await lwwMergeGraphNodes(kv, data.graphNodes);
+    applied += graphNodesAccepted;
+    graphDataUpdated ||= graphNodesAccepted > 0;
   }
   if (scopes.includes("graph:edges")) {
-    applied += await lwwMergeList(kv, KV.graphEdges, data.graphEdges, "mem:gedge", "createdAt");
+    const graphEdgesAccepted = await lwwMergeList(
+      kv,
+      KV.graphEdges,
+      data.graphEdges,
+      "mem:gedge",
+      "createdAt",
+    );
+    applied += graphEdgesAccepted;
+    graphDataUpdated ||= graphEdgesAccepted > 0;
+  }
+  if (graphDataUpdated) {
+    invalidateGraphSnapshotCache(kv);
   }
 
   return applied;

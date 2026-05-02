@@ -15,6 +15,7 @@ import type { StateKV } from "../state/kv.js";
 import { recordAudit } from "./audit.js";
 import { VERSION } from "../version.js";
 import { logger } from "../logger.js";
+import { invalidateGraphSnapshotCache } from "./graph-retrieval.js";
 
 const COMMIT_HASH_RE = /^[0-9a-f]{7,40}$/i;
 
@@ -192,8 +193,13 @@ export function registerSnapshotFunction(
           }
         }
         if (state.graphNodes) {
+          let graphUpdated = false;
           for (const node of state.graphNodes) {
             await kv.set(KV.graphNodes, node.id, node);
+            graphUpdated = true;
+          }
+          if (graphUpdated) {
+            invalidateGraphSnapshotCache(kv);
           }
         }
         if (state.observations) {

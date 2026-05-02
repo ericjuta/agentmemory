@@ -41,6 +41,7 @@ import { StateKV } from "../state/kv.js";
 import { VERSION } from "../version.js";
 import { recordAudit } from "./audit.js";
 import { logger } from "../logger.js";
+import { invalidateGraphSnapshotCache } from "./graph-retrieval.js";
 
 export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
   sdk.registerFunction("mem::export", 
@@ -311,6 +312,7 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
         summaries: 0,
         skipped: 0,
       };
+      let graphDataMutated = false;
 
       if (strategy === "replace") {
         const existing = await kv.list<Session>(KV.sessions);
@@ -396,9 +398,11 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
         }
         for (const n of await kv.list<{ id: string }>(KV.graphNodes).catch(() => [])) {
           await kv.delete(KV.graphNodes, n.id);
+          graphDataMutated = true;
         }
         for (const e of await kv.list<{ id: string }>(KV.graphEdges).catch(() => [])) {
           await kv.delete(KV.graphEdges, e.id);
+          graphDataMutated = true;
         }
         for (const b of await kv.list<Belief>(KV.beliefs).catch(() => [])) {
           await kv.delete(KV.beliefs, b.id);
@@ -485,6 +489,7 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
             if (existing) { stats.skipped++; continue; }
           }
           await kv.set(KV.graphNodes, node.id, node);
+          graphDataMutated = true;
         }
       }
       if (importData.graphEdges) {
@@ -494,6 +499,7 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
             if (existing) { stats.skipped++; continue; }
           }
           await kv.set(KV.graphEdges, edge.id, edge);
+          graphDataMutated = true;
         }
       }
       if (importData.beliefs) {
@@ -763,6 +769,10 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
           }
           await kv.set(KV.accessLog, log.memoryId, log);
         }
+      }
+
+      if (graphDataMutated) {
+        invalidateGraphSnapshotCache(kv);
       }
 
       logger.info("Import complete", { strategy, ...stats });

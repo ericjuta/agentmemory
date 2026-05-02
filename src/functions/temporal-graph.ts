@@ -10,6 +10,7 @@ import type {
 import { KV, generateId } from "../state/schema.js";
 import type { StateKV } from "../state/kv.js";
 import { logger } from "../logger.js";
+import { invalidateGraphSnapshotCache } from "./graph-retrieval.js";
 
 const TEMPORAL_EXTRACTION_SYSTEM = `You are a temporal knowledge extraction engine. Given observations, extract entities AND their temporal relationships with full context metadata.
 
@@ -185,6 +186,7 @@ export function registerTemporalGraphFunctions(
 
         const obsIds = data.observations.map((o) => o.id);
         const { nodes, edges } = parseTemporalGraphXml(response, obsIds);
+        let graphUpdated = false;
 
         const existingNodes = await kv.list<GraphNode>(KV.graphNodes);
         const existingEdges = await kv.list<GraphEdge>(KV.graphEdges);
@@ -218,9 +220,11 @@ export function registerTemporalGraphFunctions(
             await kv.set(KV.graphNodes, existing.id, merged);
             node.id = existing.id;
             idRemap.set(oldId, existing.id);
+            graphUpdated = true;
           } else {
             await kv.set(KV.graphNodes, node.id, node);
             existingNodes.push(node);
+            graphUpdated = true;
           }
         }
 
@@ -247,6 +251,7 @@ export function registerTemporalGraphFunctions(
               supersededBy: edge.id,
             };
             await kv.set(KV.graphEdges, existingEdge.id, updatedOld);
+            graphUpdated = true;
 
             await kv.set(KV.graphEdgeHistory, existingEdge.id, updatedOld);
 
@@ -255,12 +260,16 @@ export function registerTemporalGraphFunctions(
 
           await kv.set(KV.graphEdges, edge.id, edge);
           existingEdges.push(edge);
+          graphUpdated = true;
         }
 
         logger.info("Temporal graph extraction complete", {
           nodes: nodes.length,
           edges: edges.length,
         });
+        if (graphUpdated) {
+          invalidateGraphSnapshotCache(kv);
+        }
         return {
           success: true,
           nodesAdded: nodes.length,

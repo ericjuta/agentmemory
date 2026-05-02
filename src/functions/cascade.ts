@@ -3,6 +3,7 @@ import type { StateKV } from "../state/kv.js";
 import { KV } from "../state/schema.js";
 import type { Memory, GraphNode, GraphEdge } from "../types.js";
 import { recordAudit } from "./audit.js";
+import { invalidateGraphSnapshotCache } from "./graph-retrieval.js";
 
 export function registerCascadeFunction(sdk: ISdk, kv: StateKV): void {
   sdk.registerFunction("mem::cascade-update", 
@@ -56,6 +57,9 @@ export function registerCascadeFunction(sdk: ISdk, kv: StateKV): void {
             flaggedEdges++;
           }
         }
+      }
+      if (flaggedNodes > 0 || flaggedEdges > 0) {
+        invalidateGraphSnapshotCache(kv);
       }
 
       const supersededConcepts = new Set(

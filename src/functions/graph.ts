@@ -19,6 +19,7 @@ import { recordAudit } from "./audit.js";
 import { logger } from "../logger.js";
 import { Semaphore } from "../state/semaphore.js";
 import { getGraphExtractionPauseReason } from "../health/write-gate.js";
+import { invalidateGraphSnapshotCache } from "./graph-retrieval.js";
 
 const graphSemaphore = new Semaphore(1);
 const DEFAULT_GRAPH_CATCH_UP_BATCH_SIZE = 10;
@@ -90,6 +91,7 @@ async function graphCoveredObservationIds(kv: StateKV): Promise<Set<string>> {
  * Removes the obsId from sourceObservationIds; marks stale when empty.
  */
 export async function pruneGraphForObservation(kv: StateKV, obsId: string): Promise<void> {
+  let graphUpdated = false;
   const nodes = await kv.list<GraphNode>(KV.graphNodes);
   for (const node of nodes) {
     if (!node.sourceObservationIds?.includes(obsId)) continue;
@@ -97,9 +99,11 @@ export async function pruneGraphForObservation(kv: StateKV, obsId: string): Prom
     if (filtered.length === 0) {
       node.stale = true;
       await kv.set(KV.graphNodes, node.id, node);
+      graphUpdated = true;
     } else {
       node.sourceObservationIds = filtered;
       await kv.set(KV.graphNodes, node.id, node);
+      graphUpdated = true;
     }
   }
 
@@ -110,10 +114,16 @@ export async function pruneGraphForObservation(kv: StateKV, obsId: string): Prom
     if (filtered.length === 0) {
       edge.stale = true;
       await kv.set(KV.graphEdges, edge.id, edge);
+      graphUpdated = true;
     } else {
       edge.sourceObservationIds = filtered;
       await kv.set(KV.graphEdges, edge.id, edge);
+      graphUpdated = true;
     }
+  }
+
+  if (graphUpdated) {
+    invalidateGraphSnapshotCache(kv);
   }
 }
 
@@ -222,6 +232,7 @@ export function registerGraphFunction(
 
         const obsIds = data.observations.map((o) => o.id);
         const { nodes, edges } = parseGraphXml(response, obsIds);
+        let graphUpdated = false;
 
         const existingNodes = await kv.list<GraphNode>(KV.graphNodes);
         const existingEdges = await kv.list<GraphEdge>(KV.graphEdges);
@@ -241,11 +252,13 @@ export function registerGraphFunction(
               properties: { ...existing.properties, ...node.properties },
             };
             await kv.set(KV.graphNodes, existing.id, merged);
+            graphUpdated = true;
             const idx = existingNodes.findIndex((n) => n.id === existing.id);
             if (idx !== -1) existingNodes[idx] = merged;
           } else {
             nodeIdByParsedId.set(node.id, node.id);
             await kv.set(KV.graphNodes, node.id, node);
+            graphUpdated = true;
             existingNodes.push(node);
           }
         }
@@ -262,9 +275,11 @@ export function registerGraphFunction(
               ...new Set([...existingEdge.sourceObservationIds, ...obsIds]),
             ];
             await kv.set(KV.graphEdges, existingEdge.id, existingEdge);
+            graphUpdated = true;
           } else {
             const resolvedEdge = { ...edge, sourceNodeId, targetNodeId };
             await kv.set(KV.graphEdges, resolvedEdge.id, resolvedEdge);
+            graphUpdated = true;
             existingEdges.push(resolvedEdge);
           }
         }
@@ -278,6 +293,9 @@ export function registerGraphFunction(
           nodes: nodes.length,
           edges: edges.length,
         });
+        if (graphUpdated) {
+          invalidateGraphSnapshotCache(kv);
+        }
         return {
           success: true,
           nodesAdded: nodes.length,
