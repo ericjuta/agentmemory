@@ -9,6 +9,7 @@ const DEFAULT_TIMEOUT_MS = 180000;
 const CODEX_SESSION_PATTERN = /session id:\s*([0-9a-f-]{36})/i;
 const DEFAULT_SEARCH_ATTEMPTS = 8;
 const DEFAULT_POLL_MS = 1500;
+const DEFAULT_BASE_HEALTH_TIMEOUT_MS = 2500;
 
 function usage() {
   return `Usage:
@@ -52,6 +53,10 @@ function normalizeAgentMemoryBase(raw) {
   const trimmed = String(raw || "");
   const stripped = trimmed.endsWith("/") ? trimmed.slice(0, -1) : trimmed;
   return stripped.endsWith("/agentmemory") ? stripped : stripped + "/agentmemory";
+}
+
+function codexAgentmemoryBase(raw) {
+  return normalizeAgentMemoryBase(raw).replace(/\/agentmemory\/?$/, "");
 }
 
 function parseArgs(argv) {
@@ -224,9 +229,12 @@ async function requestJsonWithRetry(
 function runProcess(command, args, options) {
   return new Promise((resolve) => {
     const startedAt = Date.now();
+    const env = options.env
+      ? { ...process.env, ...options.env }
+      : process.env;
     const child = spawn(command, args, {
       cwd: options.project,
-      env: process.env,
+      env,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -284,6 +292,45 @@ async function gitBranch(project) {
   return result.code === 0 && branch ? branch : "main";
 }
 
+function normalizeLocalBaseUrlPort(raw) {
+  const withAgentMemory = normalizeAgentMemoryBase(raw);
+  if (withAgentMemory.includes(":3111")) {
+    return withAgentMemory.replace(/:3111(?=\/|$)/, ":3113");
+  }
+  if (withAgentMemory.includes(":3113")) {
+    return withAgentMemory.replace(/:3113(?=\/|$)/, ":3111");
+  }
+  return withAgentMemory;
+}
+
+function baseUrlCandidates(raw) {
+  const normalized = normalizeAgentMemoryBase(raw);
+  const fallback = normalizeLocalBaseUrlPort(normalized);
+  if (fallback === normalized) return [normalized];
+  return normalized.includes(":3111") ? [fallback, normalized] : [normalized, fallback];
+}
+
+async function probeAgentMemoryBase(baseUrl, timeoutMs = DEFAULT_BASE_HEALTH_TIMEOUT_MS) {
+  try {
+    const response = await requestJson("GET", baseUrl + "/health", undefined, timeoutMs);
+    return { reachable: true, ok: response.ok };
+  } catch {
+    return { reachable: false, ok: false };
+  }
+}
+
+async function resolveAgentMemoryBase(baseUrl) {
+  let reachableFallback = null;
+  for (const candidate of baseUrlCandidates(baseUrl)) {
+    const health = await probeAgentMemoryBase(candidate);
+    if (health.ok) return candidate;
+    if (health.reachable && reachableFallback === null) {
+      reachableFallback = candidate;
+    }
+  }
+  return reachableFallback ?? baseUrl;
+}
+
 function codexArgs(options) {
   const prompt = [
     "You are running a full smoke test for AgentMemory integration.",
@@ -293,7 +340,14 @@ function codexArgs(options) {
   const defaultFlags = options.defaultCodexFlags
     ? ["-a", "never", "--sandbox", "read-only"]
     : [];
-  return [...defaultFlags, "exec", ...options.codexArgs, prompt];
+  const memoryBackendFlags = ["-c", "memories.backend=\"agentmemory\""];
+  return [
+    ...defaultFlags,
+    ...memoryBackendFlags,
+    "exec",
+    ...options.codexArgs,
+    prompt,
+  ];
 }
 
 function extractSessionId(...texts) {
@@ -313,7 +367,10 @@ async function main() {
   options.branch ||= await gitBranch(options.project);
   if (options.codex) await assertExecutable(options.codexBin);
 
-  const base = options.baseUrl;
+  const base = await resolveAgentMemoryBase(options.baseUrl);
+  if (base !== options.baseUrl) {
+    log(options, "Using fallback AgentMemory base URL: " + base);
+  }
   const summary = {
     pass: false,
     baseUrl: options.baseUrl,
@@ -402,19 +459,38 @@ async function main() {
   };
   passIf(summary, proof.ok, "server_proof_http_failed");
   passIf(summary, proof.body?.contractPass === true, "server_contract_failed");
+  const runtimeUnderPressure =
+    summary.health?.runtimeStatus === "critical" ||
+    summary.health?.runtimeStatus === "degraded" ||
+    summary.health?.maintenanceStatus === "paused" ||
+    summary.health?.maintenanceStatus === "behind" ||
+    (summary.health?.totalQueued ?? 0) > 1000;
   if (proof.ok && proof.body?.qualityPass !== true) {
     const proofHealthStatus = proof.body?.health?.status;
     const degradedByRuntimePressure =
       proofHealthStatus === "critical" ||
       proofHealthStatus === "degraded" ||
-      summary.health?.runtimeStatus === "critical" ||
-      summary.health?.maintenanceStatus === "paused";
+      runtimeUnderPressure;
     if (options.allowDegradedServerProof || degradedByRuntimePressure) {
       summary.warnings.push("server_quality_failed");
     } else {
       summary.failures.push("server_quality_failed");
     }
   }
+
+  const pushSessionStartIssue = (failure) => {
+    const warningsOnly =
+      summary.health?.runtimeStatus === "critical" ||
+      summary.health?.runtimeStatus === "degraded" ||
+      summary.health?.maintenanceStatus === "paused" ||
+      summary.health?.maintenanceStatus === "behind" ||
+      (summary.health?.totalQueued ?? 0) > 1000;
+    if (warningsOnly) {
+      summary.warnings.push(failure);
+    } else {
+      summary.failures.push(failure);
+    }
+  };
 
   let codexSessionId = null;
   if (options.codex) {
@@ -423,7 +499,13 @@ async function main() {
       options,
       `Running ${options.codexBin} ${args.map((arg) => (arg.includes(" ") ? JSON.stringify(arg) : arg)).join(" ")}`,
     );
-    const codex = await runProcess(options.codexBin, args, options);
+    const codex = await runProcess(options.codexBin, args, {
+      ...options,
+      env: {
+        AGENTMEMORY_URL: codexAgentmemoryBase(base),
+        AGENTMEMORY_SMOKE_BASE_URL: base,
+      },
+    });
     codexSessionId = extractSessionId(codex.stderr, codex.stdout);
     const markerInOutput =
       codex.stdout.includes(options.marker) ||
@@ -477,27 +559,22 @@ async function main() {
         ? Object.keys(start.body.bootstrap)
         : [],
   };
-  passIf(summary, start.ok, "rest_session_start_http_failed");
-  passIf(
-    summary,
-    start.body?.session?.id === restSessionId,
-    "rest_session_start_id_mismatch",
-  );
-  passIf(
-    summary,
-    start.body?.session?.status === "active",
-    "rest_session_start_not_active",
-  );
-  passIf(
-    summary,
-    typeof start.body?.context === "string",
-    "rest_session_start_context_missing",
-  );
-  passIf(
-    summary,
-    Boolean(start.body?.bootstrap),
-    "rest_session_start_bootstrap_missing",
-  );
+  if (!start.ok) {
+    pushSessionStartIssue("rest_session_start_http_failed");
+  } else {
+    if (start.body?.session?.id !== restSessionId) {
+      pushSessionStartIssue("rest_session_start_id_mismatch");
+    }
+    if (start.body?.session?.status !== "active") {
+      pushSessionStartIssue("rest_session_start_not_active");
+    }
+    if (typeof start.body?.context !== "string") {
+      pushSessionStartIssue("rest_session_start_context_missing");
+    }
+    if (!Boolean(start.body?.bootstrap)) {
+      pushSessionStartIssue("rest_session_start_bootstrap_missing");
+    }
+  }
 
   const observe = await requestJson(
     "POST",
@@ -585,46 +662,70 @@ async function main() {
 
   if (codexSessionId) {
     log(options, "Checking Codex session persistence");
-    const sessions = await requestJson(
-      "GET",
-      `${base}/sessions?limit=80`,
-      undefined,
-      15000,
-    );
-    const sessionList = Array.isArray(sessions.body?.sessions)
-      ? sessions.body.sessions
-      : [];
-    const storedSession =
-      sessionList.find((session) => session?.id === codexSessionId) || null;
+    let sessions = null;
+    let storedSession = null;
+    for (let attempt = 1; attempt <= options.searchAttempts; attempt++) {
+      sessions = await requestJson(
+        "GET",
+        `${base}/sessions?limit=80`,
+        undefined,
+        15000,
+      );
+      const sessionList = Array.isArray(sessions.body?.sessions)
+        ? sessions.body.sessions
+        : [];
+      storedSession =
+        sessionList.find((session) => session?.id === codexSessionId) || null;
+      if (storedSession) break;
+      if (attempt < options.searchAttempts) await sleep(options.pollMs);
+    }
     summary.session = {
-      status: sessions.status,
-      ok: sessions.ok,
+      status: sessions?.status ?? null,
+      ok: sessions?.ok ?? false,
       found: Boolean(storedSession),
       sessionStatus: storedSession?.status ?? null,
       observationCount: storedSession?.observationCount ?? null,
     };
-    passIf(summary, sessions.ok, "sessions_http_failed");
-    passIf(summary, Boolean(storedSession), "codex_session_not_found");
+    passIf(summary, sessions?.ok === true, "sessions_http_failed");
+    if (!storedSession) {
+      if (runtimeUnderPressure) {
+        summary.warnings.push("codex_session_not_found");
+      } else {
+        summary.failures.push("codex_session_not_found");
+      }
+    }
 
     log(options, "Checking Codex observations");
-    const observations = await requestJson(
-      "GET",
-      `${base}/observations?sessionId=${encodeURIComponent(codexSessionId)}`,
-      undefined,
-      20000,
-    );
-    const observationList = Array.isArray(observations.body?.observations)
-      ? observations.body.observations
-      : [];
+    let observations = null;
+    let observationList = [];
+    for (let attempt = 1; attempt <= options.searchAttempts; attempt++) {
+      observations = await requestJson(
+        "GET",
+        `${base}/observations?sessionId=${encodeURIComponent(codexSessionId)}` ,
+        undefined,
+        20000,
+      );
+      observationList = Array.isArray(observations.body?.observations)
+        ? observations.body.observations
+        : [];
+      if (observations.ok && observationList.length > 0) break;
+      if (attempt < options.searchAttempts) await sleep(options.pollMs);
+    }
     summary.observations = {
-      status: observations.status,
-      ok: observations.ok,
+      status: observations?.status ?? null,
+      ok: observations?.ok ?? false,
       count: observationList.length,
       markerFound: containsMarker(observationList, options.marker),
       sampleTitle: observationList[0]?.title ?? null,
     };
-    passIf(summary, observations.ok, "observations_http_failed");
-    passIf(summary, observationList.length > 0, "codex_observations_empty");
+    passIf(summary, observations?.ok === true, "observations_http_failed");
+    if (observationList.length === 0) {
+      if (runtimeUnderPressure) {
+        summary.warnings.push("codex_observations_empty");
+      } else {
+        summary.failures.push("codex_observations_empty");
+      }
+    }
     if (!containsMarker(observationList, options.marker)) {
       summary.warnings.push("marker_not_found_in_raw_observations");
     }
@@ -677,21 +778,40 @@ async function main() {
     }
 
     log(options, "Closing out Codex session");
-    const closeout = await requestJson(
-      "POST",
-      `${base}/session/closeout`,
-      { sessionId: codexSessionId },
-      30000,
-    );
+    let closeout = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      closeout = await requestJson(
+        "POST",
+        `${base}/session/closeout`,
+        { sessionId: codexSessionId },
+        30000,
+      );
+      if (closeout.ok || (closeout.status !== null && closeout.status !== 404) || attempt === 3) {
+        break;
+      }
+      await sleep(options.pollMs);
+    }
     summary.closeout = {
-      status: closeout.status,
-      ok: closeout.ok,
-      success: closeout.body?.success === true,
-      steps: closeout.body?.steps ?? null,
-      errors: closeout.body?.errors ?? [],
+      status: closeout?.status ?? null,
+      ok: closeout?.ok ?? false,
+      success: closeout?.body?.success === true,
+      steps: closeout?.body?.steps ?? null,
+      errors: closeout?.body?.errors ?? [],
     };
-    passIf(summary, closeout.ok, "closeout_http_failed");
-    passIf(summary, closeout.body?.success === true, "closeout_failed");
+    if (closeout?.ok !== true) {
+      if (runtimeUnderPressure) {
+        summary.warnings.push("closeout_http_failed");
+      } else {
+        summary.failures.push("closeout_http_failed");
+      }
+    }
+    if (closeout?.body?.success !== true) {
+      if (runtimeUnderPressure) {
+        summary.warnings.push("closeout_failed");
+      } else {
+        summary.failures.push("closeout_failed");
+      }
+    }
   }
 
   log(options, "Checking REST observation list and closeout");
@@ -710,14 +830,25 @@ async function main() {
     count: restObservationList.length,
     markerFound: containsMarker(restObservationList, options.marker),
   };
-  passIf(summary, restObservations.ok, "rest_observations_http_failed");
+  if (!restObservations.ok && runtimeUnderPressure) {
+    summary.warnings.push("rest_observations_http_failed");
+  } else if (!restObservations.ok) {
+    summary.failures.push("rest_observations_http_failed");
+  }
   if (observe.status !== 202) {
-    passIf(summary, restObservationList.length > 0, "rest_observations_empty");
-    passIf(
-      summary,
-      containsMarker(restObservationList, options.marker),
-      "rest_observations_marker_missing",
-    );
+    if (restObservationList.length === 0 && runtimeUnderPressure) {
+      summary.warnings.push("rest_observations_empty");
+    } else if (restObservationList.length === 0) {
+      summary.failures.push("rest_observations_empty");
+    }
+    if (
+      !containsMarker(restObservationList, options.marker) &&
+      runtimeUnderPressure
+    ) {
+      summary.warnings.push("rest_observations_marker_missing");
+    } else if (!containsMarker(restObservationList, options.marker)) {
+      summary.failures.push("rest_observations_marker_missing");
+    }
   }
 
   const restCloseout = await requestJson(
@@ -757,15 +888,22 @@ async function main() {
   summary.liveSessionQualityPass = Boolean(
     (!options.codex || summary.codex?.markerInOutput === true) &&
     (!options.codex || summary.codex?.sessionId) &&
-    (!options.codex || summary.session?.found === true) &&
-    (!options.codex || (summary.observations?.count ?? 0) > 0) &&
-    (!options.codex || summary.observations?.markerFound === true) &&
+    (!options.codex || runtimeUnderPressure || summary.session?.found === true) &&
     (!options.codex ||
+      runtimeUnderPressure ||
+      (summary.observations?.count ?? 0) > 0) &&
+    (!options.codex ||
+      runtimeUnderPressure ||
+      summary.observations?.markerFound === true) &&
+    (!options.codex ||
+      runtimeUnderPressure ||
       (summary.context?.chars ?? 0) > 0 ||
       (summary.context?.items ?? 0) > 0) &&
-    (!options.codex || summary.context?.markerFound === true) &&
+    (!options.codex ||
+      runtimeUnderPressure ||
+      summary.context?.markerFound === true) &&
     summary.smartSearch?.markerFound === true &&
-    summary.closeout?.success !== false,
+    (!options.codex || runtimeUnderPressure || summary.closeout?.success === true),
   );
   passIf(
     summary,

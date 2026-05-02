@@ -8,6 +8,7 @@ const DEFAULT_BASE_URL = "http://127.0.0.1:3111";
 const DEFAULT_TIMEOUT_MS = 180000;
 const DEFAULT_POLL_MS = 2500;
 const DEFAULT_SEARCH_ATTEMPTS = 12;
+const DEFAULT_BASE_HEALTH_TIMEOUT_MS = 2500;
 
 function usage() {
   return `Usage:
@@ -49,6 +50,10 @@ function normalizeAgentMemoryBase(raw) {
   const trimmed = String(raw || "");
   const stripped = trimmed.endsWith("/") ? trimmed.slice(0, -1) : trimmed;
   return stripped.endsWith("/agentmemory") ? stripped : stripped + "/agentmemory";
+}
+
+function codexAgentmemoryBase(raw) {
+  return normalizeAgentMemoryBase(raw).replace(/\/agentmemory\/?$/, "");
 }
 
 function readArgValue(args, index, name) {
@@ -152,6 +157,44 @@ function parseArgs(argv) {
   return options;
 }
 
+function normalizeLocalBaseUrlPort(raw) {
+  const withAgentMemory = normalizeAgentMemoryBase(raw);
+  if (withAgentMemory.includes(":3111")) {
+    return withAgentMemory.replace(/:3111(?=\/|$)/, ":3113");
+  }
+  if (withAgentMemory.includes(":3113")) {
+    return withAgentMemory.replace(/:3113(?=\/|$)/, ":3111");
+  }
+  return withAgentMemory;
+}
+
+function baseUrlCandidates(raw) {
+  const normalized = normalizeAgentMemoryBase(raw);
+  const fallback = normalizeLocalBaseUrlPort(normalized);
+  return fallback === normalized ? [normalized] : [normalized, fallback];
+}
+
+async function probeAgentMemoryBase(baseUrl, timeoutMs = DEFAULT_BASE_HEALTH_TIMEOUT_MS) {
+  try {
+    const response = await requestJson("GET", `${baseUrl}/health`, undefined, timeoutMs);
+    return { reachable: true, ok: response.ok };
+  } catch {
+    return { reachable: false, ok: false };
+  }
+}
+
+async function resolveAgentMemoryBase(baseUrl) {
+  let reachableFallback = null;
+  for (const candidate of baseUrlCandidates(baseUrl)) {
+    const health = await probeAgentMemoryBase(candidate);
+    if (health.ok) return candidate;
+    if (health.reachable && reachableFallback === null) {
+      reachableFallback = candidate;
+    }
+  }
+  return reachableFallback ?? baseUrl;
+}
+
 function log(options, message) {
   if (!options.json) console.log(message);
 }
@@ -182,9 +225,12 @@ async function requestJson(method, url, body, timeoutMs = 10000) {
 function runProcess(command, args, options) {
   return new Promise((resolve) => {
     const startedAt = Date.now();
+    const env = options.env
+      ? { ...process.env, ...options.env }
+      : process.env;
     const child = spawn(command, args, {
       cwd: options.project,
-      env: process.env,
+      env,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -237,15 +283,16 @@ function codexCommand(options) {
   const defaultFlags = options.defaultCodexFlags
     ? ["-a", "never", "--sandbox", "read-only"]
     : [];
+  const memoryBackendFlags = ["-c", "memories.backend=\"agentmemory\""];
 
   if (options.mode === "exec") {
     return {
-      args: [...defaultFlags, "exec", ...options.codexArgs, prompt],
+      args: [...defaultFlags, ...memoryBackendFlags, "exec", ...options.codexArgs, prompt],
       prompt,
     };
   }
   return {
-    args: [...defaultFlags, ...options.codexArgs, prompt],
+    args: [...defaultFlags, ...memoryBackendFlags, ...options.codexArgs, prompt],
     prompt,
   };
 }
@@ -260,7 +307,10 @@ async function main() {
 
   await assertExecutable(options.codexBin);
 
-  const agentmemoryBase = options.baseUrl;
+  const agentmemoryBase = await resolveAgentMemoryBase(options.baseUrl);
+  if (agentmemoryBase !== options.baseUrl) {
+    log(options, `Using fallback AgentMemory base URL: ${agentmemoryBase}`);
+  }
   const summary = {
     pass: false,
     mode: options.mode,
@@ -289,7 +339,13 @@ async function main() {
 
   const command = codexCommand(options);
   log(options, `Running ${options.codexBin} ${command.args.map((arg) => (arg.includes(" ") ? JSON.stringify(arg) : arg)).join(" ")}`);
-  const codex = await runProcess(options.codexBin, command.args, options);
+  const codex = await runProcess(options.codexBin, command.args, {
+    ...options,
+    env: {
+      AGENTMEMORY_URL: codexAgentmemoryBase(agentmemoryBase),
+      AGENTMEMORY_SMOKE_BASE_URL: agentmemoryBase,
+    },
+  });
   summary.codex = {
     code: codex.code,
     signal: codex.signal,

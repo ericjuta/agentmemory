@@ -568,23 +568,51 @@ export function registerDiagnosticsFunction(sdk: ISdk, kv: StateKV): void {
   );
 
   sdk.registerFunction("mem::heal", 
-    async (data: { categories?: string[]; dryRun?: boolean }) => {
+    async (data: {
+      categories?: string[];
+      dryRun?: boolean;
+      maxFixes?: number;
+      timeBudgetMs?: number;
+    }) => {
       const dryRun = data.dryRun ?? false;
       const categories = data.categories && data.categories.length > 0
         ? data.categories.filter((c) => ALL_CATEGORIES.includes(c))
         : ALL_CATEGORIES;
+      const maxFixes = Number.isInteger(data.maxFixes) && data.maxFixes > 0
+        ? data.maxFixes
+        : null;
+      const timeBudgetMs = Number.isInteger(data.timeBudgetMs) &&
+        data.timeBudgetMs > 0 ? data.timeBudgetMs : null;
 
       let fixed = 0;
       let skipped = 0;
       const details: string[] = [];
       const now = Date.now();
+      const startAt = Date.now();
+      let stopReason: string | null = null;
 
-      if (categories.includes("actions")) {
+      const shouldStop = () => {
+        if (stopReason) return true;
+        if (maxFixes !== null && fixed >= maxFixes) {
+          stopReason = "maxFixesReached";
+          return true;
+        }
+        if (timeBudgetMs !== null && Date.now() - startAt >= timeBudgetMs) {
+          stopReason = "timeBudgetReached";
+          return true;
+        }
+        return false;
+      };
+
+      if (categories.includes("actions") && !shouldStop()) {
         const actions = await kv.list<Action>(KV.actions);
         const allEdges = await kv.list<ActionEdge>(KV.actionEdges);
         const actionMap = new Map(actions.map((a) => [a.id, a]));
 
         for (const action of actions) {
+          if (shouldStop()) {
+            break;
+          }
           if (action.status === "blocked") {
             const deps = allEdges.filter(
               (e) => e.sourceActionId === action.id && e.type === "requires",
@@ -705,12 +733,15 @@ export function registerDiagnosticsFunction(sdk: ISdk, kv: StateKV): void {
         }
       }
 
-      if (categories.includes("leases")) {
+      if (categories.includes("leases") && !shouldStop()) {
         const leases = await kv.list<Lease>(KV.leases);
         const actions = await kv.list<Action>(KV.actions);
         const actionIds = new Set(actions.map((a) => a.id));
 
         for (const lease of leases) {
+          if (shouldStop()) {
+            break;
+          }
           if (
             lease.status === "active" &&
             new Date(lease.expiresAt).getTime() <= now
@@ -791,10 +822,13 @@ export function registerDiagnosticsFunction(sdk: ISdk, kv: StateKV): void {
         }
       }
 
-      if (categories.includes("sentinels")) {
+      if (categories.includes("sentinels") && !shouldStop()) {
         const sentinels = await kv.list<Sentinel>(KV.sentinels);
 
         for (const sentinel of sentinels) {
+          if (shouldStop()) {
+            break;
+          }
           if (
             sentinel.status === "watching" &&
             sentinel.expiresAt &&
@@ -843,10 +877,13 @@ export function registerDiagnosticsFunction(sdk: ISdk, kv: StateKV): void {
         }
       }
 
-      if (categories.includes("sketches")) {
+      if (categories.includes("sketches") && !shouldStop()) {
         const sketches = await kv.list<Sketch>(KV.sketches);
 
         for (const sketch of sketches) {
+          if (shouldStop()) {
+            break;
+          }
           if (
             sketch.status === "active" &&
             new Date(sketch.expiresAt).getTime() <= now
@@ -917,10 +954,13 @@ export function registerDiagnosticsFunction(sdk: ISdk, kv: StateKV): void {
         }
       }
 
-      if (categories.includes("signals")) {
+      if (categories.includes("signals") && !shouldStop()) {
         const signals = await kv.list<Signal>(KV.signals);
 
         for (const signal of signals) {
+          if (shouldStop()) {
+            break;
+          }
           if (
             signal.expiresAt &&
             new Date(signal.expiresAt).getTime() <= now
@@ -944,10 +984,13 @@ export function registerDiagnosticsFunction(sdk: ISdk, kv: StateKV): void {
         }
       }
 
-      if (categories.includes("sessions")) {
+      if (categories.includes("sessions") && !shouldStop()) {
         const sessions = await kv.list<Session>(KV.sessions);
 
         for (const session of sessions) {
+          if (shouldStop()) {
+            break;
+          }
           const isStaleActive =
             session.status === "active" &&
             now - new Date(session.startedAt).getTime() > TWENTY_FOUR_HOURS_MS;
@@ -1014,7 +1057,7 @@ export function registerDiagnosticsFunction(sdk: ISdk, kv: StateKV): void {
         }
       }
 
-      if (categories.includes("memories")) {
+      if (categories.includes("memories") && !shouldStop()) {
         const memories = await kv.list<Memory>(KV.memories);
         const supersededBy = new Map<string, string>();
 
@@ -1027,6 +1070,9 @@ export function registerDiagnosticsFunction(sdk: ISdk, kv: StateKV): void {
         }
 
         for (const memory of memories) {
+          if (shouldStop()) {
+            break;
+          }
           if (memory.isLatest && supersededBy.has(memory.id)) {
             if (dryRun) {
               details.push(
@@ -1061,6 +1107,10 @@ export function registerDiagnosticsFunction(sdk: ISdk, kv: StateKV): void {
             }
           }
         }
+      }
+
+      if (stopReason) {
+        details.unshift("Heal stopped early due to " + stopReason);
       }
 
       return { success: true, fixed, skipped, details };

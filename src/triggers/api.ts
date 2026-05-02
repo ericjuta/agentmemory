@@ -67,6 +67,8 @@ const SESSION_CLOSEOUT_STEP_TIMEOUT_MS = 1500;
 const CONTEXT_API_TIMEOUT_MS = 1500;
 const CODEX_CONTEXT_DEFAULT_BUDGET = 6000;
 const CODEX_CONTEXT_MAX_DEFAULT_BUDGET = 8000;
+const DIAGNOSTICS_HEAL_MAX_FIXES = 250;
+const DIAGNOSTICS_HEAL_TIME_BUDGET_MS = 30000;
 const HEALTH_COMPONENT_TIMEOUT_MS = readBoundedPositiveIntEnv(
   "AGENTMEMORY_HEALTH_COMPONENT_TIMEOUT_MS",
   1500,
@@ -4868,8 +4870,35 @@ export function registerApiTriggers(
   sdk.registerFunction("api::heal",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
     if (denied) return denied;
-    const body = req.body as Record<string, unknown>;
-    const result = await sdk.trigger({ function_id: "mem::heal", payload: body || {} });
+    const body = (req.body || {}) as Record<string, unknown>;
+    const categories = parseOptionalStringArray(body.categories);
+    if (categories === null) {
+      return {
+        status_code: 400,
+        body: { error: "categories must be an array of category strings when provided" },
+      };
+    }
+    const maxFixes = parseOptionalPositiveInt(body.maxFixes);
+    if (body.maxFixes !== undefined && maxFixes === null) {
+      return {
+        status_code: 400,
+        body: { error: "maxFixes must be a positive integer when provided" },
+      };
+    }
+    const timeBudgetMs = parseOptionalPositiveInt(body.timeBudgetMs);
+    if (body.timeBudgetMs !== undefined && timeBudgetMs === null) {
+      return {
+        status_code: 400,
+        body: { error: "timeBudgetMs must be a positive integer when provided" },
+      };
+    }
+    const payload: Record<string, unknown> = {
+      maxFixes: maxFixes ?? DIAGNOSTICS_HEAL_MAX_FIXES,
+      timeBudgetMs: timeBudgetMs ?? DIAGNOSTICS_HEAL_TIME_BUDGET_MS,
+    };
+    if (Array.isArray(categories)) payload.categories = categories;
+    if (typeof body.dryRun === "boolean") payload.dryRun = body.dryRun;
+    const result = await sdk.trigger({ function_id: "mem::heal", payload });
     return { status_code: 200, body: result };
   });
   sdk.registerTrigger({ type: "http", function_id: "api::heal", config: { api_path: "/agentmemory/diagnostics/heal", http_method: "POST" } });
