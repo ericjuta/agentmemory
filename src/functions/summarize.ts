@@ -16,6 +16,16 @@ import type { MetricsStore } from "../eval/metrics-store.js";
 import { safeAudit } from "./audit.js";
 import { logger } from "../logger.js";
 
+function normalizeFailureReason(error: unknown): string {
+  const msg = error instanceof Error ? error.message : String(error);
+  const lower = msg.toLowerCase();
+  if (lower.includes("fetch")) return "provider_fetch_error";
+  if (lower.includes("429") || lower.includes("rate limit")) return "provider_rate_limit";
+  if (lower.includes("401") || lower.includes("403")) return "provider_auth_error";
+  if (lower.includes("timeout") || lower.includes("timed out")) return "provider_timeout";
+  return "provider_exception";
+}
+
 function parseSummaryXml(
   xml: string,
   sessionId: string,
@@ -90,7 +100,13 @@ export function registerSummarizeFunction(
         if (!response || !response.trim()) {
           const latencyMs = Date.now() - startMs;
           if (metricsStore) {
-            await metricsStore.record("mem::summarize", latencyMs, false);
+            await metricsStore.record(
+              "mem::summarize",
+              latencyMs,
+              false,
+              undefined,
+              "empty_provider_response",
+            );
           }
           logger.warn("Empty provider response on summarize", {
             sessionId,
@@ -111,7 +127,13 @@ export function registerSummarizeFunction(
         if (!summary) {
           const latencyMs = Date.now() - startMs;
           if (metricsStore) {
-            await metricsStore.record("mem::summarize", latencyMs, false);
+            await metricsStore.record(
+              "mem::summarize",
+              latencyMs,
+              false,
+              undefined,
+              "parse_failed",
+            );
           }
           logger.warn("Failed to parse summary XML", {
             sessionId,
@@ -135,7 +157,13 @@ export function registerSummarizeFunction(
         if (!validation.valid) {
           const latencyMs = Date.now() - startMs;
           if (metricsStore) {
-            await metricsStore.record("mem::summarize", latencyMs, false);
+            await metricsStore.record(
+              "mem::summarize",
+              latencyMs,
+              false,
+              undefined,
+              "validation_failed",
+            );
           }
           logger.warn("Summary validation failed", {
             sessionId,
@@ -175,7 +203,13 @@ export function registerSummarizeFunction(
         const msg = err instanceof Error ? err.message : String(err);
         const latencyMs = Date.now() - startMs;
         if (metricsStore) {
-          await metricsStore.record("mem::summarize", latencyMs, false);
+          await metricsStore.record(
+            "mem::summarize",
+            latencyMs,
+            false,
+            undefined,
+            normalizeFailureReason(msg),
+          );
         }
         logger.error("Summarize failed", {
           sessionId,

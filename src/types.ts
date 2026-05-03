@@ -176,6 +176,7 @@ export interface FunctionMetrics {
   totalCalls: number;
   successCount: number;
   failureCount: number;
+  failureReasons?: Record<string, number>;
   avgLatencyMs: number;
   avgQualityScore: number;
 }

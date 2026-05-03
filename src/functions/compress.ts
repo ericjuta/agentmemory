@@ -23,6 +23,16 @@ import { compressWithRetry } from "../eval/self-correct.js";
 import type { MetricsStore } from "../eval/metrics-store.js";
 import { logger } from "../logger.js";
 
+function normalizeFailureReason(error: unknown): string {
+  const msg = error instanceof Error ? error.message : String(error);
+  const lower = msg.toLowerCase();
+  if (lower.includes("provider")) return "provider_exception";
+  if (lower.includes("parse")) return "parse_error";
+  if (lower.includes("xml")) return "xml_parse_error";
+  if (lower.includes("timeout") || lower.includes("timed out")) return "provider_timeout";
+  return "compression_exception";
+}
+
 const VALID_TYPES = new Set<string>([
   "file_read",
   "file_write",
@@ -145,7 +155,13 @@ export function registerCompressFunction(
         if (!parsed) {
           const latencyMs = Date.now() - startMs;
           if (metricsStore) {
-            await metricsStore.record("mem::compress", latencyMs, false);
+            await metricsStore.record(
+              "mem::compress",
+              latencyMs,
+              false,
+              undefined,
+              "parse_failed",
+            );
           }
           logger.warn("Failed to parse compression XML", {
             obsId: data.observationId,
@@ -237,7 +253,13 @@ export function registerCompressFunction(
         const msg = err instanceof Error ? err.message : String(err);
         const latencyMs = Date.now() - startMs;
         if (metricsStore) {
-          await metricsStore.record("mem::compress", latencyMs, false);
+          await metricsStore.record(
+            "mem::compress",
+            latencyMs,
+            false,
+            undefined,
+            normalizeFailureReason(msg),
+          );
         }
         logger.error("Compression failed", {
           obsId: data.observationId,

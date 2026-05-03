@@ -13,6 +13,7 @@ export class MetricsStore {
     latencyMs: number,
     success: boolean,
     qualityScore?: number,
+    failureReason?: string,
   ): Promise<void> {
     let m = this.cache.get(functionId);
     if (!m) {
@@ -21,6 +22,7 @@ export class MetricsStore {
         totalCalls: 0,
         successCount: 0,
         failureCount: 0,
+        failureReasons: {},
         avgLatencyMs: 0,
         avgQualityScore: 0,
       };
@@ -33,6 +35,9 @@ export class MetricsStore {
       m.successCount += 1;
     } else {
       m.failureCount += 1;
+      m.failureReasons = m.failureReasons ?? {};
+      const reason = (failureReason || "error").trim() || "error";
+      m.failureReasons[reason] = (m.failureReasons[reason] || 0) + 1;
     }
     if (qualityScore !== undefined) {
       const prevQualityCalls = this.qualityCallCounts.get(functionId) || 0;
