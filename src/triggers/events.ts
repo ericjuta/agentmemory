@@ -45,6 +45,15 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
   });
 
   sdk.registerFunction("event::session::stopped", async (data: { sessionId: string }) => {
+    const session = await kv.get<Session>(KV.sessions, data.sessionId);
+    if (session && session.observationCount === 0) {
+      return {
+        skipped: true,
+        reason: "no_observations",
+        sessionId: data.sessionId,
+      };
+    }
+
     const summary = await sdk.trigger({ function_id: "mem::summarize", payload: data });
     if (isReflectEnabled()) {
       try {
