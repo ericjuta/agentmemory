@@ -96,6 +96,9 @@ export class IndexPersistence {
               this.vector.size,
             )
           : null;
+      if (!vector) {
+        await rm(this.path("vectors.json"), { force: true }).catch(() => {});
+      }
       const metadata: IndexSnapshotMetadata = {
         version: SNAPSHOT_VERSION,
         savedAt,

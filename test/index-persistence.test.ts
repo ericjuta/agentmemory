@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -91,6 +91,28 @@ describe("IndexPersistence", () => {
     const loaded = await persistence.load();
     expect(loaded.vector).not.toBeNull();
     expect(loaded.vector!.size).toBe(1);
+  });
+
+  it("removes stale vector snapshot files when vectors are no longer present", async () => {
+    const bm25 = new SearchIndex();
+    bm25.add(makeObs({ id: "obs_1", title: "auth handler" }));
+    const vector = new VectorIndex();
+    vector.add("obs_1", "ses_1", new Float32Array([0.1, 0.2, 0.3]));
+
+    const withVector = new IndexPersistence(kv as never, bm25, vector, {
+      cacheDir: indexDir,
+    });
+    await withVector.save();
+    await expect(access(join(indexDir, "vectors.json"))).resolves.toBeUndefined();
+
+    const withoutVector = new IndexPersistence(kv as never, bm25, null, {
+      cacheDir: indexDir,
+    });
+    await withoutVector.save();
+
+    await expect(access(join(indexDir, "vectors.json"))).rejects.toThrow();
+    const meta = await kv.get<{ vector: unknown }>("mem:index:bm25", "metadata");
+    expect(meta?.vector).toBeNull();
   });
 
   it("scheduleSave debounces multiple calls", async () => {
