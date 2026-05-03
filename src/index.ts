@@ -33,6 +33,7 @@ import {
   registerSearchFunction,
   rebuildIndex,
   getSearchIndex,
+  setSearchIndexUpdateHandler,
 } from "./functions/search.js";
 import { registerContextFunction } from "./functions/context.js";
 import { registerSummarizeFunction } from "./functions/summarize.js";
@@ -323,6 +324,7 @@ async function main() {
   const healthMonitor = registerHealthMonitor(sdk, kv);
 
   const indexPersistence = new IndexPersistence(kv, bm25Index, vectorIndex);
+  setSearchIndexUpdateHandler(() => indexPersistence.scheduleSave());
 
   const loaded = await indexPersistence.load().catch((err) => {
     console.warn(`[agentmemory] Failed to load persisted index:`, err);
@@ -354,6 +356,19 @@ async function main() {
       );
       indexPersistence.scheduleSave();
     }
+  } else if (getEnvVar("RETRIEVAL_INDEX_STARTUP_VERIFY_ENABLED") !== "false") {
+    setTimeout(async () => {
+      const indexCount = await rebuildIndex(kv).catch((err) => {
+        console.warn(`[agentmemory] Failed to verify search index:`, err);
+        return 0;
+      });
+      if (indexCount > 0) {
+        console.log(
+          `[agentmemory] Search index verified: ${indexCount} observations`,
+        );
+        indexPersistence.scheduleSave();
+      }
+    }, 10_000).unref();
   }
 
   console.log(

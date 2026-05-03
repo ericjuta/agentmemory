@@ -4,7 +4,11 @@ vi.mock("../src/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-import { registerSearchFunction } from "../src/functions/search.js";
+import {
+  getSearchIndex,
+  rebuildIndex,
+  registerSearchFunction,
+} from "../src/functions/search.js";
 import { KV } from "../src/state/schema.js";
 import type { CompressedObservation, Session } from "../src/types.js";
 
@@ -55,6 +59,7 @@ describe("mem::search", () => {
   let kv: ReturnType<typeof mockKV>;
 
   beforeEach(async () => {
+    getSearchIndex().clear();
     sdk = mockSdk();
     kv = mockKV();
     registerSearchFunction(sdk as never, kv as never);
@@ -146,5 +151,34 @@ describe("mem::search", () => {
     await expect(
       sdk.trigger("mem::search", { query: "auth", format: "verbose" }),
     ).rejects.toThrow("format must be one of");
+  });
+
+  it("keeps the previous live index if rebuild cannot list sessions", async () => {
+    getSearchIndex().clear();
+    getSearchIndex().add({
+      id: "obs_existing",
+      sessionId: "ses_existing",
+      timestamp: "2026-01-01T00:00:00Z",
+      type: "decision",
+      title: "Existing durable result",
+      facts: [],
+      narrative: "Existing durable result remains searchable.",
+      concepts: ["durable"],
+      files: [],
+      importance: 5,
+    });
+
+    const failingKv = {
+      ...kv,
+      list: vi.fn(async (scope: string) => {
+        if (scope === KV.sessions) throw new Error("state unavailable");
+        return [];
+      }),
+    };
+
+    await expect(rebuildIndex(failingKv as never)).rejects.toThrow(
+      "state unavailable",
+    );
+    expect(getSearchIndex().search("durable")[0]?.obsId).toBe("obs_existing");
   });
 });

@@ -3,6 +3,7 @@ import type { HealthSnapshot } from "../types.js";
 import type { StateKV } from "../state/kv.js";
 import { KV } from "../state/schema.js";
 import { evaluateHealth } from "./thresholds.js";
+import { getIndexPersistenceStatus } from "../state/index-persistence.js";
 
 export function registerHealthMonitor(
   sdk: ISdk,
@@ -88,6 +89,13 @@ export function registerHealthMonitor(
     snapshot.status = evaluated.status;
     snapshot.alerts = evaluated.alerts;
     snapshot.notes = evaluated.notes;
+    const indexStatus = getIndexPersistenceStatus();
+    if (indexStatus.lastFailureAt) {
+      const lagMs = Date.now() - indexStatus.lastFailureAt;
+      snapshot.notes.push(
+        `index_persistence_lag_${Math.max(0, Math.round(lagMs / 60000))}m`,
+      );
+    }
 
     await kv.set(KV.health, "latest", snapshot).catch(() => {});
     return snapshot;

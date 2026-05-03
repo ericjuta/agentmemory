@@ -12,9 +12,11 @@ vi.mock("iii-sdk", async (importOriginal) => {
 });
 
 vi.mock("../src/functions/search.js", () => ({
+  addToSearchIndex: vi.fn(),
   getSearchIndex: () => ({
     add: vi.fn(),
   }),
+  setSearchIndexUpdateHandler: vi.fn(),
 }));
 
 const mockTriggerVoid = vi.fn();

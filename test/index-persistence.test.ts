@@ -1,3 +1,6 @@
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { IndexPersistence } from "../src/state/index-persistence.js";
 import { SearchIndex } from "../src/state/search-index.js";
@@ -46,21 +49,26 @@ function makeObs(
 
 describe("IndexPersistence", () => {
   let kv: ReturnType<typeof mockKV>;
+  let indexDir: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.useFakeTimers();
     kv = mockKV();
+    indexDir = await mkdtemp(join(tmpdir(), "agentmemory-index-"));
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.useRealTimers();
+    await rm(indexDir, { recursive: true, force: true });
   });
 
   it("saves and loads BM25 index round-trip", async () => {
     const bm25 = new SearchIndex();
     bm25.add(makeObs({ id: "obs_1", title: "auth handler" }));
 
-    const persistence = new IndexPersistence(kv as never, bm25, null);
+    const persistence = new IndexPersistence(kv as never, bm25, null, {
+      cacheDir: indexDir,
+    });
     await persistence.save();
 
     const loaded = await persistence.load();
@@ -75,7 +83,9 @@ describe("IndexPersistence", () => {
     const vector = new VectorIndex();
     vector.add("obs_1", "ses_1", new Float32Array([0.1, 0.2, 0.3]));
 
-    const persistence = new IndexPersistence(kv as never, bm25, vector);
+    const persistence = new IndexPersistence(kv as never, bm25, vector, {
+      cacheDir: indexDir,
+    });
     await persistence.save();
 
     const loaded = await persistence.load();
@@ -85,37 +95,45 @@ describe("IndexPersistence", () => {
 
   it("scheduleSave debounces multiple calls", async () => {
     const bm25 = new SearchIndex();
-    const persistence = new IndexPersistence(kv as never, bm25, null);
+    const persistence = new IndexPersistence(kv as never, bm25, null, {
+      cacheDir: indexDir,
+    });
 
     persistence.scheduleSave();
     persistence.scheduleSave();
     persistence.scheduleSave();
 
-    await expect(kv.get("mem:index:bm25", "data")).resolves.toBeNull();
+    await expect(kv.get("mem:index:bm25", "metadata")).resolves.toBeNull();
 
     vi.advanceTimersByTime(5000);
     await vi.runAllTimersAsync();
+    vi.useRealTimers();
+    await new Promise((resolve) => setTimeout(resolve, 20));
 
-    const saved = await kv.get<string>("mem:index:bm25", "data");
+    const saved = await kv.get<string>("mem:index:bm25", "metadata");
     expect(saved).not.toBeNull();
   });
 
   it("stop clears the pending timer", async () => {
     const bm25 = new SearchIndex();
     bm25.add(makeObs({ id: "obs_1", title: "auth handler" }));
-    const persistence = new IndexPersistence(kv as never, bm25, null);
+    const persistence = new IndexPersistence(kv as never, bm25, null, {
+      cacheDir: indexDir,
+    });
 
     persistence.scheduleSave();
     persistence.stop();
 
     vi.advanceTimersByTime(10000);
-    const saved = await kv.get<string>("mem:index:bm25", "data");
+    const saved = await kv.get<string>("mem:index:bm25", "metadata");
     expect(saved).toBeNull();
   });
 
   it("returns null indexes when nothing has been saved", async () => {
     const bm25 = new SearchIndex();
-    const persistence = new IndexPersistence(kv as never, bm25, null);
+    const persistence = new IndexPersistence(kv as never, bm25, null, {
+      cacheDir: indexDir,
+    });
 
     const loaded = await persistence.load();
     expect(loaded.bm25).toBeNull();
@@ -136,7 +154,12 @@ describe("IndexPersistence", () => {
     };
     const bm25 = new SearchIndex();
     bm25.add(makeObs({ id: "obs_1", title: "auth handler" }));
-    const persistence = new IndexPersistence(failingKv as never, bm25, null);
+    const persistence = new IndexPersistence(
+      failingKv as never,
+      bm25,
+      null,
+      { cacheDir: indexDir },
+    );
 
     let unhandled = false;
     const onUnhandled = () => {
@@ -148,6 +171,8 @@ describe("IndexPersistence", () => {
       persistence.scheduleSave();
       vi.advanceTimersByTime(5000);
       await vi.runAllTimersAsync();
+      vi.useRealTimers();
+      await new Promise((resolve) => setTimeout(resolve, 20));
       // give microtasks a chance to flush
       await Promise.resolve();
       expect(failingKv.set).toHaveBeenCalled();
@@ -166,8 +191,72 @@ describe("IndexPersistence", () => {
     };
     const bm25 = new SearchIndex();
     bm25.add(makeObs({ id: "obs_1", title: "auth handler" }));
-    const persistence = new IndexPersistence(failingKv as never, bm25, null);
+    const persistence = new IndexPersistence(
+      failingKv as never,
+      bm25,
+      null,
+      { cacheDir: indexDir },
+    );
 
     await expect(persistence.save()).resolves.toBeUndefined();
+  });
+
+  it("writes file-backed snapshots instead of storing large index payloads in KV", async () => {
+    const bm25 = new SearchIndex();
+    bm25.add(makeObs({ id: "obs_1", title: "auth handler" }));
+
+    const persistence = new IndexPersistence(kv as never, bm25, null, {
+      cacheDir: indexDir,
+    });
+    await persistence.save();
+
+    await expect(kv.get("mem:index:bm25", "data")).resolves.toBeNull();
+    const meta = await kv.get<{
+      bm25: { file: string; entries: number; bytes: number };
+      vector: null;
+    }>("mem:index:bm25", "metadata");
+    expect(meta?.bm25.entries).toBe(1);
+    expect(meta?.bm25.bytes).toBeGreaterThan(0);
+    expect(meta?.vector).toBeNull();
+
+    const fileData = await readFile(join(indexDir, "bm25.json"), "utf-8");
+    expect(fileData).toContain("obs_1");
+  });
+
+  it("falls back to legacy KV snapshots when index files are unavailable", async () => {
+    const legacy = new SearchIndex();
+    legacy.add(makeObs({ id: "obs_legacy", title: "legacy auth handler" }));
+    await kv.set("mem:index:bm25", "data", legacy.serialize());
+    await kv.set("mem:index:bm25", "metadata", {
+      version: 1,
+      savedAt: new Date().toISOString(),
+      bm25: { file: "missing-bm25.json", bytes: 1, sha256: "missing", entries: 1 },
+      vector: null,
+    });
+
+    const persistence = new IndexPersistence(
+      kv as never,
+      new SearchIndex(),
+      null,
+      { cacheDir: indexDir },
+    );
+    const loaded = await persistence.load();
+
+    expect(loaded.bm25?.search("legacy")[0]?.obsId).toBe("obs_legacy");
+  });
+
+  it("returns null indexes when file snapshot is empty so callers can rebuild live", async () => {
+    await writeFile(join(indexDir, "bm25.json"), "not json", "utf-8");
+
+    const persistence = new IndexPersistence(
+      kv as never,
+      new SearchIndex(),
+      null,
+      { cacheDir: indexDir },
+    );
+    const loaded = await persistence.load();
+
+    expect(loaded.bm25).toBeNull();
+    expect(loaded.vector).toBeNull();
   });
 });
