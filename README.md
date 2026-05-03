@@ -59,7 +59,7 @@ agentmemory works with any agent that supports hooks, MCP, or REST API. All agen
 <td align="center" width="12.5%">
 <a href="https://claude.com/product/claude-code"><img src="https://matthiasroder.com/content/images/2026/01/Claude.png?size=120" alt="Claude Code" width="48" height="48" /></a><br/>
 <strong>Claude Code</strong><br/>
-<sub>12 hooks + MCP + skills</sub>
+<sub>13 hooks + MCP + skills</sub>
 </td>
 <td align="center" width="12.5%">
 <a href="integrations/openclaw/"><img src="https://github.com/openclaw.png?size=120" alt="OpenClaw" width="48" height="48" /></a><br/>
@@ -220,7 +220,7 @@ npx @agentmemory/agentmemory
 </tr>
 <tr>
 <td><strong>Auto-capture</strong></td>
-<td>12 hooks (zero manual effort)</td>
+<td>13 hooks (zero manual effort)</td>
 <td>Manual <code>add()</code> calls</td>
 <td>Agent self-edits</td>
 <td>Manual editing</td>
@@ -339,7 +339,7 @@ Implementation details live in `src/cli.ts` (see `runUpgrade` around the `src/cl
 ### Claude Code (one block, paste it)
 
 ```
-Install agentmemory: run `npx @agentmemory/agentmemory` in a separate terminal to start the memory server. Then run `/plugin marketplace add rohitg00/agentmemory` and `/plugin install agentmemory` — the plugin registers all 12 hooks, 4 skills, AND auto-wires the `@agentmemory/mcp` stdio server via its `.mcp.json`, so you get 51 MCP tools (memory_smart_search, memory_save, memory_sessions, memory_governance_delete, etc.) without any extra config step. Verify with `curl http://localhost:3111/agentmemory/health`. The real-time viewer is at http://localhost:3113.
+Install agentmemory: run `npx @agentmemory/agentmemory` in a separate terminal to start the memory server. Then run `/plugin marketplace add rohitg00/agentmemory` and `/plugin install agentmemory` — the plugin registers all 13 hooks, 4 skills, AND auto-wires the `@agentmemory/mcp` stdio server via its `.mcp.json`, so you get 51 MCP tools (memory_smart_search, memory_save, memory_sessions, memory_governance_delete, etc.) without any extra config step. Verify with `curl http://localhost:3111/agentmemory/health`. The real-time viewer is at http://localhost:3113.
 ```
 
 <details>
@@ -548,13 +548,13 @@ Memories decay over time (Ebbinghaus curve). Frequently accessed memories streng
 |------|----------|
 | `SessionStart` | Project path, session ID |
 | `UserPromptSubmit` | User prompts (privacy-filtered) |
+| `PermissionRequest` | Tool permission prompts before execution |
 | `PreToolUse` | File access patterns + enriched context |
 | `PostToolUse` | Tool name, input, output |
 | `PostToolUseFailure` | Error context |
 | `PreCompact` | Re-injects memory before compaction |
 | `SubagentStart/Stop` | Sub-agent lifecycle |
-| `Stop` | End-of-session summary |
-| `SessionEnd` | Session complete marker |
+| `Stop` / `SessionEnd` | End-of-session summary, consolidation, and complete marker |
 
 ### Key Capabilities
 
