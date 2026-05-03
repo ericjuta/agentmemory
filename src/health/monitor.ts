@@ -1,4 +1,5 @@
 import type { ISdk } from "iii-sdk";
+import { getHeapStatistics } from "node:v8";
 import type { HealthSnapshot } from "../types.js";
 import type { StateKV } from "../state/kv.js";
 import { KV } from "../state/schema.js";
@@ -21,6 +22,7 @@ export function registerHealthMonitor(
 
   async function collectHealth(): Promise<HealthSnapshot> {
     const mem = process.memoryUsage();
+    const heapLimit = getHeapStatistics().heap_size_limit;
     const currentCpu = process.cpuUsage();
     const now = Date.now();
     const uptime = process.uptime();
@@ -70,6 +72,7 @@ export function registerHealthMonitor(
       memory: {
         heapUsed: mem.heapUsed,
         heapTotal: mem.heapTotal,
+        heapLimit,
         rss: mem.rss,
         external: mem.external,
       },

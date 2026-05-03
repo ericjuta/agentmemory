@@ -66,6 +66,22 @@ describe("evaluateHealth memory severity", () => {
     expect(alerts.some((a) => a.startsWith("memory_critical_"))).toBe(false);
   });
 
+  it("uses heapLimit when available so committed heap size does not create false notes", () => {
+    const s = snap({
+      memory: {
+        heapUsed: 98 * 1024 * 1024,
+        heapTotal: 100 * 1024 * 1024,
+        heapLimit: 4096 * 1024 * 1024,
+        rss: 450 * 1024 * 1024,
+        external: 0,
+      },
+    });
+    const { status, alerts, notes } = evaluateHealth(s);
+    expect(status).toBe("healthy");
+    expect(alerts).toHaveLength(0);
+    expect(notes).toHaveLength(0);
+  });
+
   it("goes degraded when heap is above warn AND RSS is above the floor", () => {
     const s = snap({
       memory: {

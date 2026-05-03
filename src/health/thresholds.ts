@@ -60,8 +60,10 @@ export function evaluateHealth(
   }
 
   const memPercent =
-    snapshot.memory.heapTotal > 0
-      ? (snapshot.memory.heapUsed / snapshot.memory.heapTotal) * 100
+    (snapshot.memory.heapLimit ?? snapshot.memory.heapTotal) > 0
+      ? (snapshot.memory.heapUsed /
+          (snapshot.memory.heapLimit ?? snapshot.memory.heapTotal)) *
+        100
       : 0;
   const rss = snapshot.memory.rss ?? 0;
   const rssAboveFloor = rss >= cfg.memoryRssFloorBytes;
