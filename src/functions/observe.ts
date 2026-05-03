@@ -108,6 +108,9 @@ export function registerObserveFunction(
         if (payload.hookType === "prompt_submit") {
           raw.userPrompt = d["prompt"] as string | undefined;
         }
+        if (payload.hookType === "stop") {
+          raw.assistantResponse = d["last_assistant_message"] as string | undefined;
+        }
 
         extractedImage = extractImage(sanitizedRaw);
         if (extractedImage) {

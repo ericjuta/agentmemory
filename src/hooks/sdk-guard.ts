@@ -3,9 +3,9 @@
  *
  * A Claude Code session spawned via @anthropic-ai/claude-agent-sdk inherits
  * the same plugin hooks as the parent CC session. If any hook script in that
- * child session calls back into /agentmemory/* (e.g. Stop → /summarize →
- * provider.summarize() → another child session), we get unbounded recursion
- * that burns tokens and fills .claude/projects/ with ghost sessions
+ * child session calls back into /agentmemory/*, hook-driven provider work can
+ * recurse into another child session and burn tokens while filling
+ * .claude/projects/ with ghost sessions
  * (#149 follow-up; see reported loop under v0.9.1).
  *
  * Two signals identify a SDK-child context:

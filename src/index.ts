@@ -289,7 +289,7 @@ async function main() {
   );
   if (isSlotsEnabled()) {
     console.log(
-      `[agentmemory] Slots: enabled (pinned editable memory). Reflect on Stop hook: ${isReflectEnabled() ? "on" : "off"}`,
+      `[agentmemory] Slots: enabled (pinned editable memory). Session-end reflection: ${isReflectEnabled() ? "on" : "off"}`,
     );
   }
 

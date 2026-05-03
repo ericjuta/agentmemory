@@ -14,7 +14,8 @@ function inferType(
   hookType: string,
 ): ObservationType {
   if (hookType === "post_tool_failure") return "error";
-  if (hookType === "prompt_submit") return "conversation";
+  if (hookType === "prompt_submit" || hookType === "stop")
+    return "conversation";
   if (hookType === "subagent_stop" || hookType === "task_completed")
     return "subagent";
   if (hookType === "notification") return "notification";
@@ -80,8 +81,9 @@ export function buildSyntheticCompression(
   const inputStr = stringifyForNarrative(raw.toolInput);
   const outputStr = stringifyForNarrative(raw.toolOutput);
   const promptStr = raw.userPrompt ?? "";
+  const assistantStr = raw.assistantResponse ?? "";
 
-  const narrativeParts = [promptStr, inputStr, outputStr].filter(
+  const narrativeParts = [promptStr, assistantStr, inputStr, outputStr].filter(
     (s) => s.length > 0,
   );
 

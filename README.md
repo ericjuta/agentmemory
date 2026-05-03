@@ -517,10 +517,13 @@ PostToolUse hook fires
   -> Vector embedding (6 providers + local)
   -> Index in BM25 + vector
 
-Stop / SessionEnd hook fires
+SessionEnd hook fires
   -> Summarize session
   -> Knowledge graph extraction (if GRAPH_EXTRACTION_ENABLED=true)
   -> Slot reflection (if SLOT_REFLECT_ENABLED=true)
+
+Stop hook fires
+  -> Capture the completed assistant turn as searchable conversation context
 
 SessionStart hook fires
   -> Load project profile (top concepts, files, patterns)
@@ -554,7 +557,8 @@ Memories decay over time (Ebbinghaus curve). Frequently accessed memories streng
 | `PostToolUseFailure` | Error context |
 | `PreCompact` | Re-injects memory before compaction |
 | `SubagentStart/Stop` | Sub-agent lifecycle |
-| `Stop` / `SessionEnd` | End-of-session summary, consolidation, and complete marker |
+| `Stop` | Completed assistant turn |
+| `SessionEnd` | End-of-session summary, consolidation, and complete marker |
 
 ### Key Capabilities
 
@@ -850,7 +854,7 @@ Create `~/.agentmemory/.env`:
                                    # Pinned slots addressable for
                                    # SessionStart injection.
 # AGENTMEMORY_REFLECT=false        # OFF by default. Requires SLOTS=on.
-                                   # Stop hook fires mem::slot-reflect:
+                                   # SessionEnd/consolidation can fire mem::slot-reflect:
                                    # scans recent observations, auto-
                                    # appends TODOs to pending_items,
                                    # counts patterns in

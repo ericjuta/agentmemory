@@ -25,62 +25,24 @@ async function main() {
 	const sessionId = data.session_id || "unknown";
 	if (sessionId === "unknown") return;
 	try {
-		await fetch(`${REST_URL}/agentmemory/session/end`, {
+		await fetch(`${REST_URL}/agentmemory/observe`, {
 			method: "POST",
 			headers: authHeaders(),
-			body: JSON.stringify({ sessionId }),
-			signal: AbortSignal.timeout(5e3)
-		});
-	} catch {}
-	if (await (async () => {
-		const loadUrl = new URL("/agentmemory/replay/load", REST_URL);
-		loadUrl.searchParams.set("sessionId", sessionId);
-		try {
-			const loadResp = await fetch(loadUrl, {
-				method: "GET",
-				headers: authHeaders(),
-				signal: AbortSignal.timeout(3e4)
-			});
-			if (loadResp.ok) {
-				const count = ((await loadResp.json())?.session)?.observationCount;
-				return !(typeof count === "number" && count <= 0);
-			}
-		} catch {}
-		return true;
-	})()) try {
-		await fetch(`${REST_URL}/agentmemory/summarize`, {
-			method: "POST",
-			headers: authHeaders(),
-			body: JSON.stringify({ sessionId }),
-			signal: AbortSignal.timeout(3e4)
-		});
-	} catch {}
-	if (process.env["CONSOLIDATION_ENABLED"] === "true") {
-		try {
-			await fetch(`${REST_URL}/agentmemory/crystals/auto`, {
-				method: "POST",
-				headers: authHeaders(),
-				body: JSON.stringify({ olderThanDays: 0 }),
-				signal: AbortSignal.timeout(15e3)
-			});
-		} catch {}
-		try {
-			await fetch(`${REST_URL}/agentmemory/consolidate-pipeline`, {
-				method: "POST",
-				headers: authHeaders(),
-				body: JSON.stringify({
-					tier: "all",
-					force: true
-				}),
-				signal: AbortSignal.timeout(3e4)
-			});
-		} catch {}
-	}
-	if (process.env["CLAUDE_MEMORY_BRIDGE"] === "true") try {
-		await fetch(`${REST_URL}/agentmemory/claude-bridge/sync`, {
-			method: "POST",
-			headers: authHeaders(),
-			signal: AbortSignal.timeout(5e3)
+			body: JSON.stringify({
+				hookType: "stop",
+				sessionId,
+				project: data.cwd || process.cwd(),
+				cwd: data.cwd || process.cwd(),
+				timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+				data: {
+					turn_id: data.turn_id,
+					model: data.model,
+					permission_mode: data.permission_mode,
+					stop_hook_active: data.stop_hook_active,
+					last_assistant_message: data.last_assistant_message
+				}
+			}),
+			signal: AbortSignal.timeout(3e3)
 		});
 	} catch {}
 }

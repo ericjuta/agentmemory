@@ -23,12 +23,36 @@ async function main() {
 	}
 	if (isSdkChildContext(data)) return;
 	const sessionId = data.session_id || "unknown";
+	if (sessionId === "unknown") return;
 	try {
 		await fetch(`${REST_URL}/agentmemory/session/end`, {
 			method: "POST",
 			headers: authHeaders(),
 			body: JSON.stringify({ sessionId }),
 			signal: AbortSignal.timeout(5e3)
+		});
+	} catch {}
+	if (await (async () => {
+		const loadUrl = new URL("/agentmemory/replay/load", REST_URL);
+		loadUrl.searchParams.set("sessionId", sessionId);
+		try {
+			const loadResp = await fetch(loadUrl, {
+				method: "GET",
+				headers: authHeaders(),
+				signal: AbortSignal.timeout(3e4)
+			});
+			if (loadResp.ok) {
+				const count = ((await loadResp.json())?.session)?.observationCount;
+				return !(typeof count === "number" && count <= 0);
+			}
+		} catch {}
+		return true;
+	})()) try {
+		await fetch(`${REST_URL}/agentmemory/summarize`, {
+			method: "POST",
+			headers: authHeaders(),
+			body: JSON.stringify({ sessionId }),
+			signal: AbortSignal.timeout(3e4)
 		});
 	} catch {}
 	if (process.env["CONSOLIDATION_ENABLED"] === "true") {

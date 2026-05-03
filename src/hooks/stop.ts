@@ -32,8 +32,8 @@ async function main() {
   }
 
   if (isSdkChildContext(data)) {
-    // Do not summarize from inside a Claude Agent SDK child session;
-    // would re-enter agent-sdk provider and loop (see sdk-guard.ts).
+    // Do not call back into agentmemory from an SDK child session;
+    // hook-driven provider recursion is guarded in sdk-guard.ts.
     return;
   }
 
@@ -41,77 +41,27 @@ async function main() {
   if (sessionId === "unknown") return;
 
   try {
-    await fetch(`${REST_URL}/agentmemory/session/end`, {
+    await fetch(`${REST_URL}/agentmemory/observe`, {
       method: "POST",
       headers: authHeaders(),
-      body: JSON.stringify({ sessionId }),
-      signal: AbortSignal.timeout(5000),
+      body: JSON.stringify({
+        hookType: "stop",
+        sessionId,
+        project: data.cwd || process.cwd(),
+        cwd: data.cwd || process.cwd(),
+        timestamp: new Date().toISOString(),
+        data: {
+          turn_id: data.turn_id,
+          model: data.model,
+          permission_mode: data.permission_mode,
+          stop_hook_active: data.stop_hook_active,
+          last_assistant_message: data.last_assistant_message,
+        },
+      }),
+      signal: AbortSignal.timeout(3000),
     });
   } catch {
-    // best-effort
-  }
-
-  const canSummarize = await (async () => {
-    const loadUrl = new URL("/agentmemory/replay/load", REST_URL);
-    loadUrl.searchParams.set("sessionId", sessionId);
-    try {
-      const loadResp = await fetch(loadUrl, {
-        method: "GET",
-        headers: authHeaders(),
-        signal: AbortSignal.timeout(30000),
-      });
-      if (loadResp.ok) {
-        const loadBody = await loadResp.json();
-        const count = (loadBody?.session as { observationCount?: number } | undefined)?.observationCount;
-        return !(typeof count === "number" && count <= 0);
-      }
-    } catch {}
-    return true;
-  })();
-
-  if (canSummarize) {
-    try {
-      await fetch(`${REST_URL}/agentmemory/summarize`, {
-        method: "POST",
-        headers: authHeaders(),
-        body: JSON.stringify({ sessionId }),
-        signal: AbortSignal.timeout(30000),
-      });
-    } catch {
-      // summarize is best-effort
-    }
-  }
-
-  if (process.env["CONSOLIDATION_ENABLED"] === "true") {
-    try {
-      await fetch(`${REST_URL}/agentmemory/crystals/auto`, {
-        method: "POST",
-        headers: authHeaders(),
-        body: JSON.stringify({ olderThanDays: 0 }),
-        signal: AbortSignal.timeout(15000),
-      });
-    } catch {}
-
-    try {
-      await fetch(`${REST_URL}/agentmemory/consolidate-pipeline`, {
-        method: "POST",
-        headers: authHeaders(),
-        body: JSON.stringify({ tier: "all", force: true }),
-        signal: AbortSignal.timeout(30000),
-      });
-    } catch {}
-  }
-
-  if (process.env["CLAUDE_MEMORY_BRIDGE"] === "true") {
-    try {
-      await fetch(`${REST_URL}/agentmemory/claude-bridge/sync`, {
-        method: "POST",
-        headers: authHeaders(),
-        signal: AbortSignal.timeout(5000),
-      });
-    } catch {
-      // best-effort
-    }
+    // fire and forget
   }
 }
 

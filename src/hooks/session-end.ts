@@ -31,6 +31,7 @@ async function main() {
   if (isSdkChildContext(data)) return;
 
   const sessionId = (data.session_id as string) || "unknown";
+  if (sessionId === "unknown") return;
 
   try {
     await fetch(`${REST_URL}/agentmemory/session/end`, {
@@ -41,6 +42,37 @@ async function main() {
     });
   } catch {
     // best-effort
+  }
+
+  const canSummarize = await (async () => {
+    const loadUrl = new URL("/agentmemory/replay/load", REST_URL);
+    loadUrl.searchParams.set("sessionId", sessionId);
+    try {
+      const loadResp = await fetch(loadUrl, {
+        method: "GET",
+        headers: authHeaders(),
+        signal: AbortSignal.timeout(30000),
+      });
+      if (loadResp.ok) {
+        const loadBody = await loadResp.json();
+        const count = (loadBody?.session as { observationCount?: number } | undefined)?.observationCount;
+        return !(typeof count === "number" && count <= 0);
+      }
+    } catch {}
+    return true;
+  })();
+
+  if (canSummarize) {
+    try {
+      await fetch(`${REST_URL}/agentmemory/summarize`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ sessionId }),
+        signal: AbortSignal.timeout(30000),
+      });
+    } catch {
+      // summarize is best-effort
+    }
   }
 
   if (process.env["CONSOLIDATION_ENABLED"] === "true") {

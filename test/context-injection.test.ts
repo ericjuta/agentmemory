@@ -178,3 +178,113 @@ describe("post-tool-use hook — Codex payload", () => {
     }
   });
 });
+
+describe("stop hook — turn completion semantics", () => {
+  it("records a stop observation without ending or summarizing the session", async () => {
+    const requests: Array<{ url: string | undefined; body: unknown }> = [];
+    const server = createServer((req, res) => {
+      let body = "";
+      req.on("data", (chunk) => {
+        body += chunk.toString();
+      });
+      req.on("end", () => {
+        requests.push({ url: req.url, body: body ? JSON.parse(body) : undefined });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end("{}");
+      });
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("missing test server address");
+
+    try {
+      const payload = JSON.stringify({
+        session_id: "ses_test",
+        turn_id: "turn_1",
+        cwd: "/tmp/fake-project",
+        model: "gpt-test",
+        permission_mode: "default",
+        stop_hook_active: false,
+        last_assistant_message: "Done.",
+      });
+      const result = await runHook("stop.mjs", payload, {
+        AGENTMEMORY_URL: `http://127.0.0.1:${address.port}`,
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe("");
+      expect(requests.map((r) => r.url)).toEqual(["/agentmemory/observe"]);
+      expect(requests[0]?.body).toMatchObject({
+        hookType: "stop",
+        sessionId: "ses_test",
+        data: {
+          turn_id: "turn_1",
+          model: "gpt-test",
+          permission_mode: "default",
+          stop_hook_active: false,
+          last_assistant_message: "Done.",
+        },
+      });
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((err) => (err ? reject(err) : resolve())),
+      );
+    }
+  });
+});
+
+describe("session-end hook — session close semantics", () => {
+  it("ends and summarizes sessions with observations", async () => {
+    const requests: Array<{ method: string | undefined; url: string | undefined; body: unknown }> = [];
+    const server = createServer((req, res) => {
+      let body = "";
+      req.on("data", (chunk) => {
+        body += chunk.toString();
+      });
+      req.on("end", () => {
+        requests.push({
+          method: req.method,
+          url: req.url,
+          body: body ? JSON.parse(body) : undefined,
+        });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        if (req.url?.startsWith("/agentmemory/replay/load")) {
+          res.end(JSON.stringify({ session: { observationCount: 3 } }));
+        } else {
+          res.end("{}");
+        }
+      });
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("missing test server address");
+
+    try {
+      const result = await runHook("session-end.mjs", JSON.stringify({ session_id: "ses_test" }), {
+        AGENTMEMORY_URL: `http://127.0.0.1:${address.port}`,
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe("");
+      expect(requests.map((r) => r.url)).toEqual([
+        "/agentmemory/session/end",
+        "/agentmemory/replay/load?sessionId=ses_test",
+        "/agentmemory/summarize",
+      ]);
+      expect(requests[0]).toMatchObject({
+        method: "POST",
+        body: { sessionId: "ses_test" },
+      });
+      expect(requests[2]).toMatchObject({
+        method: "POST",
+        body: { sessionId: "ses_test" },
+      });
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((err) => (err ? reject(err) : resolve())),
+      );
+    }
+  });
+});
