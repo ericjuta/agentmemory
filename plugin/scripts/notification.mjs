@@ -22,8 +22,14 @@ async function main() {
     return;
   }
   if (isSdkChildContext(data)) return;
-  if (data.notification_type !== "permission_prompt") return;
+  const isPermissionPrompt =
+    data.notification_type === "permission_prompt" ||
+    data.permission === true ||
+    (typeof data.tool_name === "string" && Object.prototype.hasOwnProperty.call(data, "tool_name"));
+  if (!isPermissionPrompt) return;
+
   const sessionId = data.session_id || "unknown";
+  const requestTitle = data.title === void 0 ? "permission request: " + String(data.tool_name || "") : data.title;
   try {
     await fetch(`${REST_URL}/agentmemory/observe`, {
       method: "POST",
@@ -35,12 +41,15 @@ async function main() {
         cwd: data.cwd || process.cwd(),
         timestamp: (/* @__PURE__ */ new Date()).toISOString(),
         data: {
-          notification_type: data.notification_type,
-          title: data.title,
-          message: data.message
+          notification_type: data.notification_type || "permission_request",
+          title: requestTitle,
+          message: data.message,
+          tool_name: data.tool_name,
+          tool_input: data.tool_input,
+          permission: data.permission,
         }
       }),
-      signal: AbortSignal.timeout(2000)
+      signal: AbortSignal.timeout(2e3)
     });
   } catch {}
 }
