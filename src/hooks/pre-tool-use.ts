@@ -31,6 +31,10 @@ function authHeaders(): Record<string, string> {
   return h;
 }
 
+function isCodexHook(payload: Record<string, unknown>): boolean {
+  return typeof payload.hook_event_name === "string";
+}
+
 async function main() {
   // Default off: exit immediately so we don't even open stdin. This keeps
   // Claude Code's tool-call hot path as cheap as possible.
@@ -88,7 +92,7 @@ async function main() {
 
     if (res.ok) {
       const result = (await res.json()) as { context?: string };
-      if (result.context) {
+      if (result.context && !isCodexHook(data)) {
         process.stdout.write(result.context);
       }
     }

@@ -13,6 +13,19 @@ function authHeaders() {
 	if (SECRET) h["Authorization"] = `Bearer ${SECRET}`;
 	return h;
 }
+function isCodexHook(payload) {
+	return typeof payload.hook_event_name === "string";
+}
+function writeContext(payload, context) {
+	if (isCodexHook(payload)) {
+		process.stdout.write(JSON.stringify({ hookSpecificOutput: {
+			hookEventName: "SessionStart",
+			additionalContext: context
+		} }));
+		return;
+	}
+	process.stdout.write(context);
+}
 async function main() {
 	let input = "";
 	for await (const chunk of process.stdin) input += chunk;
@@ -38,7 +51,7 @@ async function main() {
 		});
 		if (INJECT_CONTEXT && res.ok) {
 			const result = await res.json();
-			if (result.context) process.stdout.write(result.context);
+			if (result.context) writeContext(data, result.context);
 		}
 	} catch {}
 }

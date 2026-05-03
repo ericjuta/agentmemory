@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { spawn } from "node:child_process";
+import { createServer } from "node:http";
 import { join } from "node:path";
 
 const HOOKS_DIR = join(import.meta.dirname, "..", "plugin", "scripts");
@@ -124,5 +125,56 @@ describe("session-start hook — context injection gate (#143)", () => {
     });
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toBe("");
+  });
+});
+
+describe("post-tool-use hook — Codex payload", () => {
+  it("records Codex tool_response as tool_output", async () => {
+    const bodies: unknown[] = [];
+    const server = createServer((req, res) => {
+      let body = "";
+      req.on("data", (chunk) => {
+        body += chunk.toString();
+      });
+      req.on("end", () => {
+        bodies.push(JSON.parse(body));
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end("{}");
+      });
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("missing test server address");
+
+    try {
+      const payload = JSON.stringify({
+        session_id: "ses_test",
+        cwd: "/tmp/fake-project",
+        tool_name: "Bash",
+        tool_input: { command: "printf ok" },
+        tool_response: { output: "ok", exit_code: 0 },
+      });
+      const result = await runHook("post-tool-use.mjs", payload, {
+        AGENTMEMORY_URL: `http://127.0.0.1:${address.port}`,
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe("");
+      expect(bodies).toHaveLength(1);
+      expect(bodies[0]).toMatchObject({
+        hookType: "post_tool_use",
+        sessionId: "ses_test",
+        data: {
+          tool_name: "Bash",
+          tool_input: { command: "printf ok" },
+          tool_output: { output: "ok", exit_code: 0 },
+        },
+      });
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((err) => (err ? reject(err) : resolve())),
+      );
+    }
   });
 });

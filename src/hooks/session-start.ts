@@ -24,6 +24,23 @@ function authHeaders(): Record<string, string> {
   return h;
 }
 
+function isCodexHook(payload: Record<string, unknown>): boolean {
+  return typeof payload.hook_event_name === "string";
+}
+
+function writeContext(payload: Record<string, unknown>, context: string): void {
+  if (isCodexHook(payload)) {
+    process.stdout.write(JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: "SessionStart",
+        additionalContext: context,
+      },
+    }));
+    return;
+  }
+  process.stdout.write(context);
+}
+
 async function main() {
   let input = "";
   for await (const chunk of process.stdin) {
@@ -57,7 +74,7 @@ async function main() {
     if (INJECT_CONTEXT && res.ok) {
       const result = (await res.json()) as { context?: string };
       if (result.context) {
-        process.stdout.write(result.context);
+        writeContext(data, result.context);
       }
     }
   } catch {

@@ -32,7 +32,10 @@ async function main() {
 
   const sessionId = (data.session_id as string) || "unknown";
 
-  const { imageData, cleanOutput } = extractImageData(data.tool_output);
+  const toolOutput = Object.prototype.hasOwnProperty.call(data, "tool_response")
+    ? data.tool_response
+    : data.tool_output;
+  const { imageData, cleanOutput } = extractImageData(toolOutput);
 
   try {
     await fetch(`${REST_URL}/agentmemory/observe`, {
