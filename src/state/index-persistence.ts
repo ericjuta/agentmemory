@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { SearchIndex } from "./search-index.js";
 import { VectorIndex } from "./vector-index.js";
@@ -11,6 +11,7 @@ const DEBOUNCE_MS = 5000;
 const FAILURE_LOG_THROTTLE_MS = 60_000;
 const METADATA_TIMEOUT_MS = 2000;
 const SNAPSHOT_VERSION = 1;
+const VECTOR_SHARD_ENTRIES = 1000;
 
 interface IndexSnapshotMetadata {
   version: typeof SNAPSHOT_VERSION;
@@ -20,7 +21,8 @@ interface IndexSnapshotMetadata {
 }
 
 interface SnapshotFileMetadata {
-  file: string;
+  file?: string;
+  files?: string[];
   bytes: number;
   sha256: string;
   entries: number;
@@ -90,14 +92,10 @@ export class IndexPersistence {
       );
       const vector =
         this.vector && this.vector.size > 0
-          ? await this.writeSnapshotFile(
-              "vectors.json",
-              this.vector.serialize(),
-              this.vector.size,
-            )
+          ? await this.writeVectorSnapshot()
           : null;
       if (!vector) {
-        await rm(this.path("vectors.json"), { force: true }).catch(() => {});
+        await this.removeVectorSnapshots();
       }
       const metadata: IndexSnapshotMetadata = {
         version: SNAPSHOT_VERSION,
@@ -168,7 +166,7 @@ export class IndexPersistence {
       ? SearchIndex.deserialize(await this.readSnapshotFile(metadata.bm25))
       : null;
     const vector = metadata.vector
-      ? VectorIndex.deserialize(await this.readSnapshotFile(metadata.vector))
+      ? VectorIndex.deserializeShards(await this.readSnapshotFiles(metadata.vector))
       : null;
     const usableBm25 = bm25 && bm25.size > 0 ? bm25 : null;
     const usableVector = vector && vector.size > 0 ? vector : null;
@@ -190,11 +188,52 @@ export class IndexPersistence {
     };
   }
 
+  private async writeVectorSnapshot(): Promise<SnapshotFileMetadata> {
+    const shards = this.vector!.serializeShards(VECTOR_SHARD_ENTRIES);
+    const files = shards.map((_, i) =>
+      shards.length === 1 ? "vectors.json" : `vectors-${String(i).padStart(4, "0")}.json`,
+    );
+    let bytes = 0;
+    const hash = createHash("sha256");
+    for (let i = 0; i < shards.length; i++) {
+      const contents = shards[i]!;
+      await this.writeAtomic(files[i]!, contents);
+      bytes += Buffer.byteLength(contents);
+      hash.update(contents);
+    }
+    if (shards.length > 1) {
+      await rm(this.path("vectors.json"), { force: true }).catch(() => {});
+    }
+    return {
+      files,
+      bytes,
+      sha256: hash.digest("hex"),
+      entries: this.vector!.size,
+    };
+  }
+
   private async readSnapshotFile(metadata: SnapshotFileMetadata): Promise<string> {
-    const contents = await readFile(this.path(metadata.file), "utf-8");
+    const file = metadata.file ?? metadata.files?.[0];
+    if (!file) throw new Error("index snapshot metadata missing file");
+    const contents = await readFile(this.path(file), "utf-8");
     const actual = sha256(contents);
     if (actual !== metadata.sha256) {
-      throw new Error("index snapshot checksum mismatch: " + metadata.file);
+      throw new Error("index snapshot checksum mismatch: " + file);
+    }
+    return contents;
+  }
+
+  private async readSnapshotFiles(metadata: SnapshotFileMetadata): Promise<string[]> {
+    if (!metadata.files || metadata.files.length === 0) {
+      return [await this.readSnapshotFile(metadata)];
+    }
+    const contents = await Promise.all(
+      metadata.files.map((file) => readFile(this.path(file), "utf-8")),
+    );
+    const hash = createHash("sha256");
+    for (const content of contents) hash.update(content);
+    if (hash.digest("hex") !== metadata.sha256) {
+      throw new Error("index snapshot checksum mismatch: vector shards");
     }
     return contents;
   }
@@ -219,6 +258,16 @@ export class IndexPersistence {
       await rm(tmpFile, { force: true }).catch(() => {});
       throw err;
     });
+  }
+
+  private async removeVectorSnapshots(): Promise<void> {
+    await rm(this.path("vectors.json"), { force: true }).catch(() => {});
+    const files = await readdir(this.cacheDir).catch(() => []);
+    await Promise.all(
+      files
+        .filter((file) => /^vectors-\d+\.json$/.test(file))
+        .map((file) => rm(this.path(file), { force: true }).catch(() => {})),
+    );
   }
 
   private async saveMetadata(metadata: IndexSnapshotMetadata): Promise<void> {

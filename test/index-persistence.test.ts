@@ -93,6 +93,66 @@ describe("IndexPersistence", () => {
     expect(loaded.vector!.size).toBe(1);
   });
 
+  it("shards large vector snapshots and loads them back", async () => {
+    const bm25 = new SearchIndex();
+    const vector = new VectorIndex();
+    for (let i = 0; i < 1001; i++) {
+      vector.add(`obs_${i}`, "ses_1", new Float32Array([i, 0, 1]));
+    }
+
+    const persistence = new IndexPersistence(kv as never, bm25, vector, {
+      cacheDir: indexDir,
+    });
+    await persistence.save();
+
+    const meta = await kv.get<{
+      vector: { files?: string[]; entries: number; bytes: number };
+    }>("mem:index:bm25", "metadata");
+    expect(meta?.vector.files?.length).toBe(2);
+    expect(meta?.vector.entries).toBe(1001);
+    await expect(access(join(indexDir, "vectors-0000.json"))).resolves.toBeUndefined();
+    await expect(access(join(indexDir, "vectors-0001.json"))).resolves.toBeUndefined();
+
+    const loaded = await persistence.load();
+    expect(loaded.vector?.size).toBe(1001);
+  });
+
+  it("loads legacy single-file vector snapshots", async () => {
+    const bm25 = new SearchIndex();
+    const vector = new VectorIndex();
+    vector.add("obs_legacy_vec", "ses_1", new Float32Array([1, 0, 0]));
+    const contents = vector.serialize();
+    await writeFile(join(indexDir, "vectors.json"), contents, "utf-8");
+    await writeFile(join(indexDir, "bm25.json"), bm25.serialize(), "utf-8");
+    const { createHash } = await import("node:crypto");
+    await kv.set("mem:index:bm25", "metadata", {
+      version: 1,
+      savedAt: new Date().toISOString(),
+      bm25: {
+        file: "bm25.json",
+        bytes: Buffer.byteLength(bm25.serialize()),
+        sha256: createHash("sha256").update(bm25.serialize()).digest("hex"),
+        entries: 0,
+      },
+      vector: {
+        file: "vectors.json",
+        bytes: Buffer.byteLength(contents),
+        sha256: createHash("sha256").update(contents).digest("hex"),
+        entries: 1,
+      },
+    });
+    await writeFile(
+      join(indexDir, "manifest.json"),
+      JSON.stringify(await kv.get("mem:index:bm25", "metadata")),
+      "utf-8",
+    );
+
+    const loaded = await new IndexPersistence(kv as never, bm25, null, {
+      cacheDir: indexDir,
+    }).load();
+    expect(loaded.vector?.size).toBe(1);
+  });
+
   it("removes stale vector snapshot files when vectors are no longer present", async () => {
     const bm25 = new SearchIndex();
     bm25.add(makeObs({ id: "obs_1", title: "auth handler" }));

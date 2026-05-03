@@ -33,6 +33,10 @@ export class VectorIndex {
     this.vectors.delete(obsId);
   }
 
+  has(obsId: string): boolean {
+    return this.vectors.has(obsId);
+  }
+
   search(
     query: Float32Array,
     limit = 20,
@@ -99,6 +103,26 @@ export class VectorIndex {
     return JSON.stringify(data);
   }
 
+  serializeShards(maxEntries: number): string[] {
+    const shards: string[] = [];
+    let data: Array<[string, { embedding: string; sessionId: string }]> = [];
+    for (const [obsId, entry] of this.vectors) {
+      data.push([
+        obsId,
+        {
+          embedding: float32ToBase64(entry.embedding),
+          sessionId: entry.sessionId,
+        },
+      ]);
+      if (data.length >= maxEntries) {
+        shards.push(JSON.stringify(data));
+        data = [];
+      }
+    }
+    if (data.length > 0 || shards.length === 0) shards.push(JSON.stringify(data));
+    return shards;
+  }
+
   static deserialize(json: string): VectorIndex {
     const idx = new VectorIndex();
     let data: unknown;
@@ -124,6 +148,20 @@ export class VectorIndex {
         });
       } catch {
         continue;
+      }
+    }
+    return idx;
+  }
+
+  static deserializeShards(jsonShards: string[]): VectorIndex {
+    const idx = new VectorIndex();
+    for (const json of jsonShards) {
+      const shard = VectorIndex.deserialize(json);
+      for (const [obsId, entry] of shard.vectors) {
+        idx.vectors.set(obsId, {
+          embedding: new Float32Array(entry.embedding),
+          sessionId: entry.sessionId,
+        });
       }
     }
     return idx;

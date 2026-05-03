@@ -164,7 +164,7 @@ describe("GeminiEmbeddingProvider", () => {
     process.env = originalEnv;
   });
 
-  it("uses GEMINI_EMBEDDING_MODEL in Gemini batchEmbedContent calls", async () => {
+  it("uses GEMINI_EMBEDDING_MODEL in Gemini batchEmbedContents calls", async () => {
     process.env["GEMINI_EMBEDDING_MODEL"] = "gemini-embedding-2-preview";
     process.env["GEMINI_EMBEDDING_DIMENSIONS"] = "3072";
     const provider = new GeminiEmbeddingProvider("test-key");
@@ -181,7 +181,7 @@ describe("GeminiEmbeddingProvider", () => {
     const body = JSON.parse(options.body as string);
 
     expect(url).toBe(
-      "https://generativelanguage.googleapis.com/v1beta/models/models/gemini-embedding-2-preview:batchEmbedContent?key=test-key",
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2-preview:batchEmbedContents?key=test-key",
     );
     expect(body.requests[0].model).toBe("models/gemini-embedding-2-preview");
     expect(provider.dimensions).toBe(3072);
@@ -201,7 +201,11 @@ describe("GeminiEmbeddingProvider", () => {
 
     await provider.embed("hello world");
 
+    const url = fetchSpy.mock.calls[0][0] as string;
     const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
+    expect(url).toBe(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2-preview:batchEmbedContents?key=test-key",
+    );
     expect(body.requests[0].model).toBe("models/gemini-embedding-2-preview");
 
     fetchSpy.mockRestore();

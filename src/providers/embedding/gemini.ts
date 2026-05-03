@@ -5,9 +5,13 @@ const BATCH_LIMIT = 100;
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const DEFAULT_MODEL = "text-embedding-004";
 
-function resolveModel(rawModel: string | undefined): string {
+function resolveRequestModel(rawModel: string | undefined): string {
   const configured = rawModel?.trim() || DEFAULT_MODEL;
   return configured.startsWith("models/") ? configured : `models/${configured}`;
+}
+
+function resolvePathModel(requestModel: string): string {
+  return requestModel.replace(/^models\//, "");
 }
 
 function resolveDimensions(rawDimensions: string | undefined): number {
@@ -24,13 +28,15 @@ function resolveDimensions(rawDimensions: string | undefined): number {
 export class GeminiEmbeddingProvider implements EmbeddingProvider {
   readonly name = "gemini";
   readonly dimensions: number;
-  private model: string;
+  private requestModel: string;
+  private pathModel: string;
   private apiKey: string;
 
   constructor(apiKey?: string) {
     this.apiKey = apiKey || getEnvVar("GEMINI_API_KEY") || "";
     if (!this.apiKey) throw new Error("GEMINI_API_KEY is required");
-    this.model = resolveModel(getEnvVar("GEMINI_EMBEDDING_MODEL"));
+    this.requestModel = resolveRequestModel(getEnvVar("GEMINI_EMBEDDING_MODEL"));
+    this.pathModel = resolvePathModel(this.requestModel);
     this.dimensions = resolveDimensions(
       getEnvVar("GEMINI_EMBEDDING_DIMENSIONS"),
     );
@@ -47,13 +53,13 @@ export class GeminiEmbeddingProvider implements EmbeddingProvider {
     for (let i = 0; i < texts.length; i += BATCH_LIMIT) {
       const chunk = texts.slice(i, i + BATCH_LIMIT);
       const response = await fetch(
-        `${API_BASE}/${this.model}:batchEmbedContent?key=${this.apiKey}`,
+        `${API_BASE}/${this.pathModel}:batchEmbedContents?key=${this.apiKey}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             requests: chunk.map((t) => ({
-              model: this.model,
+              model: this.requestModel,
               content: { parts: [{ text: t }] },
             })),
           }),

@@ -7,23 +7,26 @@ import { recordAccessBatch } from './access-tracker.js'
 import { logger } from "../logger.js";
 
 let index: SearchIndex | null = null
-let indexUpdateHandler: (() => void) | null = null
+let indexUpdateHandler: ((obs: CompressedObservation) => void) | null = null
 
 export function getSearchIndex(): SearchIndex {
   if (!index) index = new SearchIndex()
   return index
 }
 
-export function setSearchIndexUpdateHandler(handler: (() => void) | null): void {
+export function setSearchIndexUpdateHandler(handler: ((obs: CompressedObservation) => void) | null): void {
   indexUpdateHandler = handler
 }
 
 export function addToSearchIndex(obs: CompressedObservation): void {
   getSearchIndex().add(obs)
-  indexUpdateHandler?.()
+  indexUpdateHandler?.(obs)
 }
 
-export async function rebuildIndex(kv: StateKV): Promise<number> {
+export async function rebuildIndex(
+  kv: StateKV,
+  options: { onObservation?: (obs: CompressedObservation) => void } = {},
+): Promise<number> {
   const rebuilt = new SearchIndex()
 
   const sessions = await kv.list<Session>(KV.sessions)
@@ -53,6 +56,7 @@ export async function rebuildIndex(kv: StateKV): Promise<number> {
     for (const obs of observations) {
       if (obs.title && obs.narrative) {
         rebuilt.add(obs)
+        options.onObservation?.(obs)
         count++
       }
     }

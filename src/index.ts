@@ -22,6 +22,10 @@ import { StateKV } from "./state/kv.js";
 import { VectorIndex } from "./state/vector-index.js";
 import { HybridSearch } from "./state/hybrid-search.js";
 import { IndexPersistence } from "./state/index-persistence.js";
+import {
+  indexObservationVector,
+  populateVectorIndex,
+} from "./state/vector-indexing.js";
 import { registerPrivacyFunction } from "./functions/privacy.js";
 import { registerObserveFunction } from "./functions/observe.js";
 import { registerImageQuotaCleanup } from "./functions/image-quota-cleanup.js";
@@ -324,7 +328,17 @@ async function main() {
   const healthMonitor = registerHealthMonitor(sdk, kv);
 
   const indexPersistence = new IndexPersistence(kv, bm25Index, vectorIndex);
-  setSearchIndexUpdateHandler(() => indexPersistence.scheduleSave());
+  setSearchIndexUpdateHandler((obs) => {
+    indexPersistence.scheduleSave();
+    if (!obs || !vectorIndex || !embeddingProvider) return;
+    indexObservationVector(obs, vectorIndex, embeddingProvider, kv, {
+      generateMissing: true,
+    })
+      .then((result) => {
+        if (result !== "skipped") indexPersistence.scheduleSave();
+      })
+      .catch(() => {});
+  });
 
   const loaded = await indexPersistence.load().catch((err) => {
     console.warn(`[agentmemory] Failed to load persisted index:`, err);
@@ -346,7 +360,10 @@ async function main() {
   const needsRebuild = bm25Index.size === 0;
 
   if (needsRebuild) {
-    const indexCount = await rebuildIndex(kv).catch((err) => {
+    const observations: Parameters<typeof populateVectorIndex>[0] = [];
+    const indexCount = await rebuildIndex(kv, {
+      onObservation: (obs) => observations.push(obs),
+    }).catch((err) => {
       console.warn(`[agentmemory] Failed to rebuild search index:`, err);
       return 0;
     });
@@ -354,21 +371,11 @@ async function main() {
       console.log(
         `[agentmemory] Search index rebuilt: ${indexCount} observations`,
       );
+      await refreshVectorIndex(observations, vectorIndex, embeddingProvider, kv);
       indexPersistence.scheduleSave();
     }
   } else if (getEnvVar("RETRIEVAL_INDEX_STARTUP_VERIFY_ENABLED") !== "false") {
-    setTimeout(async () => {
-      const indexCount = await rebuildIndex(kv).catch((err) => {
-        console.warn(`[agentmemory] Failed to verify search index:`, err);
-        return 0;
-      });
-      if (indexCount > 0) {
-        console.log(
-          `[agentmemory] Search index verified: ${indexCount} observations`,
-        );
-        indexPersistence.scheduleSave();
-      }
-    }, 10_000).unref();
+    scheduleStartupIndexVerify(kv, vectorIndex, embeddingProvider, indexPersistence);
   }
 
   console.log(
@@ -443,6 +450,70 @@ async function main() {
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
+}
+
+function scheduleStartupIndexVerify(
+  kv: StateKV,
+  vectorIndex: VectorIndex | null,
+  embeddingProvider: NonNullable<ReturnType<typeof createEmbeddingProvider>> | null,
+  indexPersistence: IndexPersistence,
+): void {
+  let attempt = 0;
+  const run = async (): Promise<void> => {
+    attempt++;
+    const observations: Parameters<typeof populateVectorIndex>[0] = [];
+    const indexCount = await rebuildIndex(kv, {
+      onObservation: (obs) => observations.push(obs),
+    }).catch((err) => {
+      console.warn(
+        `[agentmemory] Failed to verify search index (attempt ${attempt}):`,
+        err,
+      );
+      return 0;
+    });
+    if (indexCount > 0) {
+      console.log(
+        `[agentmemory] Search index verified: ${indexCount} observations`,
+      );
+      await refreshVectorIndex(observations, vectorIndex, embeddingProvider, kv);
+      indexPersistence.scheduleSave();
+      return;
+    }
+    if (attempt < 5) {
+      setTimeout(run, attempt * 30_000).unref();
+    }
+  };
+  setTimeout(run, 30_000).unref();
+}
+
+async function refreshVectorIndex(
+  observations: Parameters<typeof populateVectorIndex>[0],
+  vectorIndex: VectorIndex | null,
+  embeddingProvider: NonNullable<ReturnType<typeof createEmbeddingProvider>> | null,
+  kv: StateKV,
+): Promise<void> {
+  if (!vectorIndex || !embeddingProvider) return;
+  const generateMissing = getEnvVar("RETRIEVAL_VECTOR_BACKFILL_ENABLED") === "true";
+  const maxGenerate = parseInt(
+    getEnvVar("AGENTMEMORY_VECTOR_BACKFILL_LIMIT") || "0",
+    10,
+  );
+  const result = await populateVectorIndex(
+    observations,
+    vectorIndex,
+    embeddingProvider,
+    kv,
+    {
+      generateMissing,
+      maxGenerate:
+        generateMissing && Number.isFinite(maxGenerate) && maxGenerate > 0
+          ? maxGenerate
+          : undefined,
+    },
+  );
+  console.log(
+    `[agentmemory] Vector index refreshed: ${vectorIndex.size} vectors (stored=${result.stored}, generated=${result.generated}, skipped=${result.skipped}, failed=${result.failed})`,
+  );
 }
 
 main().catch((err) => {
