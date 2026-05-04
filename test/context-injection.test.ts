@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const HOOKS_DIR = join(import.meta.dirname, "..", "plugin", "scripts");
@@ -14,6 +16,7 @@ function runHook(
   scriptName: string,
   stdin: string,
   env: Record<string, string>,
+  extraArgs: string[] = [],
 ): Promise<{
   stdout: string;
   stderr: string;
@@ -24,7 +27,7 @@ function runHook(
     const start = Date.now();
     const child = spawn(
       process.execPath,
-      [join(HOOKS_DIR, scriptName)],
+      [join(HOOKS_DIR, scriptName), ...extraArgs],
       {
         env: {
           // Start from a clean slate — don't leak test-runner env into
@@ -125,6 +128,141 @@ describe("session-start hook — context injection gate (#143)", () => {
     });
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toBe("");
+  });
+
+  it("emits Codex context JSON when wrapper loads agentmemory env", async () => {
+    const requests: Array<{ url: string | undefined; body: unknown }> = [];
+    const server = createServer((req, res) => {
+      let body = "";
+      req.on("data", (chunk) => {
+        body += chunk.toString();
+      });
+      req.on("end", () => {
+        requests.push({ url: req.url, body: body ? JSON.parse(body) : undefined });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ context: "<agentmemory-context>startup</agentmemory-context>" }));
+      });
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("missing test server address");
+    const envDir = mkdtempSync(join(tmpdir(), "agentmemory-hook-env-"));
+    const envFile = join(envDir, ".env");
+    writeFileSync(
+      envFile,
+      [
+        "AGENTMEMORY_INJECT_CONTEXT=true",
+        `AGENTMEMORY_URL=http://127.0.0.1:${address.port}`,
+      ].join("\n"),
+    );
+
+    try {
+      const payload = JSON.stringify({
+        hook_event_name: "SessionStart",
+        session_id: "ses_test",
+        cwd: "/tmp/fake-project",
+      });
+      const result = await runHook(
+        "codex-env-wrapper.mjs",
+        payload,
+        { AGENTMEMORY_ENV_FILE: envFile },
+        ["session-start.mjs"],
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(requests.map((r) => r.url)).toEqual(["/agentmemory/session/start"]);
+      expect(JSON.parse(result.stdout)).toEqual({
+        hookSpecificOutput: {
+          hookEventName: "SessionStart",
+          additionalContext: "<agentmemory-context>startup</agentmemory-context>",
+        },
+      });
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((err) => (err ? reject(err) : resolve())),
+      );
+    }
+  });
+});
+
+describe("user-prompt-submit hook — Codex context injection", () => {
+  it("writes nothing to stdout when AGENTMEMORY_INJECT_CONTEXT is unset", async () => {
+    const payload = JSON.stringify({
+      hook_event_name: "UserPromptSubmit",
+      session_id: "ses_test",
+      cwd: "/tmp/fake-project",
+      prompt: "what changed?",
+    });
+    const result = await runHook("prompt-submit.mjs", payload, {
+      AGENTMEMORY_URL: "http://127.0.0.1:1",
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe("");
+  });
+
+  it("records the prompt and emits Codex additionalContext when enabled", async () => {
+    const requests: Array<{ url: string | undefined; body: unknown }> = [];
+    const server = createServer((req, res) => {
+      let body = "";
+      req.on("data", (chunk) => {
+        body += chunk.toString();
+      });
+      req.on("end", () => {
+        requests.push({ url: req.url, body: body ? JSON.parse(body) : undefined });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        if (req.url === "/agentmemory/context") {
+          res.end(JSON.stringify({ context: "<agentmemory-context>turn</agentmemory-context>" }));
+        } else {
+          res.end("{}");
+        }
+      });
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("missing test server address");
+
+    try {
+      const payload = JSON.stringify({
+        hook_event_name: "UserPromptSubmit",
+        session_id: "ses_test",
+        cwd: "/tmp/fake-project",
+        prompt: "what changed?",
+      });
+      const result = await runHook("prompt-submit.mjs", payload, {
+        AGENTMEMORY_INJECT_CONTEXT: "true",
+        AGENTMEMORY_URL: `http://127.0.0.1:${address.port}`,
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(requests.map((r) => r.url)).toEqual([
+        "/agentmemory/observe",
+        "/agentmemory/context",
+      ]);
+      expect(requests[0]?.body).toMatchObject({
+        hookType: "prompt_submit",
+        sessionId: "ses_test",
+        project: "/tmp/fake-project",
+        data: { prompt: "what changed?" },
+      });
+      expect(requests[1]?.body).toMatchObject({
+        sessionId: "ses_test",
+        project: "/tmp/fake-project",
+      });
+      expect(JSON.parse(result.stdout)).toEqual({
+        hookSpecificOutput: {
+          hookEventName: "UserPromptSubmit",
+          additionalContext: "<agentmemory-context>turn</agentmemory-context>",
+        },
+      });
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((err) => (err ? reject(err) : resolve())),
+      );
+    }
   });
 });
 

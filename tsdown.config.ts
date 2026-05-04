@@ -13,6 +13,7 @@ const hookEntries = [
   "src/hooks/task-completed.ts",
   "src/hooks/stop.ts",
   "src/hooks/session-end.ts",
+  "src/hooks/codex-env-wrapper.ts",
 ];
 
 const shared = {

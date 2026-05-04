@@ -239,11 +239,11 @@ async function main() {
 
   if (isContextInjectionEnabled()) {
     console.log(
-      `[agentmemory] WARNING: AGENTMEMORY_INJECT_CONTEXT=true — the PreToolUse and SessionStart hooks will inject up to ~4000 chars of memory context into every tool turn. On Claude Pro this burns session tokens proportional to your tool-call frequency (see #143). Set AGENTMEMORY_INJECT_CONTEXT=false to disable.`,
+      `[agentmemory] WARNING: AGENTMEMORY_INJECT_CONTEXT=true — SessionStart and UserPromptSubmit hooks will inject memory context into coding turns; legacy PreToolUse enrichment also remains opt-in for compatible clients. This spends session tokens proportional to prompt/tool frequency. Set AGENTMEMORY_INJECT_CONTEXT=false to disable.`,
     );
   } else {
     console.log(
-      `[agentmemory] Context injection: OFF (default, #143) — hooks capture observations but do not inject context into Claude Code's conversation. Set AGENTMEMORY_INJECT_CONTEXT=true to opt-in (warning: expect your Claude Pro allocation to drain faster).`,
+      `[agentmemory] Context injection: OFF (default, #143) — hooks capture observations but do not inject recalled context into the coding conversation. Set AGENTMEMORY_INJECT_CONTEXT=true to opt in.`,
     );
   }
 
