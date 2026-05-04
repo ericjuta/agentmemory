@@ -1,0 +1,39 @@
+{
+  "id": "no-op-no-reply-contract",
+  "category": "No-op no-reply contract",
+  "project": "/tmp/agentmemory-codex-eval/wake-loop",
+  "priorSessions": [
+    {
+      "sessionId": "fixture_noop_prior",
+      "events": [
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:00:00.000Z",
+          "observationId": "noop_contract",
+          "payload": {
+            "tool_name": "Edit",
+            "tool_input": { "file_path": "src/wake/handler.ts" },
+            "tool_response": { "output": "src/wake/handler.ts returns NO_REPLY on no-op and performs one mutation per wake" }
+          }
+        }
+      ]
+    }
+  ],
+  "currentSession": {
+    "sessionId": "fixture_noop_current",
+    "events": [
+      {
+        "hook": "UserPromptSubmit",
+        "timestamp": "2026-05-04T01:00:00.000Z",
+        "payload": { "prompt": "no-op no-reply contract in src/wake/handler.ts one mutation per wake" }
+      }
+    ]
+  },
+  "gold": {
+    "requiredFacts": ["src/wake/handler.ts returns NO_REPLY on no-op and performs one mutation per wake"],
+    "forbiddenFacts": ["no-op wake sends a normal reply"],
+    "goldObservationIds": ["noop_contract"],
+    "expectedSessionStatus": "active"
+  },
+  "budgets": { "contextTokens": 900, "hookP95Ms": 1500 }
+}

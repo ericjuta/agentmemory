@@ -1,0 +1,163 @@
+{
+  "id": "long-session-selective-survival",
+  "category": "Long session selective survival",
+  "project": "/tmp/agentmemory-codex-eval/analytics",
+  "priorSessions": [
+    {
+      "sessionId": "fixture_long_prior",
+      "events": [
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:00:00.000Z",
+          "observationId": "long_core_rollup",
+          "payload": {
+            "tool_name": "Edit",
+            "tool_input": { "file_path": "src/analytics/rollup.ts" },
+            "tool_response": { "output": "src/analytics/rollup.ts keeps daily rollup watermark in utc_midnight_bucket after the long session selective survival review" }
+          }
+        },
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:01:00.000Z",
+          "observationId": "long_noise_02",
+          "payload": { "tool_name": "Read", "tool_input": { "file_path": "docs/analytics-02.md" }, "tool_response": { "output": "analytics docs mention dashboards charts exports and generic setup note 02" } }
+        },
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:02:00.000Z",
+          "observationId": "long_noise_03",
+          "payload": { "tool_name": "Read", "tool_input": { "file_path": "docs/analytics-03.md" }, "tool_response": { "output": "analytics docs mention dashboards charts exports and generic setup note 03" } }
+        },
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:03:00.000Z",
+          "observationId": "long_noise_04",
+          "payload": { "tool_name": "Read", "tool_input": { "file_path": "docs/analytics-04.md" }, "tool_response": { "output": "analytics docs mention dashboards charts exports and generic setup note 04" } }
+        },
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:04:00.000Z",
+          "observationId": "long_noise_05",
+          "payload": { "tool_name": "Read", "tool_input": { "file_path": "docs/analytics-05.md" }, "tool_response": { "output": "analytics docs mention dashboards charts exports and generic setup note 05" } }
+        },
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:05:00.000Z",
+          "observationId": "long_noise_06",
+          "payload": { "tool_name": "Read", "tool_input": { "file_path": "docs/analytics-06.md" }, "tool_response": { "output": "analytics docs mention dashboards charts exports and generic setup note 06" } }
+        },
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:06:00.000Z",
+          "observationId": "long_noise_07",
+          "payload": { "tool_name": "Read", "tool_input": { "file_path": "docs/analytics-07.md" }, "tool_response": { "output": "analytics docs mention dashboards charts exports and generic setup note 07" } }
+        },
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:07:00.000Z",
+          "observationId": "long_noise_08",
+          "payload": { "tool_name": "Read", "tool_input": { "file_path": "docs/analytics-08.md" }, "tool_response": { "output": "analytics docs mention dashboards charts exports and generic setup note 08" } }
+        },
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:08:00.000Z",
+          "observationId": "long_noise_09",
+          "payload": { "tool_name": "Read", "tool_input": { "file_path": "docs/analytics-09.md" }, "tool_response": { "output": "analytics docs mention dashboards charts exports and generic setup note 09" } }
+        },
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:09:00.000Z",
+          "observationId": "long_noise_10",
+          "payload": { "tool_name": "Read", "tool_input": { "file_path": "docs/analytics-10.md" }, "tool_response": { "output": "analytics docs mention dashboards charts exports and generic setup note 10" } }
+        },
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:10:00.000Z",
+          "observationId": "long_noise_11",
+          "payload": { "tool_name": "Read", "tool_input": { "file_path": "docs/analytics-11.md" }, "tool_response": { "output": "analytics docs mention dashboards charts exports and generic setup note 11" } }
+        },
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:11:00.000Z",
+          "observationId": "long_noise_mid",
+          "payload": {
+            "tool_name": "Read",
+            "tool_input": { "file_path": "docs/analytics-mid.md" },
+            "tool_response": { "output": "analytics docs mention dashboards charts exports and generic setup note mid" }
+          }
+        },
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:12:00.000Z",
+          "observationId": "long_noise_12",
+          "payload": { "tool_name": "Bash", "tool_input": { "command": "rg analytics" }, "tool_response": { "output": "analytics command output repeats dashboards charts exports setup note 12" } }
+        },
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:13:00.000Z",
+          "observationId": "long_noise_13",
+          "payload": { "tool_name": "Bash", "tool_input": { "command": "rg rollup" }, "tool_response": { "output": "generic rollup mention without utc bucket detail note 13" } }
+        },
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:14:00.000Z",
+          "observationId": "long_noise_14",
+          "payload": { "tool_name": "Read", "tool_input": { "file_path": "docs/analytics-14.md" }, "tool_response": { "output": "analytics docs mention dashboards charts exports and generic setup note 14" } }
+        },
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:15:00.000Z",
+          "observationId": "long_noise_15",
+          "payload": { "tool_name": "Read", "tool_input": { "file_path": "docs/analytics-15.md" }, "tool_response": { "output": "analytics docs mention dashboards charts exports and generic setup note 15" } }
+        },
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:16:00.000Z",
+          "observationId": "long_noise_16",
+          "payload": { "tool_name": "Read", "tool_input": { "file_path": "docs/analytics-16.md" }, "tool_response": { "output": "analytics docs mention dashboards charts exports and generic setup note 16" } }
+        },
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:17:00.000Z",
+          "observationId": "long_noise_17",
+          "payload": { "tool_name": "Read", "tool_input": { "file_path": "docs/analytics-17.md" }, "tool_response": { "output": "analytics docs mention dashboards charts exports and generic setup note 17" } }
+        },
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:18:00.000Z",
+          "observationId": "long_noise_18",
+          "payload": { "tool_name": "Read", "tool_input": { "file_path": "docs/analytics-18.md" }, "tool_response": { "output": "analytics docs mention dashboards charts exports and generic setup note 18" } }
+        },
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:19:00.000Z",
+          "observationId": "long_noise_19",
+          "payload": { "tool_name": "Read", "tool_input": { "file_path": "docs/analytics-19.md" }, "tool_response": { "output": "analytics docs mention dashboards charts exports and generic setup note 19" } }
+        },
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:20:00.000Z",
+          "observationId": "long_noise_21",
+          "payload": { "tool_name": "Read", "tool_input": { "file_path": "docs/analytics-21.md" }, "tool_response": { "output": "analytics docs mention dashboards charts exports and generic setup note 21" } }
+        }
+      ]
+    }
+  ],
+  "currentSession": {
+    "sessionId": "fixture_long_current",
+    "events": [
+      {
+        "hook": "UserPromptSubmit",
+        "timestamp": "2026-05-04T01:00:00.000Z",
+        "payload": { "prompt": "under long session selective survival what matters for src/analytics/rollup.ts utc_midnight_bucket" }
+      }
+    ]
+  },
+  "gold": {
+    "requiredFacts": ["src/analytics/rollup.ts keeps daily rollup watermark in utc_midnight_bucket after the long session selective survival review"],
+    "forbiddenFacts": ["daily rollup watermark uses local_midnight_bucket"],
+    "goldObservationIds": ["long_core_rollup"],
+    "expectedSessionStatus": "active"
+  },
+  "budgets": { "contextTokens": 1200, "hookP95Ms": 1500 }
+}

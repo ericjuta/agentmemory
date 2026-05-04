@@ -1,6 +1,6 @@
 {
   "mode": "local-service",
-  "generatedAt": "2026-05-04T19:44:22.716Z",
+  "generatedAt": "2026-05-04T20:29:35.580Z",
   "passed": true,
   "fixtures": [
     {
@@ -16,17 +16,17 @@
       "contextBytes": 396,
       "estimatedContextTokens": 99,
       "hookLatencyMs": {
-        "p50": 232,
-        "p95": 235,
-        "max": 235
+        "p50": 305,
+        "p95": 341,
+        "max": 341
       },
       "observationsCaptured": 3,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_morlyj0a_e1d6ecba7b1f",
-        "obs_morlyigz_9144751c9803",
-        "obs_morlyins_cf6e39dd1218",
+        "obs_mornkch5_3d01dc2e3a4c",
+        "obs_mornkbqj_95d80c57fe3a",
+        "obs_mornkbyk_25a4ba618118",
         "same_prompt",
         "same_auth_timeout"
       ],
@@ -46,17 +46,17 @@
       "contextBytes": 540,
       "estimatedContextTokens": 135,
       "hookLatencyMs": {
-        "p50": 235,
-        "p95": 323,
-        "max": 323
+        "p50": 278,
+        "p95": 361,
+        "max": 361
       },
       "observationsCaptured": 3,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_morlyjrc_bc92db609421",
-        "obs_morlyji9_ceb07e279e32",
-        "obs_morlyjbp_23410d78bc8f",
+        "obs_mornkdca_a32d6322d768",
+        "obs_mornkd24_b6988613204f",
+        "obs_mornkcug_d30a894e0e01",
         "stale_replacement",
         "stale_initial"
       ],
@@ -77,17 +77,17 @@
       "estimatedContextTokens": 165,
       "hookLatencyMs": {
         "p50": 245,
-        "p95": 351,
-        "max": 351
+        "p95": 371,
+        "max": 371
       },
       "observationsCaptured": 4,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_morlykvw_89cb16016c8f",
-        "obs_morlykms_e18deab6a688",
-        "obs_morlykdo_e5c1bcdb0451",
-        "obs_morlyk5s_f51125e3f0b6",
+        "obs_mornkehi_51bcd3ef97a8",
+        "obs_mornke72_06430772d21e",
+        "obs_mornkdxe_39eb6ea8dcbd",
+        "obs_mornkdqi_cb18ca92e79b",
         "trail_tests",
         "trail_panel",
         "trail_api"
@@ -108,17 +108,17 @@
       "contextBytes": 425,
       "estimatedContextTokens": 107,
       "hookLatencyMs": {
-        "p50": 239,
-        "p95": 246,
-        "max": 246
+        "p50": 270,
+        "p95": 282,
+        "max": 282
       },
       "observationsCaptured": 6,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_morlylb2_e197a13f70dd",
-        "obs_morlylhn_e122171f5dbf",
-        "obs_morlyloa_a5bdd486d2a3",
+        "obs_mornkeyd_c5dab5f37a5b",
+        "obs_mornkf5n_7341223464b9",
+        "obs_mornkfch_7a1fc0014bf8",
         "stop_marker",
         "stop_resume_prompt"
       ],
@@ -138,18 +138,18 @@
       "contextBytes": 471,
       "estimatedContextTokens": 118,
       "hookLatencyMs": {
-        "p50": 252,
-        "p95": 274,
-        "max": 274
+        "p50": 253,
+        "p95": 286,
+        "max": 286
       },
       "observationsCaptured": 4,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_morlymjt_3e01f7d1b511",
-        "obs_morlylxr_6407622a6915",
-        "obs_morlym50_c67605b10018",
-        "obs_morlymck_557edca7ca00",
+        "obs_mornkg8o_e8362bbbc6af",
+        "obs_mornkfme_e880ff022c69",
+        "obs_mornkfto_254d3010197a",
+        "obs_mornkg0t_69cb9806b5ac",
         "noise_rg_1",
         "noise_rg_2",
         "noise_decision"
@@ -170,16 +170,16 @@
       "contextBytes": 290,
       "estimatedContextTokens": 73,
       "hookLatencyMs": {
-        "p50": 245,
-        "p95": 265,
-        "max": 265
+        "p50": 264,
+        "p95": 270,
+        "max": 270
       },
       "observationsCaptured": 3,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_morlyn9i_23a1e2c486be",
-        "obs_morlyn2f_291da0d581c0",
+        "obs_mornkh08_a37311c99017",
+        "obs_mornkgt5_630229756ea3",
         "negative_api"
       ],
       "candidateSelectionTrace": [],
@@ -198,31 +198,409 @@
       "contextBytes": 584,
       "estimatedContextTokens": 146,
       "hookLatencyMs": {
-        "p50": 224,
-        "p95": 236,
-        "max": 236
+        "p50": 234,
+        "p95": 285,
+        "max": 285
       },
       "observationsCaptured": 4,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_morlyo50_d22cff46b7c9"
+        "obs_mornkhxz_4c3702d2ef95"
       ],
       "candidateSelectionTrace": [],
       "diagnostics": 26
+    },
+    {
+      "fixtureId": "multi-repo-project-identity",
+      "category": "Multi-repo project identity",
+      "passed": true,
+      "requiredFactRecall": 1,
+      "forbiddenFactLeakRate": 0,
+      "goldObservationRecallAtK": 1,
+      "contextPrecisionProxy": 1,
+      "sessionStateCorrect": true,
+      "hookContractCorrect": true,
+      "contextBytes": 322,
+      "estimatedContextTokens": 81,
+      "hookLatencyMs": {
+        "p50": 257,
+        "p95": 279,
+        "max": 279
+      },
+      "observationsCaptured": 3,
+      "missingRequiredFacts": [],
+      "leakedForbiddenFacts": [],
+      "selectedObservationIds": [
+        "obs_mornkioy_4fbfdf085504",
+        "obs_mornkii5_6cd40ca231c8",
+        "multirepo_api"
+      ],
+      "candidateSelectionTrace": [],
+      "diagnostics": 29
+    },
+    {
+      "fixtureId": "long-session-selective-survival",
+      "category": "Long session selective survival",
+      "passed": true,
+      "requiredFactRecall": 1,
+      "forbiddenFactLeakRate": 0,
+      "goldObservationRecallAtK": 1,
+      "contextPrecisionProxy": 0.2,
+      "sessionStateCorrect": true,
+      "hookContractCorrect": true,
+      "contextBytes": 927,
+      "estimatedContextTokens": 232,
+      "hookLatencyMs": {
+        "p50": 222,
+        "p95": 231,
+        "max": 244
+      },
+      "observationsCaptured": 22,
+      "missingRequiredFacts": [],
+      "leakedForbiddenFacts": [],
+      "selectedObservationIds": [
+        "obs_mornkmn1_4328e0957bd9",
+        "obs_mornkj1d_cd182efbe8ed",
+        "obs_mornkj83_5df4f558d425",
+        "obs_mornkjei_b3ff6d4140d9",
+        "obs_mornkjkl_938385cb7c94",
+        "obs_mornkjqs_effdef6889c1",
+        "long_core_rollup",
+        "long_noise_02",
+        "long_noise_03",
+        "long_noise_04",
+        "long_noise_05"
+      ],
+      "candidateSelectionTrace": [],
+      "diagnostics": 51
+    },
+    {
+      "fixtureId": "fresh-session-handoff",
+      "category": "Fresh session handoff",
+      "passed": true,
+      "requiredFactRecall": 1,
+      "forbiddenFactLeakRate": 0,
+      "goldObservationRecallAtK": 1,
+      "contextPrecisionProxy": 1,
+      "sessionStateCorrect": true,
+      "hookContractCorrect": true,
+      "contextBytes": 321,
+      "estimatedContextTokens": 81,
+      "hookLatencyMs": {
+        "p50": 231,
+        "p95": 305,
+        "max": 305
+      },
+      "observationsCaptured": 2,
+      "missingRequiredFacts": [],
+      "leakedForbiddenFacts": [],
+      "selectedObservationIds": [
+        "obs_mornknjh_169be9f00c12",
+        "obs_mornkmyd_079137ca30b3",
+        "handoff_patch"
+      ],
+      "candidateSelectionTrace": [],
+      "diagnostics": 55
+    },
+    {
+      "fixtureId": "branch-worktree-isolation",
+      "category": "Branch worktree isolation",
+      "passed": true,
+      "requiredFactRecall": 1,
+      "forbiddenFactLeakRate": 0,
+      "goldObservationRecallAtK": 1,
+      "contextPrecisionProxy": 1,
+      "sessionStateCorrect": true,
+      "hookContractCorrect": true,
+      "contextBytes": 307,
+      "estimatedContextTokens": 77,
+      "hookLatencyMs": {
+        "p50": 232,
+        "p95": 248,
+        "max": 248
+      },
+      "observationsCaptured": 3,
+      "missingRequiredFacts": [],
+      "leakedForbiddenFacts": [],
+      "selectedObservationIds": [
+        "obs_mornko8m_75e71eb9c79f",
+        "obs_mornko2a_a78c8dc8d446",
+        "worktree_feature_a"
+      ],
+      "candidateSelectionTrace": [],
+      "diagnostics": 58
+    },
+    {
+      "fixtureId": "prompt-only-user-decision",
+      "category": "Prompt-only user decision memory",
+      "passed": true,
+      "requiredFactRecall": 1,
+      "forbiddenFactLeakRate": 0,
+      "goldObservationRecallAtK": 1,
+      "contextPrecisionProxy": 1,
+      "sessionStateCorrect": true,
+      "hookContractCorrect": true,
+      "contextBytes": 261,
+      "estimatedContextTokens": 66,
+      "hookLatencyMs": {
+        "p50": 247,
+        "p95": 250,
+        "max": 250
+      },
+      "observationsCaptured": 2,
+      "missingRequiredFacts": [],
+      "leakedForbiddenFacts": [],
+      "selectedObservationIds": [
+        "obs_mornkors_4c71730c4173",
+        "obs_mornkokn_a9124cbfce58",
+        "prompt_only_decision"
+      ],
+      "candidateSelectionTrace": [],
+      "diagnostics": 60
+    },
+    {
+      "fixtureId": "failed-tool-correction",
+      "category": "Failed tool correction",
+      "passed": true,
+      "requiredFactRecall": 1,
+      "forbiddenFactLeakRate": 0,
+      "goldObservationRecallAtK": 1,
+      "contextPrecisionProxy": 0.5,
+      "sessionStateCorrect": true,
+      "hookContractCorrect": true,
+      "contextBytes": 434,
+      "estimatedContextTokens": 109,
+      "hookLatencyMs": {
+        "p50": 244,
+        "p95": 246,
+        "max": 246
+      },
+      "observationsCaptured": 3,
+      "missingRequiredFacts": [],
+      "leakedForbiddenFacts": [],
+      "selectedObservationIds": [
+        "obs_mornkphf_3567743766f0",
+        "obs_mornkp44_4ac93f0467d4",
+        "obs_mornkpag_f69a00cde5b8",
+        "failed_tool_initial",
+        "failed_tool_fixed"
+      ],
+      "candidateSelectionTrace": [],
+      "diagnostics": 63
+    },
+    {
+      "fixtureId": "secret-redaction-boundary",
+      "category": "Secret redaction boundary",
+      "passed": true,
+      "requiredFactRecall": 1,
+      "forbiddenFactLeakRate": 0,
+      "goldObservationRecallAtK": 1,
+      "contextPrecisionProxy": 1,
+      "sessionStateCorrect": true,
+      "hookContractCorrect": true,
+      "contextBytes": 337,
+      "estimatedContextTokens": 85,
+      "hookLatencyMs": {
+        "p50": 220,
+        "p95": 229,
+        "max": 229
+      },
+      "observationsCaptured": 2,
+      "missingRequiredFacts": [],
+      "leakedForbiddenFacts": [],
+      "selectedObservationIds": [
+        "obs_mornkpz6_2e84d6a0a4a3",
+        "obs_mornkpsq_08ea46f494f8",
+        "secret_redaction"
+      ],
+      "candidateSelectionTrace": [],
+      "diagnostics": 65
+    },
+    {
+      "fixtureId": "subagent-ownership",
+      "category": "Subagent ownership",
+      "passed": true,
+      "requiredFactRecall": 1,
+      "forbiddenFactLeakRate": 0,
+      "goldObservationRecallAtK": 1,
+      "contextPrecisionProxy": 1,
+      "sessionStateCorrect": true,
+      "hookContractCorrect": true,
+      "contextBytes": 329,
+      "estimatedContextTokens": 83,
+      "hookLatencyMs": {
+        "p50": 225,
+        "p95": 242,
+        "max": 242
+      },
+      "observationsCaptured": 2,
+      "missingRequiredFacts": [],
+      "leakedForbiddenFacts": [],
+      "selectedObservationIds": [
+        "obs_mornkqhb_8ddacd6726e3",
+        "obs_mornkqag_003c6006f383",
+        "subagent_worker_contract"
+      ],
+      "candidateSelectionTrace": [],
+      "diagnostics": 67
+    },
+    {
+      "fixtureId": "runtime-vs-repo-boundary",
+      "category": "Runtime vs repo boundary",
+      "passed": true,
+      "requiredFactRecall": 1,
+      "forbiddenFactLeakRate": 0,
+      "goldObservationRecallAtK": 1,
+      "contextPrecisionProxy": 1,
+      "sessionStateCorrect": true,
+      "hookContractCorrect": true,
+      "contextBytes": 322,
+      "estimatedContextTokens": 81,
+      "hookLatencyMs": {
+        "p50": 225,
+        "p95": 244,
+        "max": 244
+      },
+      "observationsCaptured": 2,
+      "missingRequiredFacts": [],
+      "leakedForbiddenFacts": [],
+      "selectedObservationIds": [
+        "obs_mornkqze_ad43899c36c7",
+        "obs_mornkqsu_63bc7fbbfa0d",
+        "runtime_boundary"
+      ],
+      "candidateSelectionTrace": [],
+      "diagnostics": 69
+    },
+    {
+      "fixtureId": "user-correction-over-agent-assumption",
+      "category": "User correction over agent assumption",
+      "passed": true,
+      "requiredFactRecall": 1,
+      "forbiddenFactLeakRate": 0,
+      "goldObservationRecallAtK": 1,
+      "contextPrecisionProxy": 0.5,
+      "sessionStateCorrect": true,
+      "hookContractCorrect": true,
+      "contextBytes": 397,
+      "estimatedContextTokens": 100,
+      "hookLatencyMs": {
+        "p50": 234,
+        "p95": 268,
+        "max": 268
+      },
+      "observationsCaptured": 3,
+      "missingRequiredFacts": [],
+      "leakedForbiddenFacts": [],
+      "selectedObservationIds": [
+        "obs_mornkrog_1b6633f95155",
+        "obs_mornkrbb_a67e67906835",
+        "obs_mornkrhj_64d9a5e5ff7b",
+        "correction_assumption",
+        "correction_user"
+      ],
+      "candidateSelectionTrace": [],
+      "diagnostics": 72
+    },
+    {
+      "fixtureId": "test-diagnosis-regression",
+      "category": "Test diagnosis regression",
+      "passed": true,
+      "requiredFactRecall": 1,
+      "forbiddenFactLeakRate": 0,
+      "goldObservationRecallAtK": 1,
+      "contextPrecisionProxy": 0.5,
+      "sessionStateCorrect": true,
+      "hookContractCorrect": true,
+      "contextBytes": 473,
+      "estimatedContextTokens": 119,
+      "hookLatencyMs": {
+        "p50": 241,
+        "p95": 263,
+        "max": 263
+      },
+      "observationsCaptured": 3,
+      "missingRequiredFacts": [],
+      "leakedForbiddenFacts": [],
+      "selectedObservationIds": [
+        "obs_mornkse9_0aabc8ffeb67",
+        "obs_mornks1f_e2635c0227e3",
+        "obs_mornks7w_c3d264a2558d",
+        "test_diag_failure",
+        "test_diag_fix"
+      ],
+      "candidateSelectionTrace": [],
+      "diagnostics": 75
+    },
+    {
+      "fixtureId": "generated-artifact-handoff",
+      "category": "Generated artifact handoff",
+      "passed": true,
+      "requiredFactRecall": 1,
+      "forbiddenFactLeakRate": 0,
+      "goldObservationRecallAtK": 1,
+      "contextPrecisionProxy": 1,
+      "sessionStateCorrect": true,
+      "hookContractCorrect": true,
+      "contextBytes": 302,
+      "estimatedContextTokens": 76,
+      "hookLatencyMs": {
+        "p50": 215,
+        "p95": 231,
+        "max": 231
+      },
+      "observationsCaptured": 2,
+      "missingRequiredFacts": [],
+      "leakedForbiddenFacts": [],
+      "selectedObservationIds": [
+        "obs_mornksvy_1585b468f82e",
+        "obs_mornkspm_b26ac9487528",
+        "artifact_tmp_handoff"
+      ],
+      "candidateSelectionTrace": [],
+      "diagnostics": 77
+    },
+    {
+      "fixtureId": "no-op-no-reply-contract",
+      "category": "No-op no-reply contract",
+      "passed": true,
+      "requiredFactRecall": 1,
+      "forbiddenFactLeakRate": 0,
+      "goldObservationRecallAtK": 1,
+      "contextPrecisionProxy": 1,
+      "sessionStateCorrect": true,
+      "hookContractCorrect": true,
+      "contextBytes": 291,
+      "estimatedContextTokens": 73,
+      "hookLatencyMs": {
+        "p50": 234,
+        "p95": 239,
+        "max": 239
+      },
+      "observationsCaptured": 2,
+      "missingRequiredFacts": [],
+      "leakedForbiddenFacts": [],
+      "selectedObservationIds": [
+        "obs_mornkte4_e48a46eb0aca",
+        "obs_mornkt7b_e7bc4f5fe48f",
+        "noop_contract"
+      ],
+      "candidateSelectionTrace": [],
+      "diagnostics": 79
     }
   ],
   "metrics": {
-    "fixtureCount": 7,
+    "fixtureCount": 20,
     "requiredFactRecallAtContext": 1,
     "forbiddenFactLeakRate": 0,
-    "goldObservationRecallAtK": 0.7142857142857143,
-    "contextPrecisionProxy": 0.7142857142857143,
+    "goldObservationRecallAtK": 0.9,
+    "contextPrecisionProxy": 0.7849999999999999,
     "sessionStateCorrectness": 1,
     "hookContractCorrectness": 1,
-    "hookP95Ms": 351,
-    "maxContextTokens": 165,
-    "observationsCaptured": 27,
+    "hookP95Ms": 361,
+    "maxContextTokens": 232,
+    "observationsCaptured": 78,
     "disabledInjectionNoOutput": true
   },
   "gates": {

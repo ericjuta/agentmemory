@@ -1,0 +1,48 @@
+{
+  "id": "prompt-only-user-decision",
+  "category": "Prompt-only user decision memory",
+  "project": "/tmp/agentmemory-codex-eval/prompt-only",
+  "priorSessions": [
+    {
+      "sessionId": "fixture_prompt_only_prior",
+      "events": [
+        {
+          "hook": "UserPromptSubmit",
+          "timestamp": "2026-05-04T00:00:00.000Z",
+          "observationId": "prompt_only_decision",
+          "payload": {
+            "prompt": "User decision: keep the report export as JSONL only for this release and do not add CSV"
+          }
+        }
+      ]
+    }
+  ],
+  "currentSession": {
+    "sessionId": "fixture_prompt_only_current",
+    "events": [
+      {
+        "hook": "UserPromptSubmit",
+        "timestamp": "2026-05-04T01:00:00.000Z",
+        "payload": {
+          "prompt": "what did the user decide for report export format this release JSONL CSV"
+        }
+      }
+    ]
+  },
+  "gold": {
+    "requiredFacts": [
+      "User decision: keep the report export as JSONL only for this release and do not add CSV"
+    ],
+    "forbiddenFacts": [
+      "add CSV export for this release"
+    ],
+    "goldObservationIds": [
+      "prompt_only_decision"
+    ],
+    "expectedSessionStatus": "active"
+  },
+  "budgets": {
+    "contextTokens": 900,
+    "hookP95Ms": 1500
+  }
+}

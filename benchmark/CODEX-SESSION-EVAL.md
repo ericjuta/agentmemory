@@ -241,13 +241,14 @@ Status after the first release-quality implementation:
 
 - mock mode no longer uses gold labels during candidate selection.
 - local-service mode starts an isolated iii-engine plus agentmemory worker, replays real hook subprocesses, checks auth/health, waits for replayed observations, and grades context from REST output.
-- The seven seed fixture categories pass in both modes with 100% required fact recall and 0% forbidden fact leakage.
+- The expanded 20-fixture set passes in both modes with 100% required fact recall and 0% forbidden fact leakage.
+- Markdown output now warns when context fact recall is perfect but source recall is low, so summary/rendering wins do not hide retrieval drift.
 
-What is left is mostly confidence breadth and operational polish, not a blocker for the current Codex-session gate.
+What is left is mostly operational polish, not a blocker for the current Codex-session gate.
 
 ### 1. Expand Fixture Breadth
 
-Add more fixtures before treating the benchmark as representative of all Codex work:
+Completed coverage now includes:
 
 - multi-repo monorepo tasks where cwd, package root, and project identity differ
 - long sessions with 20+ tool events where only a few observations should survive budget pressure
@@ -255,12 +256,15 @@ Add more fixtures before treating the benchmark as representative of all Codex w
 - branch/worktree-specific decisions that should not leak across sibling worktrees
 - prompt-only memory where no tool output exists but the user decision matters
 - failed-tool correction sequences where the final successful command supersedes earlier errors
+- secret-redaction boundaries, subagent ownership, runtime-vs-repo boundaries, user corrections, test diagnosis, generated handoff artifacts, and no-op `NO_REPLY` contracts
 
 Acceptance: at least 20 fixtures, with every new fixture proving one distinct failure mode instead of only adding volume.
 
 ### 2. Stabilize Cold-Start Runtime Gates
 
 The live service can take longer than the current reload script expects to expose the worker-manager socket, even though it becomes healthy shortly after. The eval harness now warms hook subprocesses, but the live reload path should also distinguish slow startup from failed startup.
+
+Status: `npm run agentmemory:reload` now delegates to `scripts/agentmemory-reload.mjs`, which waits for `/agentmemory/livez`, authenticated `/agentmemory/health` when `AGENTMEMORY_SECRET` is configured, and the reported worker-manager `connectionState === "connected"` before printing a success marker. On timeout it prints the recent startup log tail instead of leaving the early ECONNREFUSED as the only visible state.
 
 Acceptance:
 
@@ -313,4 +317,4 @@ Acceptance:
 
 ## Current Recommendation
 
-Keep the current benchmark as the release-confidence gate for Codex session integration. The next best investment is fixture breadth plus reload/startup reliability, not more scoring sophistication. The scoring is now honest enough; it needs more adversarial examples and cleaner operational gates around it.
+Keep the current benchmark as the release-confidence gate for Codex session integration. The next best investment is live-readonly diagnostics and runtime RSS burn-in, not more scoring sophistication. The scoring is now honest enough; it needs cleaner operational gates around it.

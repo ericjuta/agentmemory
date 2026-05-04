@@ -1,0 +1,49 @@
+{
+  "id": "fresh-session-handoff",
+  "category": "Fresh session handoff",
+  "project": "/tmp/agentmemory-codex-eval/deploy",
+  "priorSessions": [
+    {
+      "sessionId": "fixture_handoff_prior",
+      "events": [
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:00:00.000Z",
+          "observationId": "handoff_patch",
+          "payload": {
+            "tool_name": "Edit",
+            "tool_input": { "file_path": "src/deploy/promote.ts" },
+            "tool_response": { "output": "src/deploy/promote.ts now waits for gateway health before switching stable traffic in the fresh session handoff" }
+          }
+        },
+        {
+          "hook": "SessionEnd",
+          "timestamp": "2026-05-04T00:20:00.000Z",
+          "payload": { "reason": "fresh_session_requested" }
+        }
+      ]
+    }
+  ],
+  "currentSession": {
+    "sessionId": "fixture_handoff_current",
+    "events": [
+      {
+        "hook": "SessionStart",
+        "timestamp": "2026-05-04T01:00:00.000Z",
+        "payload": { "cwd": "/tmp/agentmemory-codex-eval/deploy" }
+      },
+      {
+        "hook": "UserPromptSubmit",
+        "timestamp": "2026-05-04T01:00:10.000Z",
+        "payload": { "prompt": "fresh session handoff for src/deploy/promote.ts gateway health stable traffic" }
+      }
+    ]
+  },
+  "gold": {
+    "requiredFacts": ["src/deploy/promote.ts now waits for gateway health before switching stable traffic in the fresh session handoff"],
+    "forbiddenFacts": ["stable traffic switches before gateway health"],
+    "goldObservationIds": ["handoff_patch"],
+    "expectedSessionStatus": "active"
+  },
+  "budgets": { "contextTokens": 900, "hookP95Ms": 1500 }
+}

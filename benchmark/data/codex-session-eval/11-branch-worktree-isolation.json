@@ -1,0 +1,55 @@
+{
+  "id": "branch-worktree-isolation",
+  "category": "Branch worktree isolation",
+  "project": "/tmp/agentmemory-codex-eval/worktrees/feature-a",
+  "priorSessions": [
+    {
+      "sessionId": "fixture_worktree_b",
+      "events": [
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:00:00.000Z",
+          "observationId": "worktree_neighbor",
+          "payload": {
+            "cwd": "/tmp/agentmemory-codex-eval/worktrees/feature-b",
+            "tool_name": "Edit",
+            "tool_input": { "file_path": "src/payments/gateway.ts" },
+            "tool_response": { "output": "feature-b switches src/payments/gateway.ts to sandbox card gateway" }
+          }
+        }
+      ]
+    },
+    {
+      "sessionId": "fixture_worktree_a",
+      "events": [
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:10:00.000Z",
+          "observationId": "worktree_feature_a",
+          "payload": {
+            "tool_name": "Edit",
+            "tool_input": { "file_path": "src/payments/gateway.ts" },
+            "tool_response": { "output": "feature-a keeps src/payments/gateway.ts on tokenized live gateway with retry guard" }
+          }
+        }
+      ]
+    }
+  ],
+  "currentSession": {
+    "sessionId": "fixture_worktree_current",
+    "events": [
+      {
+        "hook": "UserPromptSubmit",
+        "timestamp": "2026-05-04T01:00:00.000Z",
+        "payload": { "prompt": "branch worktree isolation feature-a src/payments/gateway.ts gateway decision" }
+      }
+    ]
+  },
+  "gold": {
+    "requiredFacts": ["feature-a keeps src/payments/gateway.ts on tokenized live gateway with retry guard"],
+    "forbiddenFacts": ["feature-b switches src/payments/gateway.ts to sandbox card gateway"],
+    "goldObservationIds": ["worktree_feature_a"],
+    "expectedSessionStatus": "active"
+  },
+  "budgets": { "contextTokens": 900, "hookP95Ms": 1500 }
+}

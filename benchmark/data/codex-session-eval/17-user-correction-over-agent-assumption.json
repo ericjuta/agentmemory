@@ -1,0 +1,45 @@
+{
+  "id": "user-correction-over-agent-assumption",
+  "category": "User correction over agent assumption",
+  "project": "/tmp/agentmemory-codex-eval/locks",
+  "priorSessions": [
+    {
+      "sessionId": "fixture_correction_prior",
+      "events": [
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:00:00.000Z",
+          "observationId": "correction_assumption",
+          "payload": {
+            "tool_name": "Read",
+            "tool_input": { "file_path": "src/locks.ts" },
+            "tool_response": { "output": "agent assumption mentioned Redis locks while reading src/locks.ts" }
+          }
+        },
+        {
+          "hook": "UserPromptSubmit",
+          "timestamp": "2026-05-04T00:05:00.000Z",
+          "observationId": "correction_user",
+          "payload": { "prompt": "correction: keep Postgres advisory locks in src/locks.ts and do not migrate this lock path to Redis" }
+        }
+      ]
+    }
+  ],
+  "currentSession": {
+    "sessionId": "fixture_correction_current",
+    "events": [
+      {
+        "hook": "UserPromptSubmit",
+        "timestamp": "2026-05-04T01:00:00.000Z",
+        "payload": { "prompt": "user correction over agent assumption for src/locks.ts lock path Redis Postgres advisory locks" }
+      }
+    ]
+  },
+  "gold": {
+    "requiredFacts": ["correction: keep Postgres advisory locks in src/locks.ts"],
+    "forbiddenFacts": ["lock path uses Redis"],
+    "goldObservationIds": ["correction_user"],
+    "expectedSessionStatus": "active"
+  },
+  "budgets": { "contextTokens": 900, "hookP95Ms": 1500 }
+}

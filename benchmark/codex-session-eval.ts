@@ -14,6 +14,7 @@ const defaultMarkdownResultsPath = join(__dirname, "CODEX-SESSION-EVAL-RESULTS.m
 const hooksDir = join(repoRoot, "plugin", "scripts");
 
 const hookNames = ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "SessionEnd"] as const;
+const sourceRecallWarningThreshold = 0.85;
 
 const HookEventSchema = z.object({
   hook: z.enum(hookNames),
@@ -890,7 +891,11 @@ export async function runMockEval(
   };
 }
 
-function markdownSummary(results: EvalResults): string {
+export function markdownSummary(results: EvalResults): string {
+  const sourceRecallWarnings = results.fixtures.filter((result) => (
+    result.requiredFactRecall === 1
+    && result.goldObservationRecallAtK < sourceRecallWarningThreshold
+  ));
   const lines = [
     "# Codex Session Eval Results",
     "",
@@ -909,6 +914,15 @@ function markdownSummary(results: EvalResults): string {
     "- hook_contract_correctness: " + results.metrics.hookContractCorrectness.toFixed(3),
     "- hook_p95_ms: " + String(results.metrics.hookP95Ms),
     "- max_context_tokens: " + String(results.metrics.maxContextTokens),
+    "",
+    "## Warnings",
+    "",
+    ...(sourceRecallWarnings.length === 0
+      ? ["- none"]
+      : sourceRecallWarnings.map((result) => "- " + result.fixtureId + ": fact_recall_from_context is 1.000 but source_recall is "
+        + result.goldObservationRecallAtK.toFixed(3)
+        + " below "
+        + sourceRecallWarningThreshold.toFixed(2))),
     "",
     "## Fixtures",
     "",

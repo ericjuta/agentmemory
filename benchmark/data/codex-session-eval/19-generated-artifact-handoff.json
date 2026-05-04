@@ -1,0 +1,39 @@
+{
+  "id": "generated-artifact-handoff",
+  "category": "Generated artifact handoff",
+  "project": "/tmp/agentmemory-codex-eval/release-notes",
+  "priorSessions": [
+    {
+      "sessionId": "fixture_artifact_prior",
+      "events": [
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:00:00.000Z",
+          "observationId": "artifact_tmp_handoff",
+          "payload": {
+            "tool_name": "Edit",
+            "tool_input": { "file_path": "/tmp/release_handoff.md" },
+            "tool_response": { "output": "/tmp/release_handoff.md contains updated deploy checklist and no repo files changed" }
+          }
+        }
+      ]
+    }
+  ],
+  "currentSession": {
+    "sessionId": "fixture_artifact_current",
+    "events": [
+      {
+        "hook": "UserPromptSubmit",
+        "timestamp": "2026-05-04T01:00:00.000Z",
+        "payload": { "prompt": "generated artifact handoff /tmp/release_handoff.md deploy checklist repo files changed" }
+      }
+    ]
+  },
+  "gold": {
+    "requiredFacts": ["/tmp/release_handoff.md contains updated deploy checklist and no repo files changed"],
+    "forbiddenFacts": ["repo files changed for the release handoff"],
+    "goldObservationIds": ["artifact_tmp_handoff"],
+    "expectedSessionStatus": "active"
+  },
+  "budgets": { "contextTokens": 900, "hookP95Ms": 1500 }
+}

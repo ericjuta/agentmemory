@@ -1,0 +1,55 @@
+{
+  "id": "multi-repo-project-identity",
+  "category": "Multi-repo project identity",
+  "project": "/tmp/agentmemory-codex-eval/mono/packages/api",
+  "priorSessions": [
+    {
+      "sessionId": "fixture_multirepo_web",
+      "events": [
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:00:00.000Z",
+          "observationId": "multirepo_neighbor",
+          "payload": {
+            "cwd": "/tmp/agentmemory-codex-eval/mono/packages/web",
+            "tool_name": "Edit",
+            "tool_input": { "file_path": "packages/web/src/auth.ts" },
+            "tool_response": { "output": "packages/web/src/auth.ts uses browser sessionStorage for auth redirect state" }
+          }
+        }
+      ]
+    },
+    {
+      "sessionId": "fixture_multirepo_api",
+      "events": [
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:10:00.000Z",
+          "observationId": "multirepo_api",
+          "payload": {
+            "tool_name": "Edit",
+            "tool_input": { "file_path": "packages/api/src/auth.ts" },
+            "tool_response": { "output": "packages/api/src/auth.ts stores auth redirect state in signed httpOnly cookies for the api package" }
+          }
+        }
+      ]
+    }
+  ],
+  "currentSession": {
+    "sessionId": "fixture_multirepo_current",
+    "events": [
+      {
+        "hook": "UserPromptSubmit",
+        "timestamp": "2026-05-04T01:00:00.000Z",
+        "payload": { "prompt": "in packages/api src/auth.ts what auth redirect state decision belongs to the api package" }
+      }
+    ]
+  },
+  "gold": {
+    "requiredFacts": ["packages/api/src/auth.ts stores auth redirect state in signed httpOnly cookies for the api package"],
+    "forbiddenFacts": ["packages/web/src/auth.ts uses browser sessionStorage for auth redirect state"],
+    "goldObservationIds": ["multirepo_api"],
+    "expectedSessionStatus": "active"
+  },
+  "budgets": { "contextTokens": 900, "hookP95Ms": 1500 }
+}

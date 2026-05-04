@@ -1,0 +1,49 @@
+{
+  "id": "failed-tool-correction",
+  "category": "Failed tool correction",
+  "project": "/tmp/agentmemory-codex-eval/auth-tests",
+  "priorSessions": [
+    {
+      "sessionId": "fixture_failed_tool_prior",
+      "events": [
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:00:00.000Z",
+          "observationId": "failed_tool_initial",
+          "payload": {
+            "tool_name": "Bash",
+            "tool_input": { "command": "npm test -- auth" },
+            "tool_response": { "output": "first run failed before the timer fix was applied" }
+          }
+        },
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:10:00.000Z",
+          "observationId": "failed_tool_fixed",
+          "payload": {
+            "tool_name": "Bash",
+            "tool_input": { "command": "npm test -- auth --runInBand" },
+            "tool_response": { "output": "npm test -- auth --runInBand now passes after updating mock timers in test/auth-timeout.test.ts" }
+          }
+        }
+      ]
+    }
+  ],
+  "currentSession": {
+    "sessionId": "fixture_failed_tool_current",
+    "events": [
+      {
+        "hook": "UserPromptSubmit",
+        "timestamp": "2026-05-04T01:00:00.000Z",
+        "payload": { "prompt": "final passing status for npm test -- auth --runInBand after updating mock timers in test/auth-timeout.test.ts" }
+      }
+    ]
+  },
+  "gold": {
+    "requiredFacts": ["npm test -- auth --runInBand now passes after updating mock timers in test/auth-timeout.test.ts"],
+    "forbiddenFacts": ["auth test is still failing"],
+    "goldObservationIds": ["failed_tool_fixed"],
+    "expectedSessionStatus": "active"
+  },
+  "budgets": { "contextTokens": 900, "hookP95Ms": 1500 }
+}

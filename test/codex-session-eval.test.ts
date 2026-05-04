@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { loadFixtures, runMockEval, type CodexSessionEvalFixture } from "../benchmark/codex-session-eval.js";
+import { loadFixtures, markdownSummary, runMockEval, type CodexSessionEvalFixture } from "../benchmark/codex-session-eval.js";
 
 describe("Codex session replay eval", () => {
-  it("loads the seven required fixture categories", () => {
+  it("loads the expanded fixture categories", () => {
     const fixtures = loadFixtures();
-    expect(fixtures).toHaveLength(7);
+    expect(fixtures).toHaveLength(20);
     expect(fixtures.map((fixture) => fixture.id)).toEqual([
       "same-repo-continuation",
       "stale-decision-replacement",
@@ -13,13 +13,27 @@ describe("Codex session replay eval", () => {
       "noisy-tool-stream",
       "negative-recall",
       "budget-pressure",
+      "multi-repo-project-identity",
+      "long-session-selective-survival",
+      "fresh-session-handoff",
+      "branch-worktree-isolation",
+      "prompt-only-user-decision",
+      "failed-tool-correction",
+      "secret-redaction-boundary",
+      "subagent-ownership",
+      "runtime-vs-repo-boundary",
+      "user-correction-over-agent-assumption",
+      "test-diagnosis-regression",
+      "generated-artifact-handoff",
+      "no-op-no-reply-contract",
     ]);
+    expect(new Set(fixtures.map((fixture) => fixture.category)).size).toBe(20);
   });
 
   it("passes mock mode without a live service", async () => {
     const results = await runMockEval();
     expect(results.passed).toBe(true);
-    expect(results.metrics.fixtureCount).toBe(7);
+    expect(results.metrics.fixtureCount).toBe(20);
     expect(results.metrics.requiredFactRecallAtContext).toBeGreaterThanOrEqual(0.85);
     expect(results.metrics.forbiddenFactLeakRate).toBeLessThanOrEqual(0.05);
     expect(results.metrics.sessionStateCorrectness).toBe(1);
@@ -83,5 +97,8 @@ describe("Codex session replay eval", () => {
     expect(result.selectedObservationIds).not.toContain("labeled_only");
     expect(result.candidateSelectionTrace.map((candidate) => candidate.id)).toContain("labeled_only");
     expect(result.leakedForbiddenFacts).toEqual([]);
+    expect(markdownSummary(results)).toContain(
+      "- label-isolation: fact_recall_from_context is 1.000 but source_recall is 0.000 below 0.85",
+    );
   }, 30000);
 });

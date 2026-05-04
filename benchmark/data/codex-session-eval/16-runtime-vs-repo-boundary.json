@@ -1,0 +1,39 @@
+{
+  "id": "runtime-vs-repo-boundary",
+  "category": "Runtime vs repo boundary",
+  "project": "/tmp/agentmemory-codex-eval/gateway",
+  "priorSessions": [
+    {
+      "sessionId": "fixture_runtime_boundary_prior",
+      "events": [
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:00:00.000Z",
+          "observationId": "runtime_boundary",
+          "payload": {
+            "tool_name": "Bash",
+            "tool_input": { "command": "curl http://127.0.0.1:4111/health" },
+            "tool_response": { "output": "runtime gateway health returned 200 after service restart; no repo file changed for the gateway fix" }
+          }
+        }
+      ]
+    }
+  ],
+  "currentSession": {
+    "sessionId": "fixture_runtime_boundary_current",
+    "events": [
+      {
+        "hook": "UserPromptSubmit",
+        "timestamp": "2026-05-04T01:00:00.000Z",
+        "payload": { "prompt": "runtime vs repo boundary gateway health service restart repo file changed" }
+      }
+    ]
+  },
+  "gold": {
+    "requiredFacts": ["runtime gateway health returned 200 after service restart; no repo file changed for the gateway fix"],
+    "forbiddenFacts": ["repo config file changed for the gateway fix"],
+    "goldObservationIds": ["runtime_boundary"],
+    "expectedSessionStatus": "active"
+  },
+  "budgets": { "contextTokens": 900, "hookP95Ms": 1500 }
+}

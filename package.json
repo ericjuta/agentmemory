@@ -25,7 +25,7 @@
     "agentmemory:verify": "rg -n '^(GEMINI_API_KEY|EMBEDDING_PROVIDER|GEMINI_EMBEDDING_MODEL|GEMINI_EMBEDDING_DIMENSIONS|GRAPH_EXTRACTION_ENABLED|CONSOLIDATION_ENABLED|AGENTMEMORY_AUTO_COMPRESS|AGENTMEMORY_INJECT_CONTEXT)=' ~/.agentmemory/.env | sed -E 's/(API_KEY|SECRET|TOKEN|PASSWORD)=.*/\\1=[redacted]/'; rg -n 'Provider:|Embedding provider:|Knowledge graph: extraction enabled|Consolidation pipeline|WARNING: AGENTMEMORY_AUTO_COMPRESS|WARNING: AGENTMEMORY_INJECT_CONTEXT' /tmp/agentmemory-cli.log",
     "agentmemory:check-api-local": "for p in /agentmemory/livez /agentmemory/health /agentmemory/sessions /agentmemory/actions /agentmemory/frontier /agentmemory/next; do echo \"## $p\"; curl -siS --max-time 4 http://127.0.0.1:3111$p | sed -n '1,8p'; done",
     "agentmemory:check-api-tailnet": "HOST=\"${AGENTMEMORY_TAILNET_HOST:-https://eric-claw.tail497567.ts.net:3111}\"; for p in /agentmemory/livez /agentmemory/health /agentmemory/sessions /agentmemory/actions /agentmemory/frontier /agentmemory/next; do echo \"## $p\"; curl -skiS --max-time 6 \"${HOST}$p\" | sed -n '1,8p'; done",
-    "agentmemory:reload": "npm run build && npm run agentmemory:restart && ok=0; for i in $(seq 1 90); do if curl -fs --max-time 2 http://127.0.0.1:3111/agentmemory/livez >/dev/null 2>&1; then ok=1; break; fi; sleep 1; done; test \"$ok\" = 1 && npm run agentmemory:status && npm run agentmemory:verify",
+    "agentmemory:reload": "node scripts/agentmemory-reload.mjs",
     "migrate": "node dist/functions/migrate.js",
     "test": "vitest run --exclude test/integration.test.ts",
     "test:watch": "vitest --exclude test/integration.test.ts",

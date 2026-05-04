@@ -1,0 +1,39 @@
+{
+  "id": "subagent-ownership",
+  "category": "Subagent ownership",
+  "project": "/tmp/agentmemory-codex-eval/orchestrator",
+  "priorSessions": [
+    {
+      "sessionId": "fixture_subagent_prior",
+      "events": [
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:00:00.000Z",
+          "observationId": "subagent_worker_contract",
+          "payload": {
+            "tool_name": "Edit",
+            "tool_input": { "file_path": "src/orchestrator/workers.ts" },
+            "tool_response": { "output": "src/orchestrator/workers.ts assigns worker-a ownership of src/cache.ts and worker-b ownership of src/api.ts" }
+          }
+        }
+      ]
+    }
+  ],
+  "currentSession": {
+    "sessionId": "fixture_subagent_current",
+    "events": [
+      {
+        "hook": "UserPromptSubmit",
+        "timestamp": "2026-05-04T01:00:00.000Z",
+        "payload": { "prompt": "subagent ownership in src/orchestrator/workers.ts worker-a worker-b" }
+      }
+    ]
+  },
+  "gold": {
+    "requiredFacts": ["src/orchestrator/workers.ts assigns worker-a ownership of src/cache.ts and worker-b ownership of src/api.ts"],
+    "forbiddenFacts": ["worker-a owns both src/cache.ts and src/api.ts"],
+    "goldObservationIds": ["subagent_worker_contract"],
+    "expectedSessionStatus": "active"
+  },
+  "budgets": { "contextTokens": 900, "hookP95Ms": 1500 }
+}

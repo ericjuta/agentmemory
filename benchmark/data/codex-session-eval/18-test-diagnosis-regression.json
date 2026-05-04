@@ -1,0 +1,49 @@
+{
+  "id": "test-diagnosis-regression",
+  "category": "Test diagnosis regression",
+  "project": "/tmp/agentmemory-codex-eval/notifications",
+  "priorSessions": [
+    {
+      "sessionId": "fixture_test_diag_prior",
+      "events": [
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:00:00.000Z",
+          "observationId": "test_diag_failure",
+          "payload": {
+            "tool_name": "Bash",
+            "tool_input": { "command": "npm test -- notifications" },
+            "tool_response": { "output": "notifications regression reproduced when retry count reset on reconnect" }
+          }
+        },
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:12:00.000Z",
+          "observationId": "test_diag_fix",
+          "payload": {
+            "tool_name": "Edit",
+            "tool_input": { "file_path": "src/notifications/retry.ts" },
+            "tool_response": { "output": "src/notifications/retry.ts preserves retry count across reconnect and npm test -- notifications passes" }
+          }
+        }
+      ]
+    }
+  ],
+  "currentSession": {
+    "sessionId": "fixture_test_diag_current",
+    "events": [
+      {
+        "hook": "UserPromptSubmit",
+        "timestamp": "2026-05-04T01:00:00.000Z",
+        "payload": { "prompt": "test diagnosis regression final state src/notifications/retry.ts retry count reconnect" }
+      }
+    ]
+  },
+  "gold": {
+    "requiredFacts": ["src/notifications/retry.ts preserves retry count across reconnect and npm test -- notifications passes"],
+    "forbiddenFacts": ["retry count still resets on reconnect"],
+    "goldObservationIds": ["test_diag_fix"],
+    "expectedSessionStatus": "active"
+  },
+  "budgets": { "contextTokens": 900, "hookP95Ms": 1500 }
+}
