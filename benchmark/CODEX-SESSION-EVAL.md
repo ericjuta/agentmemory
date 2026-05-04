@@ -234,3 +234,83 @@ The first useful version is done when:
 ## Current Risk Readout
 
 Current risk is low for hook transport and session state regression, medium for context relevance, and medium-high for stale/noisy recall under long real Codex sessions. The next improvement should be measurement, not more lifecycle code, because live diagnostics already show the wrapper path is stable while the unmeasured surface is memory usefulness.
+
+## Post-Implementation Future Work
+
+Status after the first release-quality implementation:
+
+- mock mode no longer uses gold labels during candidate selection.
+- local-service mode starts an isolated iii-engine plus agentmemory worker, replays real hook subprocesses, checks auth/health, waits for replayed observations, and grades context from REST output.
+- The seven seed fixture categories pass in both modes with 100% required fact recall and 0% forbidden fact leakage.
+
+What is left is mostly confidence breadth and operational polish, not a blocker for the current Codex-session gate.
+
+### 1. Expand Fixture Breadth
+
+Add more fixtures before treating the benchmark as representative of all Codex work:
+
+- multi-repo monorepo tasks where cwd, package root, and project identity differ
+- long sessions with 20+ tool events where only a few observations should survive budget pressure
+- fresh-session handoff where a closed prior thread should still produce useful summary context
+- branch/worktree-specific decisions that should not leak across sibling worktrees
+- prompt-only memory where no tool output exists but the user decision matters
+- failed-tool correction sequences where the final successful command supersedes earlier errors
+
+Acceptance: at least 20 fixtures, with every new fixture proving one distinct failure mode instead of only adding volume.
+
+### 2. Stabilize Cold-Start Runtime Gates
+
+The live service can take longer than the current reload script expects to expose the worker-manager socket, even though it becomes healthy shortly after. The eval harness now warms hook subprocesses, but the live reload path should also distinguish slow startup from failed startup.
+
+Acceptance:
+
+- npm run agentmemory:reload waits on /agentmemory/health and connected worker state, not only early /livez.
+- startup logs do not leave alarming transient ECONNREFUSED 49134 lines as the final visible state without a later connected marker.
+- reload does not expose a false negative when iii takes 30-60 seconds to finish worker-manager startup.
+
+### 3. Add Live-Readonly Diagnostic Mode
+
+A live-readonly mode remains useful, but it should not be a release gate. It should score current live retrieval/context health without mutating user memory.
+
+Acceptance:
+
+- no session creation, observation writes, compression, summaries, or access tracking side effects
+- reads /agentmemory/health, context-like debug surfaces, and existing diagnostics only
+- reports current recall/leak signals against sampled synthetic queries or explicitly supplied session IDs
+
+### 4. Track Retrieval Drift Separately From Rendering
+
+gold_observation_recall@k is now measurable, but context rendering can still pass if adjacent summaries contain the same phrase while the intended observation was not selected. That is useful but should be visible.
+
+Acceptance:
+
+- result output separates fact_recall_from_context from source_recall
+- service mode maps fixture observation IDs to actual generated IDs deterministically
+- any fixture with perfect fact recall but low source recall is marked as a warning in the markdown summary
+
+### 5. Add CI Profiles
+
+The benchmark should have two CI levels:
+
+- fast PR gate: schema tests, mock eval, and focused Codex eval tests
+- release gate: local-service eval with isolated iii-engine
+
+Acceptance:
+
+- CI commands are documented in this file and package.json
+- local-service failures print startup logs, fixture diagnostics, selected IDs, and missing/leaked facts
+- release gate does not depend on live ~/.agentmemory data or user environment keys
+
+### 6. Watch Runtime Memory/RSS Under Compression
+
+The current live stack is healthy, but LLM compression, graph extraction, vector indexes, and consolidation are all enabled. RSS should be watched as part of operational confidence, separate from benchmark correctness.
+
+Acceptance:
+
+- add a lightweight burn-in probe that records RSS, active invocations, KV latency, and hook diagnostics over time
+- define warning and fail thresholds for sustained RSS growth
+- keep this out of the Codex-session recall score so retrieval quality and runtime resource health do not blur together
+
+## Current Recommendation
+
+Keep the current benchmark as the release-confidence gate for Codex session integration. The next best investment is fixture breadth plus reload/startup reliability, not more scoring sophistication. The scoring is now honest enough; it needs more adversarial examples and cleaner operational gates around it.
