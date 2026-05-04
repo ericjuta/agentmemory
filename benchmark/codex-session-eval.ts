@@ -660,7 +660,7 @@ async function startLocalService(): Promise<{ url: string; secret: string; close
   const tsxPath = join(repoRoot, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
   const workerBin = existsSync(tsxPath) ? tsxPath : "tsx";
   const worker = spawn(workerBin, [join(repoRoot, "src", "index.ts")], {
-    cwd: repoRoot,
+    cwd: tmp,
     env,
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -720,26 +720,37 @@ function observationsInReplay(value: unknown): number {
   return Array.isArray(events) ? events.length : 0;
 }
 
+function expectedObservationCount(session: CodexSessionEvalFixture["priorSessions"][number]): number {
+  return session.events.filter((event) => ["UserPromptSubmit", "PostToolUse", "Stop"].includes(event.hook)).length;
+}
+
+async function loadServiceSession(service: { url: string; secret: string }, sessionId: string): Promise<Record<string, unknown>> {
+  return serviceJson(service, "/agentmemory/replay/load?sessionId=" + encodeURIComponent(sessionId), { method: "GET" });
+}
+
+async function waitForServiceObservations(fixture: CodexSessionEvalFixture, service: { url: string; secret: string }): Promise<void> {
+  const sessions = [...fixture.priorSessions, fixture.currentSession];
+  const expectedTotal = sessions.reduce((sum, session) => sum + expectedObservationCount(session), 0);
+  const start = Date.now();
+  while (Date.now() - start < 5000) {
+    let observedTotal = 0;
+    for (const session of sessions) {
+      const replay = await loadServiceSession(service, session.sessionId);
+      const loadedSession = replay.session && typeof replay.session === "object" ? replay.session as { observationCount?: unknown } : null;
+      observedTotal += typeof loadedSession?.observationCount === "number" ? loadedSession.observationCount : observationsInReplay(replay);
+    }
+    if (observedTotal >= expectedTotal) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
 async function serviceGradeState(fixture: CodexSessionEvalFixture, service: { url: string; secret: string }): Promise<GradeState> {
-  const contextResult = await serviceJson(service, "/agentmemory/context", {
-    method: "POST",
-    body: JSON.stringify({
-      sessionId: fixture.currentSession.sessionId + ":eval-context",
-      project: fixture.project,
-      budget: fixture.budgets.contextTokens,
-      includeRetrievalIds: true,
-    }),
-  });
-  const context = typeof contextResult.context === "string" ? contextResult.context : "";
-  const selectedObservationIds = Array.isArray(contextResult.selectedObservationIds)
-    ? contextResult.selectedObservationIds.filter((id): id is string => typeof id === "string")
-    : [];
-  const selectedSet = new Set(selectedObservationIds);
+  await waitForServiceObservations(fixture, service);
   const fixtureIdByActualId = new Map<string, string>();
   const sessions = new Map<string, { status: string }>();
   let observationsCaptured = 0;
   for (const session of [...fixture.priorSessions, fixture.currentSession]) {
-    const replay = await serviceJson(service, "/agentmemory/replay/load?sessionId=" + encodeURIComponent(session.sessionId), { method: "GET" });
+    const replay = await loadServiceSession(service, session.sessionId);
     const loadedSession = replay.session && typeof replay.session === "object" ? replay.session as { status?: unknown; observationCount?: unknown } : null;
     if (loadedSession?.status) sessions.set(session.sessionId, { status: String(loadedSession.status) });
     if (typeof loadedSession?.observationCount === "number") observationsCaptured += loadedSession.observationCount;
@@ -755,6 +766,20 @@ async function serviceGradeState(fixture: CodexSessionEvalFixture, service: { ur
       if (typeof event.id === "string") fixtureIdByActualId.set(event.id, expectedObservationIds[i]);
     }
   }
+  const contextResult = await serviceJson(service, "/agentmemory/context", {
+    method: "POST",
+    body: JSON.stringify({
+      sessionId: fixture.currentSession.sessionId + ":eval-context",
+      project: fixture.project,
+      budget: fixture.budgets.contextTokens,
+      includeRetrievalIds: true,
+    }),
+  });
+  const context = typeof contextResult.context === "string" ? contextResult.context : "";
+  const selectedObservationIds = Array.isArray(contextResult.selectedObservationIds)
+    ? contextResult.selectedObservationIds.filter((id): id is string => typeof id === "string")
+    : [];
+  const selectedSet = new Set(selectedObservationIds);
   const selectedFixtureIds = [...selectedSet]
     .map((id) => fixtureIdByActualId.get(id))
     .filter((id): id is string => typeof id === "string");
@@ -798,6 +823,17 @@ async function runServiceFixture(fixture: CodexSessionEvalFixture, service: { ur
 async function runLocalServiceEval(fixtures = loadFixtures()): Promise<EvalResults> {
   const service = await startLocalService();
   try {
+    await runHook("prompt-submit.mjs", JSON.stringify({
+      hook_event_name: "UserPromptSubmit",
+      session_id: "service_warmup",
+      cwd: "/tmp/agentmemory-codex-eval-warmup",
+      prompt: "warm local-service hook subprocess",
+    }), {
+      AGENTMEMORY_ENV_FILE: join(repoRoot, "does-not-exist.env"),
+      AGENTMEMORY_URL: service.url,
+      AGENTMEMORY_SECRET: service.secret,
+      AGENTMEMORY_HOOK_PROCESS_TIMEOUT_MS: "5000",
+    });
     const results = await runMockEval(fixtures, "local-service", async (fixture) => runServiceFixture(fixture, service), false);
     await serviceJson(service, "/agentmemory/health", { method: "GET" });
     return results;
