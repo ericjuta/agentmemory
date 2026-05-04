@@ -1,0 +1,54 @@
+{
+  "id": "stale-decision-replacement",
+  "category": "Stale decision replacement",
+  "project": "/tmp/agentmemory-codex-eval/billing-worker",
+  "priorSessions": [
+    {
+      "sessionId": "fixture_stale_prior_a",
+      "events": [
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:00:00.000Z",
+          "observationId": "stale_initial",
+          "payload": {
+            "tool_name": "Edit",
+            "tool_input": { "file_path": "src/billing/retry.ts" },
+            "tool_response": { "output": "Old retry sketch explored inline timers for billing retries" }
+          }
+        }
+      ]
+    },
+    {
+      "sessionId": "fixture_stale_prior_b",
+      "events": [
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:30:00.000Z",
+          "observationId": "stale_replacement",
+          "payload": {
+            "tool_name": "Edit",
+            "tool_input": { "file_path": "src/billing/retry.ts" },
+            "tool_response": { "output": "src/billing/retry.ts now uses queue-backed retry scheduling as the current billing retry decision; inline timers are deprecated background only" }
+          }
+        }
+      ]
+    }
+  ],
+  "currentSession": {
+    "sessionId": "fixture_stale_current",
+    "events": [
+      {
+        "hook": "UserPromptSubmit",
+        "timestamp": "2026-05-04T01:00:00.000Z",
+        "payload": { "prompt": "what is the current billing retry decision in src/billing/retry.ts" }
+      }
+    ]
+  },
+  "gold": {
+    "requiredFacts": ["src/billing/retry.ts now uses queue-backed retry scheduling as the current billing retry decision"],
+    "forbiddenFacts": ["inline timers are the current billing retry decision"],
+    "goldObservationIds": ["stale_replacement"],
+    "expectedSessionStatus": "active"
+  },
+  "budgets": { "contextTokens": 900, "hookP95Ms": 1500 }
+}

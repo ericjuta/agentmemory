@@ -14,6 +14,10 @@ plugin/scripts/*.map
 plugin/scripts/*.d.mts
 data/
 data.before_docker_import_*/
+!benchmark/data/
+!benchmark/data/codex-session-eval/
+!benchmark/data/codex-session-eval/*.json
+!benchmark/data/codex_session_eval_results.json
 .gstack/
 
 # Lock files — never commit (see feedback_no_lockfiles memory)

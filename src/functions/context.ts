@@ -29,8 +29,11 @@ export function registerContextFunction(
   tokenBudget: number,
 ): void {
   sdk.registerFunction("mem::context", 
-    async (data: { sessionId: string; project: string; budget?: number }) => {
+    async (data: { sessionId: string; project: string; budget?: number; includeRetrievalIds?: boolean }) => {
       const budget = data.budget || tokenBudget;
+      const includeRetrievalIds =
+        data.includeRetrievalIds === true ||
+        process.env["AGENTMEMORY_CONTEXT_DEBUG_IDS"] === "true";
       const blocks: ContextBlock[] = [];
 
       const profile = await kv
@@ -169,7 +172,12 @@ export function registerContextFunction(
         blocks: selected.length,
         tokens: usedTokens,
       });
-      return { context: result, blocks: selected.length, tokens: usedTokens };
+      return {
+        context: result,
+        blocks: selected.length,
+        tokens: usedTokens,
+        ...(includeRetrievalIds ? { selectedObservationIds: accessedIds } : {}),
+      };
     },
   );
 }

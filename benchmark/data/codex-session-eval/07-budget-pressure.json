@@ -1,0 +1,51 @@
+{
+  "id": "budget-pressure",
+  "category": "Budget pressure",
+  "project": "/tmp/agentmemory-codex-eval/reporting",
+  "priorSessions": [
+    {
+      "sessionId": "fixture_budget_prior",
+      "events": [
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:00:00.000Z",
+          "observationId": "budget_noise_1",
+          "payload": { "tool_name": "Read", "tool_input": { "file_path": "docs/reporting.md" }, "tool_response": { "output": "long reporting background notes alpha beta gamma delta epsilon zeta eta theta iota kappa lambda" } }
+        },
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:01:00.000Z",
+          "observationId": "budget_core",
+          "payload": {
+            "tool_name": "Edit",
+            "tool_input": { "file_path": "src/reporting/export.ts" },
+            "tool_response": { "output": "src/reporting/export.ts streams CSV rows and preserves header ordering under budget pressure" }
+          }
+        },
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:02:00.000Z",
+          "observationId": "budget_noise_2",
+          "payload": { "tool_name": "Bash", "tool_input": { "command": "rg export" }, "tool_response": { "output": "many export matches in unrelated docs and fixtures" } }
+        }
+      ]
+    }
+  ],
+  "currentSession": {
+    "sessionId": "fixture_budget_current",
+    "events": [
+      {
+        "hook": "UserPromptSubmit",
+        "timestamp": "2026-05-04T01:00:00.000Z",
+        "payload": { "prompt": "under budget pressure what matters for src/reporting/export.ts csv export" }
+      }
+    ]
+  },
+  "gold": {
+    "requiredFacts": ["src/reporting/export.ts streams CSV rows and preserves header ordering under budget pressure"],
+    "forbiddenFacts": ["CSV export buffers the full report before writing"],
+    "goldObservationIds": ["budget_core"],
+    "expectedSessionStatus": "active"
+  },
+  "budgets": { "contextTokens": 220, "hookP95Ms": 1500 }
+}

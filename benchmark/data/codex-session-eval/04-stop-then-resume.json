@@ -1,0 +1,46 @@
+{
+  "id": "stop-then-resume",
+  "category": "Stop then resume",
+  "project": "/tmp/agentmemory-codex-eval/runtime",
+  "priorSessions": [
+    {
+      "sessionId": "fixture_stop_current",
+      "events": [
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:00:00.000Z",
+          "observationId": "stop_prior_patch",
+          "payload": {
+            "tool_name": "Edit",
+            "tool_input": { "file_path": "src/runtime/closeout.ts" },
+            "tool_response": { "output": "src/runtime/closeout.ts clears idle closeout metadata when post-stop activity arrives" }
+          }
+        }
+      ]
+    }
+  ],
+  "currentSession": {
+    "sessionId": "fixture_stop_current",
+    "events": [
+      {
+        "hook": "Stop",
+        "timestamp": "2026-05-04T00:10:00.000Z",
+        "observationId": "stop_marker",
+        "payload": { "turn_id": "turn_1", "model": "gpt-test", "permission_mode": "default", "stop_hook_active": false, "last_assistant_message": "Paused before validation" }
+      },
+      {
+        "hook": "UserPromptSubmit",
+        "timestamp": "2026-05-04T00:12:00.000Z",
+        "observationId": "stop_resume_prompt",
+        "payload": { "prompt": "resume validating closeout metadata after stop" }
+      }
+    ]
+  },
+  "gold": {
+    "requiredFacts": ["src/runtime/closeout.ts clears idle closeout metadata when post-stop activity arrives"],
+    "forbiddenFacts": ["session was completed at the stop event"],
+    "goldObservationIds": ["stop_prior_patch"],
+    "expectedSessionStatus": "active"
+  },
+  "budgets": { "contextTokens": 900, "hookP95Ms": 1500 }
+}

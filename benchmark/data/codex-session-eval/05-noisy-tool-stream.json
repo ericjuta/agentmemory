@@ -1,0 +1,51 @@
+{
+  "id": "noisy-tool-stream",
+  "category": "Noisy tool stream",
+  "project": "/tmp/agentmemory-codex-eval/importer",
+  "priorSessions": [
+    {
+      "sessionId": "fixture_noisy_prior",
+      "events": [
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:00:00.000Z",
+          "observationId": "noise_rg_1",
+          "payload": { "tool_name": "Grep", "tool_input": { "pattern": "timeout" }, "tool_response": { "output": "many unrelated timeout matches" } }
+        },
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:01:00.000Z",
+          "observationId": "noise_rg_2",
+          "payload": { "tool_name": "Read", "tool_input": { "file_path": "README.md" }, "tool_response": { "output": "general importer docs" } }
+        },
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:02:00.000Z",
+          "observationId": "noise_decision",
+          "payload": {
+            "tool_name": "Edit",
+            "tool_input": { "file_path": "src/importer/chunk.ts" },
+            "tool_response": { "output": "src/importer/chunk.ts keeps streaming parser because buffered import exceeded memory budget" }
+          }
+        }
+      ]
+    }
+  ],
+  "currentSession": {
+    "sessionId": "fixture_noisy_current",
+    "events": [
+      {
+        "hook": "UserPromptSubmit",
+        "timestamp": "2026-05-04T01:00:00.000Z",
+        "payload": { "prompt": "why did importer keep streaming parser in src/importer/chunk.ts" }
+      }
+    ]
+  },
+  "gold": {
+    "requiredFacts": ["src/importer/chunk.ts keeps streaming parser because buffered import exceeded memory budget"],
+    "forbiddenFacts": ["buffered import is the selected parser"],
+    "goldObservationIds": ["noise_decision"],
+    "expectedSessionStatus": "active"
+  },
+  "budgets": { "contextTokens": 900, "hookP95Ms": 1500 }
+}

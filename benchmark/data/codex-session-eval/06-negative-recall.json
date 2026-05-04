@@ -1,0 +1,55 @@
+{
+  "id": "negative-recall",
+  "category": "Negative recall",
+  "project": "/tmp/agentmemory-codex-eval/orders-api",
+  "priorSessions": [
+    {
+      "sessionId": "fixture_negative_wrong",
+      "events": [
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:00:00.000Z",
+          "observationId": "negative_neighbor",
+          "payload": {
+            "cwd": "/tmp/agentmemory-codex-eval/orders-admin",
+            "tool_name": "Edit",
+            "tool_input": { "file_path": "src/orders/cache.ts" },
+            "tool_response": { "output": "orders-admin uses Redis cache for order lookups" }
+          }
+        }
+      ]
+    },
+    {
+      "sessionId": "fixture_negative_right",
+      "events": [
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:10:00.000Z",
+          "observationId": "negative_api",
+          "payload": {
+            "tool_name": "Edit",
+            "tool_input": { "file_path": "src/orders/cache.ts" },
+            "tool_response": { "output": "orders-api keeps in-process LRU cache for order lookups in src/orders/cache.ts" }
+          }
+        }
+      ]
+    }
+  ],
+  "currentSession": {
+    "sessionId": "fixture_negative_current",
+    "events": [
+      {
+        "hook": "UserPromptSubmit",
+        "timestamp": "2026-05-04T01:00:00.000Z",
+        "payload": { "prompt": "what cache does orders-api use in src/orders/cache.ts" }
+      }
+    ]
+  },
+  "gold": {
+    "requiredFacts": ["orders-api keeps in-process LRU cache for order lookups in src/orders/cache.ts"],
+    "forbiddenFacts": ["orders-admin uses Redis cache for order lookups"],
+    "goldObservationIds": ["negative_api"],
+    "expectedSessionStatus": "active"
+  },
+  "budgets": { "contextTokens": 900, "hookP95Ms": 1500 }
+}

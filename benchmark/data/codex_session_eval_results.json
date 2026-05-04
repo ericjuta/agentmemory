@@ -1,0 +1,218 @@
+{
+  "mode": "local-service",
+  "generatedAt": "2026-05-04T16:45:21.885Z",
+  "passed": true,
+  "fixtures": [
+    {
+      "fixtureId": "same-repo-continuation",
+      "category": "Same-repo continuation",
+      "passed": true,
+      "requiredFactRecall": 1,
+      "forbiddenFactLeakRate": 0,
+      "goldObservationRecallAtK": 1,
+      "contextPrecisionProxy": 1,
+      "sessionStateCorrect": true,
+      "hookContractCorrect": true,
+      "contextBytes": 499,
+      "estimatedContextTokens": 125,
+      "hookLatencyMs": {
+        "p50": 224,
+        "p95": 281,
+        "max": 281
+      },
+      "observationsCaptured": 3,
+      "missingRequiredFacts": [],
+      "leakedForbiddenFacts": [],
+      "selectedObservationIds": [
+        "same_auth_timeout",
+        "obs_same-repo-continuation_3",
+        "same_prompt"
+      ],
+      "diagnostics": 4
+    },
+    {
+      "fixtureId": "stale-decision-replacement",
+      "category": "Stale decision replacement",
+      "passed": true,
+      "requiredFactRecall": 1,
+      "forbiddenFactLeakRate": 0,
+      "goldObservationRecallAtK": 1,
+      "contextPrecisionProxy": 0.3333333333333333,
+      "sessionStateCorrect": true,
+      "hookContractCorrect": true,
+      "contextBytes": 637,
+      "estimatedContextTokens": 160,
+      "hookLatencyMs": {
+        "p50": 222,
+        "p95": 308,
+        "max": 308
+      },
+      "observationsCaptured": 3,
+      "missingRequiredFacts": [],
+      "leakedForbiddenFacts": [],
+      "selectedObservationIds": [
+        "stale_replacement",
+        "obs_stale-decision-replacement_3",
+        "stale_initial"
+      ],
+      "diagnostics": 3
+    },
+    {
+      "fixtureId": "cross-session-implementation-trail",
+      "category": "Cross-session implementation trail",
+      "passed": true,
+      "requiredFactRecall": 1,
+      "forbiddenFactLeakRate": 0,
+      "goldObservationRecallAtK": 1,
+      "contextPrecisionProxy": 0.75,
+      "sessionStateCorrect": true,
+      "hookContractCorrect": true,
+      "contextBytes": 700,
+      "estimatedContextTokens": 175,
+      "hookLatencyMs": {
+        "p50": 213,
+        "p95": 318,
+        "max": 318
+      },
+      "observationsCaptured": 4,
+      "missingRequiredFacts": [],
+      "leakedForbiddenFacts": [],
+      "selectedObservationIds": [
+        "trail_tests",
+        "obs_cross-session-implementation-trail_4",
+        "trail_api",
+        "trail_panel"
+      ],
+      "diagnostics": 4
+    },
+    {
+      "fixtureId": "stop-then-resume",
+      "category": "Stop then resume",
+      "passed": true,
+      "requiredFactRecall": 1,
+      "forbiddenFactLeakRate": 0,
+      "goldObservationRecallAtK": 1,
+      "contextPrecisionProxy": 0.3333333333333333,
+      "sessionStateCorrect": true,
+      "hookContractCorrect": true,
+      "contextBytes": 439,
+      "estimatedContextTokens": 110,
+      "hookLatencyMs": {
+        "p50": 219,
+        "p95": 266,
+        "max": 266
+      },
+      "observationsCaptured": 3,
+      "missingRequiredFacts": [],
+      "leakedForbiddenFacts": [],
+      "selectedObservationIds": [
+        "stop_prior_patch",
+        "stop_resume_prompt",
+        "stop_marker"
+      ],
+      "diagnostics": 3
+    },
+    {
+      "fixtureId": "noisy-tool-stream",
+      "category": "Noisy tool stream",
+      "passed": true,
+      "requiredFactRecall": 1,
+      "forbiddenFactLeakRate": 0,
+      "goldObservationRecallAtK": 1,
+      "contextPrecisionProxy": 0.3333333333333333,
+      "sessionStateCorrect": true,
+      "hookContractCorrect": true,
+      "contextBytes": 513,
+      "estimatedContextTokens": 129,
+      "hookLatencyMs": {
+        "p50": 214,
+        "p95": 284,
+        "max": 284
+      },
+      "observationsCaptured": 4,
+      "missingRequiredFacts": [],
+      "leakedForbiddenFacts": [],
+      "selectedObservationIds": [
+        "noise_decision",
+        "obs_noisy-tool-stream_4",
+        "noise_rg_2"
+      ],
+      "diagnostics": 4
+    },
+    {
+      "fixtureId": "negative-recall",
+      "category": "Negative recall",
+      "passed": true,
+      "requiredFactRecall": 1,
+      "forbiddenFactLeakRate": 0,
+      "goldObservationRecallAtK": 1,
+      "contextPrecisionProxy": 0.5,
+      "sessionStateCorrect": true,
+      "hookContractCorrect": true,
+      "contextBytes": 391,
+      "estimatedContextTokens": 98,
+      "hookLatencyMs": {
+        "p50": 215,
+        "p95": 276,
+        "max": 276
+      },
+      "observationsCaptured": 3,
+      "missingRequiredFacts": [],
+      "leakedForbiddenFacts": [],
+      "selectedObservationIds": [
+        "negative_api",
+        "obs_negative-recall_3"
+      ],
+      "diagnostics": 3
+    },
+    {
+      "fixtureId": "budget-pressure",
+      "category": "Budget pressure",
+      "passed": true,
+      "requiredFactRecall": 1,
+      "forbiddenFactLeakRate": 0,
+      "goldObservationRecallAtK": 1,
+      "contextPrecisionProxy": 0.3333333333333333,
+      "sessionStateCorrect": true,
+      "hookContractCorrect": true,
+      "contextBytes": 553,
+      "estimatedContextTokens": 139,
+      "hookLatencyMs": {
+        "p50": 206,
+        "p95": 273,
+        "max": 273
+      },
+      "observationsCaptured": 4,
+      "missingRequiredFacts": [],
+      "leakedForbiddenFacts": [],
+      "selectedObservationIds": [
+        "budget_core",
+        "obs_budget-pressure_4",
+        "budget_noise_2"
+      ],
+      "diagnostics": 4
+    }
+  ],
+  "metrics": {
+    "fixtureCount": 7,
+    "requiredFactRecallAtContext": 1,
+    "forbiddenFactLeakRate": 0,
+    "goldObservationRecallAtK": 1,
+    "contextPrecisionProxy": 0.511904761904762,
+    "sessionStateCorrectness": 1,
+    "hookContractCorrectness": 1,
+    "hookP95Ms": 318,
+    "maxContextTokens": 175,
+    "observationsCaptured": 24,
+    "disabledInjectionNoOutput": true
+  },
+  "gates": {
+    "hookContractCorrectness": true,
+    "sessionStateCorrectness": true,
+    "requiredFactRecall": true,
+    "forbiddenFactLeakRate": true,
+    "hookP95": true,
+    "contextBudget": true,
+    "disabledInjectionNoOutput": true
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "id": "same-repo-continuation",
+  "category": "Same-repo continuation",
+  "project": "/tmp/agentmemory-codex-eval/shop-api",
+  "priorSessions": [
+    {
+      "sessionId": "fixture_same_prior",
+      "events": [
+        {
+          "hook": "UserPromptSubmit",
+          "timestamp": "2026-05-04T00:00:00.000Z",
+          "observationId": "same_prompt",
+          "payload": { "prompt": "fix auth timeout in shop api" }
+        },
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:01:00.000Z",
+          "observationId": "same_auth_timeout",
+          "payload": {
+            "tool_name": "Edit",
+            "tool_input": { "file_path": "src/auth.ts" },
+            "tool_response": { "output": "src/auth.ts uses AbortSignal.timeout for auth timeout handling; npm test -- auth passed; blocker remains token refresh retry coverage" }
+          }
+        }
+      ]
+    }
+  ],
+  "currentSession": {
+    "sessionId": "fixture_same_current",
+    "events": [
+      {
+        "hook": "SessionStart",
+        "timestamp": "2026-05-04T01:00:00.000Z",
+        "payload": { "cwd": "/tmp/agentmemory-codex-eval/shop-api" }
+      },
+      {
+        "hook": "UserPromptSubmit",
+        "timestamp": "2026-05-04T01:00:10.000Z",
+        "payload": { "prompt": "continue the auth timeout work in src/auth.ts" }
+      }
+    ]
+  },
+  "gold": {
+    "requiredFacts": [
+      "src/auth.ts uses AbortSignal.timeout for auth timeout handling",
+      "npm test -- auth passed",
+      "blocker remains token refresh retry coverage"
+    ],
+    "forbiddenFacts": ["auth timeout was left unfixed"],
+    "goldObservationIds": ["same_auth_timeout"],
+    "expectedSessionStatus": "active"
+  },
+  "budgets": { "contextTokens": 900, "hookP95Ms": 1500 }
+}

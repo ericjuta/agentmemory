@@ -1,0 +1,73 @@
+{
+  "id": "cross-session-implementation-trail",
+  "category": "Cross-session implementation trail",
+  "project": "/tmp/agentmemory-codex-eval/search-ui",
+  "priorSessions": [
+    {
+      "sessionId": "fixture_trail_prior_1",
+      "events": [
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:00:00.000Z",
+          "observationId": "trail_api",
+          "payload": {
+            "tool_name": "Edit",
+            "tool_input": { "file_path": "src/search/api.ts" },
+            "tool_response": { "output": "src/search/api.ts returns facet counts from /api/search facets endpoint" }
+          }
+        }
+      ]
+    },
+    {
+      "sessionId": "fixture_trail_prior_2",
+      "events": [
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:20:00.000Z",
+          "observationId": "trail_panel",
+          "payload": {
+            "tool_name": "Edit",
+            "tool_input": { "file_path": "src/search/FacetPanel.tsx" },
+            "tool_response": { "output": "src/search/FacetPanel.tsx renders selected facet chips and count badges" }
+          }
+        }
+      ]
+    },
+    {
+      "sessionId": "fixture_trail_prior_3",
+      "events": [
+        {
+          "hook": "PostToolUse",
+          "timestamp": "2026-05-04T00:40:00.000Z",
+          "observationId": "trail_tests",
+          "payload": {
+            "tool_name": "Bash",
+            "tool_input": { "command": "npm test -- search" },
+            "tool_response": { "output": "npm test -- search passes for facet counts and chip rendering" }
+          }
+        }
+      ]
+    }
+  ],
+  "currentSession": {
+    "sessionId": "fixture_trail_current",
+    "events": [
+      {
+        "hook": "UserPromptSubmit",
+        "timestamp": "2026-05-04T01:00:00.000Z",
+        "payload": { "prompt": "summarize current search facet implementation trail" }
+      }
+    ]
+  },
+  "gold": {
+    "requiredFacts": [
+      "src/search/api.ts returns facet counts from /api/search facets endpoint",
+      "src/search/FacetPanel.tsx renders selected facet chips and count badges",
+      "npm test -- search passes for facet counts and chip rendering"
+    ],
+    "forbiddenFacts": ["facet counts are still unimplemented"],
+    "goldObservationIds": ["trail_api", "trail_panel", "trail_tests"],
+    "expectedSessionStatus": "active"
+  },
+  "budgets": { "contextTokens": 1200, "hookP95Ms": 1500 }
+}
