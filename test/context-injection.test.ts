@@ -185,6 +185,61 @@ describe("session-start hook — context injection gate (#143)", () => {
       );
     }
   });
+
+  it("keeps live AGENTMEMORY env values ahead of wrapper env file", async () => {
+    const requests: Array<{ url: string | undefined; body: unknown }> = [];
+    const server = createServer((req, res) => {
+      let body = "";
+      req.on("data", (chunk) => {
+        body += chunk.toString();
+      });
+      req.on("end", () => {
+        requests.push({ url: req.url, body: body ? JSON.parse(body) : undefined });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ context: "<agentmemory-context>env-file</agentmemory-context>" }));
+      });
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("missing test server address");
+    const envDir = mkdtempSync(join(tmpdir(), "agentmemory-hook-env-"));
+    const envFile = join(envDir, ".env");
+    writeFileSync(
+      envFile,
+      [
+        "AGENTMEMORY_INJECT_CONTEXT=true",
+        "AGENTMEMORY_URL=http://127.0.0.1:1",
+      ].join("\n"),
+    );
+
+    try {
+      const payload = JSON.stringify({
+        hook_event_name: "SessionStart",
+        session_id: "ses_test",
+        cwd: "/tmp/fake-project",
+      });
+      const result = await runHook(
+        "codex-env-wrapper.mjs",
+        payload,
+        {
+          AGENTMEMORY_ENV_FILE: envFile,
+          AGENTMEMORY_INJECT_CONTEXT: "false",
+          AGENTMEMORY_URL: `http://127.0.0.1:${address.port}`,
+        },
+        ["session-start.mjs"],
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toBe("");
+      expect(requests.map((r) => r.url)).toEqual(["/agentmemory/session/start"]);
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((err) => (err ? reject(err) : resolve())),
+      );
+    }
+  });
 });
 
 describe("user-prompt-submit hook — Codex context injection", () => {
@@ -233,6 +288,7 @@ describe("user-prompt-submit hook — Codex context injection", () => {
       });
       const result = await runHook("prompt-submit.mjs", payload, {
         AGENTMEMORY_INJECT_CONTEXT: "true",
+        AGENTMEMORY_PROMPT_CONTEXT_BUDGET: "1234",
         AGENTMEMORY_URL: `http://127.0.0.1:${address.port}`,
       });
 
@@ -251,6 +307,7 @@ describe("user-prompt-submit hook — Codex context injection", () => {
       expect(requests[1]?.body).toMatchObject({
         sessionId: "ses_test",
         project: "/tmp/fake-project",
+        budget: 1234,
       });
       expect(JSON.parse(result.stdout)).toEqual({
         hookSpecificOutput: {

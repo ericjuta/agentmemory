@@ -401,6 +401,8 @@ Then add the MCP config for your agent:
 | **Aider** | REST API: `curl -X POST http://localhost:3111/agentmemory/smart-search -d '{"query": "auth"}'` |
 | **Any agent (32+)** | `npx skillkit install agentmemory` |
 
+For Codex native hooks, keep MCP setup separate from lifecycle capture. Install only Codex-supported events in `~/.codex/hooks.json` (`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `PostToolUse`, `Stop`) and run hook scripts through `plugin/scripts/codex-env-wrapper.mjs` so `AGENTMEMORY_*` settings load from `AGENTMEMORY_ENV_FILE` or `~/.agentmemory/.env`. Do not copy Claude/plugin-only events such as `Notification`, `PostToolUseFailure`, `PreCompact`, `SubagentStart`, `SubagentStop`, `TaskCompleted`, or `SessionEnd` into native Codex hook config.
+
 ### From source
 
 ```bash
@@ -550,9 +552,9 @@ Memories decay over time (Ebbinghaus curve). Frequently accessed memories streng
 | Hook | Captures |
 |------|----------|
 | `SessionStart` | Project path, session ID |
-| `UserPromptSubmit` | User prompts (privacy-filtered) |
+| `UserPromptSubmit` | User prompts (privacy-filtered) + optional Codex turn context |
 | `PermissionRequest` | Tool permission prompts before execution |
-| `PreToolUse` | File access patterns + enriched context |
+| `PreToolUse` | File access patterns + optional legacy enrichment |
 | `PostToolUse` | Tool name, input, output |
 | `PostToolUseFailure` | Error context |
 | `PreCompact` | Re-injects memory before compaction |
@@ -862,19 +864,20 @@ Create `~/.agentmemory/.env`:
                                    # files in project_context. Fire-
                                    # and-forget; does not block.
 # AGENTMEMORY_INJECT_CONTEXT=false # OFF by default (#143). When on:
-                                   # - SessionStart may inject ~1-2K
-                                   #   chars of project context into
-                                   #   the first turn of each session
-                                   #   (this is what actually reaches
-                                   #   the model — Claude Code treats
-                                   #   SessionStart stdout as context)
+                                   # - SessionStart may inject project
+                                   #   context into the first turn.
+                                   # - UserPromptSubmit may inject recalled
+                                   #   context into each Codex prompt via
+                                   #   native hookSpecificOutput JSON.
                                    # - PreToolUse fires /agentmemory/enrich
-                                   #   on every file-touching tool call
-                                   #   (resource cleanup, not a token
-                                   #   fix — PreToolUse stdout is debug
-                                   #   log only per Claude Code docs)
+                                   #   on file-touching tools for compatible
+                                   #   clients that consume that output.
                                    # Observations are still captured via
                                    # PostToolUse regardless of this flag.
+# AGENTMEMORY_PROMPT_CONTEXT_BUDGET= # Optional positive token budget for
+                                   # UserPromptSubmit /agentmemory/context
+                                   # calls. Defaults to the server context
+                                   # budget when unset.
 # GRAPH_EXTRACTION_ENABLED=false
 # CONSOLIDATION_ENABLED=true
 # LESSON_DECAY_ENABLED=true
