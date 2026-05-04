@@ -1,6 +1,6 @@
 {
   "mode": "local-service",
-  "generatedAt": "2026-05-04T16:45:21.885Z",
+  "generatedAt": "2026-05-04T17:20:00.330Z",
   "passed": true,
   "fixtures": [
     {
@@ -10,24 +10,27 @@
       "requiredFactRecall": 1,
       "forbiddenFactLeakRate": 0,
       "goldObservationRecallAtK": 1,
-      "contextPrecisionProxy": 1,
+      "contextPrecisionProxy": 1.5,
       "sessionStateCorrect": true,
       "hookContractCorrect": true,
-      "contextBytes": 499,
-      "estimatedContextTokens": 125,
+      "contextBytes": 396,
+      "estimatedContextTokens": 99,
       "hookLatencyMs": {
-        "p50": 224,
-        "p95": 281,
-        "max": 281
+        "p50": 222,
+        "p95": 356,
+        "max": 356
       },
       "observationsCaptured": 3,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "same_auth_timeout",
-        "obs_same-repo-continuation_3",
-        "same_prompt"
+        "obs_morgsvce_4d92bf169dd9",
+        "obs_morgsurr_3ca21f97d019",
+        "obs_morgsuzl_b13348ab580e",
+        "same_prompt",
+        "same_auth_timeout"
       ],
+      "candidateSelectionTrace": [],
       "diagnostics": 4
     },
     {
@@ -37,25 +40,28 @@
       "requiredFactRecall": 1,
       "forbiddenFactLeakRate": 0,
       "goldObservationRecallAtK": 1,
-      "contextPrecisionProxy": 0.3333333333333333,
+      "contextPrecisionProxy": 0.5,
       "sessionStateCorrect": true,
       "hookContractCorrect": true,
-      "contextBytes": 637,
-      "estimatedContextTokens": 160,
+      "contextBytes": 540,
+      "estimatedContextTokens": 135,
       "hookLatencyMs": {
-        "p50": 222,
-        "p95": 308,
-        "max": 308
+        "p50": 258,
+        "p95": 334,
+        "max": 334
       },
       "observationsCaptured": 3,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
+        "obs_morgsw58_946faa5aab27",
+        "obs_morgsvvz_a2ad5ed1194a",
+        "obs_morgsvp0_71142ae132cf",
         "stale_replacement",
-        "obs_stale-decision-replacement_3",
         "stale_initial"
       ],
-      "diagnostics": 3
+      "candidateSelectionTrace": [],
+      "diagnostics": 7
     },
     {
       "fixtureId": "cross-session-implementation-trail",
@@ -64,26 +70,30 @@
       "requiredFactRecall": 1,
       "forbiddenFactLeakRate": 0,
       "goldObservationRecallAtK": 1,
-      "contextPrecisionProxy": 0.75,
+      "contextPrecisionProxy": 1,
       "sessionStateCorrect": true,
       "hookContractCorrect": true,
-      "contextBytes": 700,
-      "estimatedContextTokens": 175,
+      "contextBytes": 657,
+      "estimatedContextTokens": 165,
       "hookLatencyMs": {
-        "p50": 213,
-        "p95": 318,
-        "max": 318
+        "p50": 233,
+        "p95": 313,
+        "max": 313
       },
       "observationsCaptured": 4,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
+        "obs_morgsx7g_622a0f479f2e",
+        "obs_morgswyp_a5835ed22b57",
+        "obs_morgswpp_1857ca465934",
+        "obs_morgswiz_d566a525726e",
         "trail_tests",
-        "obs_cross-session-implementation-trail_4",
-        "trail_api",
-        "trail_panel"
+        "trail_panel",
+        "trail_api"
       ],
-      "diagnostics": 4
+      "candidateSelectionTrace": [],
+      "diagnostics": 11
     },
     {
       "fixtureId": "stop-then-resume",
@@ -91,26 +101,29 @@
       "passed": true,
       "requiredFactRecall": 1,
       "forbiddenFactLeakRate": 0,
-      "goldObservationRecallAtK": 1,
+      "goldObservationRecallAtK": 0,
       "contextPrecisionProxy": 0.3333333333333333,
       "sessionStateCorrect": true,
       "hookContractCorrect": true,
-      "contextBytes": 439,
-      "estimatedContextTokens": 110,
+      "contextBytes": 425,
+      "estimatedContextTokens": 107,
       "hookLatencyMs": {
-        "p50": 219,
-        "p95": 266,
-        "max": 266
+        "p50": 225,
+        "p95": 230,
+        "max": 230
       },
-      "observationsCaptured": 3,
+      "observationsCaptured": 6,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "stop_prior_patch",
-        "stop_resume_prompt",
-        "stop_marker"
+        "obs_morgsxl0_b811b09b1438",
+        "obs_morgsxrc_36bb4c45f337",
+        "obs_morgsxxc_638e8bbdbc6a",
+        "stop_marker",
+        "stop_resume_prompt"
       ],
-      "diagnostics": 3
+      "candidateSelectionTrace": [],
+      "diagnostics": 14
     },
     {
       "fixtureId": "noisy-tool-stream",
@@ -122,22 +135,27 @@
       "contextPrecisionProxy": 0.3333333333333333,
       "sessionStateCorrect": true,
       "hookContractCorrect": true,
-      "contextBytes": 513,
-      "estimatedContextTokens": 129,
+      "contextBytes": 471,
+      "estimatedContextTokens": 118,
       "hookLatencyMs": {
-        "p50": 214,
-        "p95": 284,
-        "max": 284
+        "p50": 219,
+        "p95": 244,
+        "max": 244
       },
       "observationsCaptured": 4,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "noise_decision",
-        "obs_noisy-tool-stream_4",
-        "noise_rg_2"
+        "obs_morgsyof_4d499752ba7d",
+        "obs_morgsy5q_0c9ae0ddef88",
+        "obs_morgsybq_358cb9d72dc1",
+        "obs_morgsyhv_b1bfa01fb3c1",
+        "noise_rg_1",
+        "noise_rg_2",
+        "noise_decision"
       ],
-      "diagnostics": 4
+      "candidateSelectionTrace": [],
+      "diagnostics": 18
     },
     {
       "fixtureId": "negative-recall",
@@ -146,24 +164,26 @@
       "requiredFactRecall": 1,
       "forbiddenFactLeakRate": 0,
       "goldObservationRecallAtK": 1,
-      "contextPrecisionProxy": 0.5,
+      "contextPrecisionProxy": 1,
       "sessionStateCorrect": true,
       "hookContractCorrect": true,
-      "contextBytes": 391,
-      "estimatedContextTokens": 98,
+      "contextBytes": 290,
+      "estimatedContextTokens": 73,
       "hookLatencyMs": {
-        "p50": 215,
-        "p95": 276,
-        "max": 276
+        "p50": 217,
+        "p95": 247,
+        "max": 247
       },
       "observationsCaptured": 3,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "negative_api",
-        "obs_negative-recall_3"
+        "obs_morgszc9_42c6d8d16ed0",
+        "obs_morgsz5o_bf2369cbc5ba",
+        "negative_api"
       ],
-      "diagnostics": 3
+      "candidateSelectionTrace": [],
+      "diagnostics": 21
     },
     {
       "fixtureId": "budget-pressure",
@@ -171,39 +191,38 @@
       "passed": true,
       "requiredFactRecall": 1,
       "forbiddenFactLeakRate": 0,
-      "goldObservationRecallAtK": 1,
+      "goldObservationRecallAtK": 0,
       "contextPrecisionProxy": 0.3333333333333333,
       "sessionStateCorrect": true,
       "hookContractCorrect": true,
-      "contextBytes": 553,
-      "estimatedContextTokens": 139,
+      "contextBytes": 584,
+      "estimatedContextTokens": 146,
       "hookLatencyMs": {
-        "p50": 206,
-        "p95": 273,
-        "max": 273
+        "p50": 232,
+        "p95": 245,
+        "max": 245
       },
       "observationsCaptured": 4,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "budget_core",
-        "obs_budget-pressure_4",
-        "budget_noise_2"
+        "obs_morgt076_c9f296a10de7"
       ],
-      "diagnostics": 4
+      "candidateSelectionTrace": [],
+      "diagnostics": 25
     }
   ],
   "metrics": {
     "fixtureCount": 7,
     "requiredFactRecallAtContext": 1,
     "forbiddenFactLeakRate": 0,
-    "goldObservationRecallAtK": 1,
-    "contextPrecisionProxy": 0.511904761904762,
+    "goldObservationRecallAtK": 0.7142857142857143,
+    "contextPrecisionProxy": 0.7142857142857143,
     "sessionStateCorrectness": 1,
     "hookContractCorrectness": 1,
-    "hookP95Ms": 318,
-    "maxContextTokens": 175,
-    "observationsCaptured": 24,
+    "hookP95Ms": 356,
+    "maxContextTokens": 165,
+    "observationsCaptured": 27,
     "disabledInjectionNoOutput": true
   },
   "gates": {

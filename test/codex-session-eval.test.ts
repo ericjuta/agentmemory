@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadFixtures, runMockEval } from "../benchmark/codex-session-eval.js";
+import { loadFixtures, runMockEval, type CodexSessionEvalFixture } from "../benchmark/codex-session-eval.js";
 
 describe("Codex session replay eval", () => {
   it("loads the seven required fixture categories", () => {
@@ -25,5 +25,63 @@ describe("Codex session replay eval", () => {
     expect(results.metrics.sessionStateCorrectness).toBe(1);
     expect(results.metrics.hookContractCorrectness).toBe(1);
     expect(results.metrics.disabledInjectionNoOutput).toBe(true);
+  }, 30000);
+
+  it("uses gold labels only for grading, not mock candidate selection", async () => {
+    const fixture: CodexSessionEvalFixture = {
+      id: "label-isolation",
+      category: "Label isolation",
+      project: "/tmp/agentmemory-codex-eval/label-isolation",
+      priorSessions: [{
+        sessionId: "prior_label_isolation",
+        events: [
+          {
+            hook: "PostToolUse",
+            timestamp: "2026-01-01T00:00:00.000Z",
+            observationId: "labeled_only",
+            payload: {
+              tool_name: "Edit",
+              tool_input: { file_path: "docs/noise.md" },
+              tool_response: { output: "query target stale forbidden distractor" },
+            },
+          },
+          {
+            hook: "PostToolUse",
+            timestamp: "2026-01-01T00:00:01.000Z",
+            observationId: "relevant_by_query",
+            payload: {
+              tool_name: "Edit",
+              tool_input: { file_path: "src/target.ts" },
+              tool_response: { output: "query target required fact" },
+            },
+          },
+        ],
+      }],
+      currentSession: {
+        sessionId: "current_label_isolation",
+        events: [{
+          hook: "UserPromptSubmit",
+          timestamp: "2026-01-01T00:00:02.000Z",
+          payload: { prompt: "query target required src/target.ts" },
+        }],
+      },
+      gold: {
+        requiredFacts: ["query target required fact"],
+        forbiddenFacts: ["query target stale forbidden distractor"],
+        goldObservationIds: ["labeled_only"],
+        expectedSessionStatus: "active",
+      },
+      budgets: {
+        contextTokens: 80,
+        hookP95Ms: 1500,
+      },
+    };
+
+    const results = await runMockEval([fixture]);
+    const [result] = results.fixtures;
+    expect(result.selectedObservationIds).toContain("relevant_by_query");
+    expect(result.selectedObservationIds).not.toContain("labeled_only");
+    expect(result.candidateSelectionTrace.map((candidate) => candidate.id)).toContain("labeled_only");
+    expect(result.leakedForbiddenFacts).toEqual([]);
   }, 30000);
 });
