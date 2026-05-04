@@ -45,6 +45,7 @@ export const KV = {
   imageEmbeddings: "mem:image-embeddings",
   slots: "mem:slots",
   globalSlots: "mem:slots:global",
+  hookDiagnostics: "mem:hook-diagnostics",
   state: "mem:state",
 } as const;
 

@@ -78,4 +78,8 @@ describe("KV scopes", () => {
   it("has mesh scope", () => {
     expect(KV.mesh).toBe("mem:mesh");
   });
+
+  it("has hook diagnostics scope", () => {
+    expect(KV.hookDiagnostics).toBe("mem:hook-diagnostics");
+  });
 });

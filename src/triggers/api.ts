@@ -257,6 +257,109 @@ export function registerApiTriggers(
     },
   });
 
+  sdk.registerFunction("api::hook-diagnostics::record",
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const hookName = asNonEmptyString(body.hookName);
+      const status = asNonEmptyString(body.status);
+      if (!hookName || !status) {
+        return {
+          status_code: 400,
+          body: { error: "hookName and status are required strings" },
+        };
+      }
+      if (!["success", "failure", "timeout"].includes(status)) {
+        return {
+          status_code: 400,
+          body: { error: "status must be one of: success, failure, timeout" },
+        };
+      }
+      const latencyMs = parseOptionalFiniteNumber(body.latencyMs);
+      if (latencyMs === null || (latencyMs !== undefined && latencyMs < 0)) {
+        return {
+          status_code: 400,
+          body: { error: "latencyMs must be a non-negative number" },
+        };
+      }
+      const exitCode = body.exitCode === null
+        ? null
+        : parseOptionalFiniteNumber(body.exitCode);
+      if (
+        (body.exitCode !== null && exitCode === null) ||
+        (exitCode !== undefined &&
+          exitCode !== null &&
+          (exitCode !== Math.trunc(exitCode) || exitCode < 0))
+      ) {
+        return {
+          status_code: 400,
+          body: { error: "exitCode must be a non-negative integer or null" },
+        };
+      }
+      const payload: {
+        hookName: string;
+        status: string;
+        source?: string;
+        latencyMs?: number;
+        error?: string;
+        exitCode?: number | null;
+        signal?: string | null;
+        timestamp?: string;
+      } = { hookName, status };
+      const source = asNonEmptyString(body.source);
+      if (source) payload.source = source;
+      if (latencyMs !== undefined) payload.latencyMs = latencyMs;
+      const error = asNonEmptyString(body.error);
+      if (error) payload.error = error;
+      if (exitCode !== undefined) payload.exitCode = exitCode;
+      if (body.signal === null) {
+        payload.signal = null;
+      } else {
+        const signal = asNonEmptyString(body.signal);
+        if (signal) payload.signal = signal;
+      }
+      const timestamp = asNonEmptyString(body.timestamp);
+      if (timestamp) payload.timestamp = timestamp;
+      const result = await sdk.trigger({
+        function_id: "mem::hook-diagnostics-record",
+        payload,
+      });
+      return { status_code: 202, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::hook-diagnostics::record",
+    config: {
+      api_path: "/agentmemory/hooks/diagnostics",
+      http_method: "POST",
+      middleware_function_ids: ["middleware::api-auth"],
+    },
+  });
+
+  sdk.registerFunction("api::hook-diagnostics::list",
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const hookName = asNonEmptyString(req.query_params?.["hookName"]);
+      const result = await sdk.trigger({
+        function_id: "mem::hook-diagnostics-list",
+        payload: hookName ? { hookName } : {},
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::hook-diagnostics::list",
+    config: {
+      api_path: "/agentmemory/hooks/diagnostics",
+      http_method: "GET",
+      middleware_function_ids: ["middleware::api-auth"],
+    },
+  });
+
   sdk.registerFunction("api::observe",
     async (req: ApiRequest<HookPayload>): Promise<Response> => {
       const body = (req.body ?? {}) as Record<string, unknown>;
@@ -581,6 +684,48 @@ export function registerApiTriggers(
     function_id: "api::session::end",
     config: {
       api_path: "/agentmemory/session/end",
+      http_method: "POST",
+      middleware_function_ids: ["middleware::api-auth"],
+    },
+  });
+
+  sdk.registerFunction("api::session::closeout",
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const sessionId = asNonEmptyString(body.sessionId);
+      if (!sessionId) {
+        return { status_code: 400, body: { error: "sessionId is required" } };
+      }
+      const payload: {
+        sessionId: string;
+        reason?: string;
+        summarize?: boolean;
+      } = { sessionId };
+      const reason = asNonEmptyString(body.reason);
+      if (reason) payload.reason = reason;
+      if (body.summarize !== undefined) {
+        if (typeof body.summarize !== "boolean") {
+          return {
+            status_code: 400,
+            body: { error: "summarize must be a boolean" },
+          };
+        }
+        payload.summarize = body.summarize;
+      }
+      const result = await sdk.trigger({
+        function_id: "mem::session-closeout",
+        payload,
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::session::closeout",
+    config: {
+      api_path: "/agentmemory/session/closeout",
       http_method: "POST",
       middleware_function_ids: ["middleware::api-auth"],
     },

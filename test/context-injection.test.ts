@@ -172,7 +172,15 @@ describe("session-start hook — context injection gate (#143)", () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
-      expect(requests.map((r) => r.url)).toEqual(["/agentmemory/session/start"]);
+      expect(requests.map((r) => r.url)).toEqual([
+        "/agentmemory/session/start",
+        "/agentmemory/hooks/diagnostics",
+      ]);
+      expect(requests[1].body).toMatchObject({
+        hookName: "SessionStart",
+        source: "codex-env-wrapper",
+        status: "success",
+      });
       expect(JSON.parse(result.stdout)).toEqual({
         hookSpecificOutput: {
           hookEventName: "SessionStart",
@@ -233,7 +241,15 @@ describe("session-start hook — context injection gate (#143)", () => {
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
       expect(result.stdout).toBe("");
-      expect(requests.map((r) => r.url)).toEqual(["/agentmemory/session/start"]);
+      expect(requests.map((r) => r.url)).toEqual([
+        "/agentmemory/session/start",
+        "/agentmemory/hooks/diagnostics",
+      ]);
+      expect(requests[1].body).toMatchObject({
+        hookName: "SessionStart",
+        source: "codex-env-wrapper",
+        status: "success",
+      });
     } finally {
       await new Promise<void>((resolve, reject) =>
         server.close((err) => (err ? reject(err) : resolve())),

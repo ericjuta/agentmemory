@@ -73,6 +73,8 @@ import { registerSentinelsFunction } from "./functions/sentinels.js";
 import { registerSketchesFunction } from "./functions/sketches.js";
 import { registerCrystallizeFunction } from "./functions/crystallize.js";
 import { registerDiagnosticsFunction } from "./functions/diagnostics.js";
+import { registerHookDiagnosticsFunctions } from "./functions/hook-diagnostics.js";
+import { registerSessionCloseoutFunctions } from "./functions/session-closeout.js";
 import { registerFacetsFunction } from "./functions/facets.js";
 import { registerVerifyFunction } from "./functions/verify.js";
 import { registerCascadeFunction } from "./functions/cascade.js";
@@ -197,6 +199,7 @@ async function main() {
   registerSearchFunction(sdk, kv);
   registerContextFunction(sdk, kv, config.tokenBudget);
   registerSummarizeFunction(sdk, kv, provider, metricsStore);
+  registerSessionCloseoutFunctions(sdk, kv);
   registerMigrateFunction(sdk, kv);
   registerFileIndexFunction(sdk, kv);
   registerConsolidateFunction(sdk, kv, provider);
@@ -270,6 +273,7 @@ async function main() {
   registerSketchesFunction(sdk, kv);
   registerCrystallizeFunction(sdk, kv, provider);
   registerDiagnosticsFunction(sdk, kv);
+  registerHookDiagnosticsFunctions(sdk, kv);
   registerFacetsFunction(sdk, kv);
   registerVerifyFunction(sdk, kv);
   registerLessonsFunctions(sdk, kv);
@@ -382,7 +386,7 @@ async function main() {
     `[agentmemory] Ready. ${embeddingProvider ? "Triple-stream (BM25+Vector+Graph)" : "BM25+Graph"} search active.`,
   );
   console.log(
-    `[agentmemory] Endpoints: 107 REST + ${getAllTools().length} MCP tools + 6 MCP resources + 3 MCP prompts`,
+    `[agentmemory] Endpoints: 110 REST + ${getAllTools().length} MCP tools + 6 MCP resources + 3 MCP prompts`,
   );
 
   const viewerPort = config.restPort + 2;
@@ -396,6 +400,27 @@ async function main() {
 
   const autoForgetIntervalMs = parseInt(process.env.AUTO_FORGET_INTERVAL_MS || "3600000", 10);
   const consolidationIntervalMs = parseInt(process.env.CONSOLIDATION_INTERVAL_MS || "7200000", 10);
+  const configuredSessionIdleCloseoutSweepMs = parseInt(
+    getEnvVar("AGENTMEMORY_SESSION_IDLE_CLOSEOUT_SWEEP_MS") || "60000",
+    10,
+  );
+  const sessionIdleCloseoutSweepMs =
+    Number.isInteger(configuredSessionIdleCloseoutSweepMs) &&
+    configuredSessionIdleCloseoutSweepMs > 0
+      ? configuredSessionIdleCloseoutSweepMs
+      : 60000;
+
+  if (getEnvVar("AGENTMEMORY_SESSION_IDLE_CLOSEOUT_ENABLED") !== "false") {
+    const sessionIdleCloseoutTimer = setInterval(async () => {
+      try {
+        await sdk.trigger({ function_id: "mem::session-idle-closeout", payload: {} });
+      } catch {}
+    }, sessionIdleCloseoutSweepMs);
+    sessionIdleCloseoutTimer.unref();
+    console.log(
+      `[agentmemory] Session idle closeout: enabled (every ${sessionIdleCloseoutSweepMs / 1000}s)`,
+    );
+  }
 
   if (process.env.AUTO_FORGET_ENABLED !== "false") {
     const autoForgetTimer = setInterval(async () => {

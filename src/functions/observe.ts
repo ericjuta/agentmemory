@@ -1,5 +1,5 @@
 import { TriggerAction, type ISdk } from "iii-sdk";
-import type { RawObservation, HookPayload } from "../types.js";
+import type { RawObservation, HookPayload, Session } from "../types.js";
 import { KV, STREAM, generateId } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
 import { stripPrivateData } from "./privacy.js";
@@ -193,30 +193,45 @@ export function registerObserveFunction(
           action: TriggerAction.Void(),
         });
 
-        const session = await kv.get<{ observationCount?: number; firstPrompt?: string }>(
+        const session = await kv.get<Session>(
           KV.sessions,
           payload.sessionId,
         );
         if (session) {
-          const updates: Array<{ type: "set"; path: string; value: unknown }> = [
-            { type: "set", path: "updatedAt", value: new Date().toISOString() },
-            {
-              type: "set",
-              path: "observationCount",
-              value: (session.observationCount || 0) + 1,
-            },
-          ];
-          if (!session.firstPrompt && typeof raw.userPrompt === "string") {
-            const trimmed = raw.userPrompt.replace(/\s+/g, " ").trim();
-            if (trimmed.length > 0) {
-              updates.push({
-                type: "set",
-                path: "firstPrompt",
-                value: trimmed.slice(0, 200),
-              });
+          const observedAt = payload.timestamp;
+          const updatedAt = new Date().toISOString();
+          const nextSession: Session = {
+            ...session,
+            updatedAt,
+            lastObservedAt: observedAt,
+            observationCount: (session.observationCount || 0) + 1,
+          };
+          if (payload.hookType !== "stop" && session.closeoutReason === "idle_after_stop") {
+            if (session.status === "completed") {
+              nextSession.status = "active";
+              nextSession.endedAt = undefined;
+              nextSession.closeoutCompletedAt = undefined;
+              nextSession.closeoutSummaryStatus = undefined;
+            }
+            if (session.closeoutStatus !== "running") {
+              nextSession.closeoutStatus = undefined;
+              nextSession.closeoutReason = undefined;
+              nextSession.closeoutError = undefined;
             }
           }
-          await kv.update(KV.sessions, payload.sessionId, updates);
+          if (payload.hookType === "stop") {
+            nextSession.lastStopAt = observedAt;
+            nextSession.lastStopObservationId = obsId;
+            nextSession.closeoutStatus = "pending";
+            nextSession.closeoutReason = "idle_after_stop";
+          }
+          if (!nextSession.firstPrompt && typeof raw.userPrompt === "string") {
+            const trimmed = raw.userPrompt.replace(/\s+/g, " ").trim();
+            if (trimmed.length > 0) {
+              nextSession.firstPrompt = trimmed.slice(0, 200);
+            }
+          }
+          await kv.set(KV.sessions, payload.sessionId, nextSession);
         }
 
         // Per-observation LLM compression is opt-in as of 0.8.8 (#138).

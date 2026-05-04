@@ -2,7 +2,7 @@
 
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -48,6 +48,31 @@ function envFilePath(): string | null {
   return join(home, ".agentmemory", ".env");
 }
 
+function hookNameFromScript(path: string): string {
+  const name = basename(path).replace(/\.mjs$/, "").replace(/\.js$/, "");
+  const map: Record<string, string> = {
+    "session-start": "SessionStart",
+    "prompt-submit": "UserPromptSubmit",
+    "pre-tool-use": "PreToolUse",
+    "post-tool-use": "PostToolUse",
+    "post-tool-failure": "PostToolUseFailure",
+    "pre-compact": "PreCompact",
+    "subagent-start": "SubagentStart",
+    "subagent-stop": "SubagentStop",
+    notification: "PermissionRequest",
+    "task-completed": "TaskCompleted",
+    stop: "Stop",
+    "session-end": "SessionEnd",
+  };
+  return map[name] || name;
+}
+
+function parsePositiveInt(value: string | undefined): number | null {
+  if (!value) return null;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
 const [scriptArg, ...scriptArgs] = process.argv.slice(2);
 if (!scriptArg) {
   process.stderr.write("agentmemory Codex hook wrapper missing script argument\n");
@@ -64,17 +89,73 @@ if (filePath) {
   }
 }
 
+const hookName = hookNameFromScript(targetScript);
+const startedAt = Date.now();
+let timedOut = false;
+let diagnosticRecorded = false;
+
+async function recordHookDiagnostic(
+  status: "success" | "failure" | "timeout",
+  details: { error?: string; exitCode?: number | null; signal?: string | null } = {},
+): Promise<void> {
+  if (diagnosticRecorded) return;
+  diagnosticRecorded = true;
+  const restUrl = env["AGENTMEMORY_URL"] || "http://localhost:3111";
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (env["AGENTMEMORY_SECRET"]) {
+    headers["Authorization"] = `Bearer ${env["AGENTMEMORY_SECRET"]}`;
+  }
+  try {
+    await fetch(`${restUrl}/agentmemory/hooks/diagnostics`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        hookName,
+        source: "codex-env-wrapper",
+        status,
+        latencyMs: Date.now() - startedAt,
+        error: details.error,
+        exitCode: details.exitCode,
+        signal: details.signal,
+        timestamp: new Date().toISOString(),
+      }),
+      signal: AbortSignal.timeout(750),
+    });
+  } catch {}
+}
+
 const child = spawn(process.execPath, [targetScript, ...scriptArgs], {
   env,
   stdio: "inherit",
 });
 
-child.on("error", (error) => {
+const hookTimeoutMs = parsePositiveInt(env["AGENTMEMORY_HOOK_PROCESS_TIMEOUT_MS"]);
+const timeout = hookTimeoutMs === null
+  ? null
+  : setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+    }, hookTimeoutMs);
+timeout?.unref();
+
+child.on("error", async (error) => {
+  if (timeout) clearTimeout(timeout);
+  await recordHookDiagnostic("failure", { error: error.message });
   process.stderr.write(`agentmemory Codex hook wrapper failed: ${error.message}\n`);
   process.exit(1);
 });
 
-child.on("exit", (code, signal) => {
+child.on("exit", async (code, signal) => {
+  if (timeout) clearTimeout(timeout);
+  const status = timedOut ? "timeout" : code === 0 && !signal ? "success" : "failure";
+  await recordHookDiagnostic(status, {
+    error: signal ? `hook exited via ${signal}` : undefined,
+    exitCode: code,
+    signal,
+  });
+  if (timedOut) {
+    process.exit(124);
+  }
   if (signal) {
     process.kill(process.pid, signal);
     return;

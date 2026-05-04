@@ -4,12 +4,22 @@ export interface Session {
   cwd: string;
   startedAt: string;
   endedAt?: string;
+  updatedAt?: string;
   status: "active" | "completed" | "abandoned";
   observationCount: number;
   model?: string;
   tags?: string[];
   firstPrompt?: string;
   summary?: string;
+  lastObservedAt?: string;
+  lastStopAt?: string;
+  lastStopObservationId?: string;
+  closeoutStatus?: "pending" | "running" | "completed" | "failed";
+  closeoutReason?: string;
+  closeoutAttemptedAt?: string;
+  closeoutCompletedAt?: string;
+  closeoutError?: string;
+  closeoutSummaryStatus?: "success" | "skipped" | "failed";
 }
 
 export interface RawObservation {
@@ -518,6 +528,7 @@ export interface AuditEntry {
     | "skill_extract"
     | "core_add"
     | "core_remove"
+    | "session_closeout"
     | "auto_page"
     | "vision_embed"
     | "slot_append"
@@ -758,6 +769,27 @@ export interface DiagnosticCheck {
   status: "pass" | "warn" | "fail";
   message: string;
   fixable: boolean;
+}
+
+export interface HookDiagnostics {
+  hookName: string;
+  source?: string;
+  attempts: number;
+  successes: number;
+  failures: number;
+  timeouts: number;
+  firstSeenAt: string;
+  lastAttemptAt: string;
+  lastSuccessAt?: string;
+  lastFailureAt?: string;
+  lastTimeoutAt?: string;
+  lastLatencyMs?: number;
+  totalLatencyMs: number;
+  maxLatencyMs: number;
+  lastError?: string;
+  lastExitCode?: number | null;
+  lastSignal?: string | null;
+  updatedAt: string;
 }
 
 export interface MeshPeer {
