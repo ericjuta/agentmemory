@@ -32,7 +32,10 @@
     "test:integration": "vitest run test/integration.test.ts",
     "test:all": "vitest run",
     "eval:codex-session": "tsx benchmark/codex-session-eval.ts --mode mock",
-    "eval:codex-session:service": "tsx benchmark/codex-session-eval.ts --mode local-service"
+    "eval:codex-session:service": "tsx benchmark/codex-session-eval.ts --mode local-service",
+    "eval:codex-session:ci:fast": "npm test -- test/codex-session-eval.test.ts && npm run eval:codex-session",
+    "eval:codex-session:ci:release": "npm run eval:codex-session:service",
+    "eval:codex-session:ci:warning-policy": "npm run eval:codex-session:service -- --max-source-recall-warnings 2 --min-average-gold-observation-recall 0.9"
   },
   "keywords": [
     "ai",

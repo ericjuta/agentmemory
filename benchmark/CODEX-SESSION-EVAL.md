@@ -288,27 +288,34 @@ gold_observation_recall@k is now measurable, but context rendering can still pas
 
 Current local-service result: 20 fixtures pass with 100% fact recall and 0% forbidden leakage, while `stop-then-resume` and `budget-pressure` warn because fact recall is perfect but source recall is 0.000 for those fixtures. This is acceptable for the current release gate because the warnings are visible, but it should not remain policy-free.
 
+The JSON result now includes a machine-readable `warnings` array for these cases. Each source-recall warning records `fixtureId`, `factRecall`, `sourceRecall`, `threshold`, `selectedObservationIds`, and `goldObservationIds`; the markdown warning block remains the human review surface.
+
+Warning policy is opt-in from the CLI:
+
+- `--source-recall-warning-threshold <0..1>`: changes the per-fixture warning threshold, default `0.85`
+- `--max-source-recall-warnings <count>`: fails the run when the warning count is above the budget
+- `--min-average-gold-observation-recall <0..1>`: fails the run when average `gold_observation_recall@k` is below the floor
+
 Acceptance:
 
 - result output separates fact_recall_from_context from source_recall
 - service mode maps fixture observation IDs to actual generated IDs deterministically
 - any fixture with perfect fact recall but low source recall is marked as a warning in the markdown summary
-- define an explicit source-recall warning budget, such as max warning count or minimum average `gold_observation_recall@k`, before wiring this into CI enforcement
+- explicit source-recall warning budgets can fail CI by max warning count or minimum average `gold_observation_recall@k`
 - keep source-recall warnings non-fatal until the intended attribution behavior for summarized/closed sessions is fixed
-
-Next implementation notes:
-
-- add a machine-readable `warnings` array to the JSON result, not only markdown text
-- include per-warning fields for fixture id, fact recall, source recall, threshold, selected observation IDs, and gold observation IDs
-- add a CLI threshold option so CI can fail on warning count or source recall without changing local exploratory runs
 
 ### 5. Add CI Profiles
 
-The benchmark should have two CI levels:
+The benchmark has three CI profiles:
 
-- fast PR gate: schema tests, mock eval, and focused Codex eval tests
-- release gate: local-service eval with isolated iii-engine
-- optional warning-policy gate: local-service eval plus the source-recall warning budget once the policy is chosen
+- fast PR gate: `npm run eval:codex-session:ci:fast` runs the focused Codex eval tests plus mock eval
+- release gate: `npm run eval:codex-session:ci:release` runs the isolated local-service eval
+- optional warning-policy gate: `npm run eval:codex-session:ci:warning-policy` runs local-service eval with `--max-source-recall-warnings 2 --min-average-gold-observation-recall 0.9`
+
+Local exploratory commands remain non-fatal for source-recall warnings unless one of the warning-policy options is supplied:
+
+- `npm run eval:codex-session`
+- `npm run eval:codex-session:service`
 
 Acceptance:
 

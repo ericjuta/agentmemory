@@ -1,6 +1,6 @@
 # Codex Session Eval Results
 
-Generated: 2026-05-05T17:25:54.534Z
+Generated: 2026-05-05T17:43:43.409Z
 Mode: local-service
 Status: PASS
 
@@ -13,7 +13,7 @@ Status: PASS
 - context_precision_proxy: 0.785
 - session_state_correctness: 1.000
 - hook_contract_correctness: 1.000
-- hook_p95_ms: 338
+- hook_p95_ms: 339
 - max_context_tokens: 232
 
 ## Warnings

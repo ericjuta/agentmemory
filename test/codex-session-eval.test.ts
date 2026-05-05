@@ -7,6 +7,57 @@ function fixtureById(fixtures: CodexSessionEvalFixture[], id: string): CodexSess
   return fixture!;
 }
 
+function sourceRecallWarningFixture(): CodexSessionEvalFixture {
+  return {
+    id: "label-isolation",
+    category: "Label isolation",
+    project: "/tmp/agentmemory-codex-eval/label-isolation",
+    priorSessions: [{
+      sessionId: "prior_label_isolation",
+      events: [
+        {
+          hook: "PostToolUse",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          observationId: "labeled_only",
+          payload: {
+            tool_name: "Edit",
+            tool_input: { file_path: "docs/noise.md" },
+            tool_response: { output: "query target stale forbidden distractor" },
+          },
+        },
+        {
+          hook: "PostToolUse",
+          timestamp: "2026-01-01T00:00:01.000Z",
+          observationId: "relevant_by_query",
+          payload: {
+            tool_name: "Edit",
+            tool_input: { file_path: "src/target.ts" },
+            tool_response: { output: "query target required fact" },
+          },
+        },
+      ],
+    }],
+    currentSession: {
+      sessionId: "current_label_isolation",
+      events: [{
+        hook: "UserPromptSubmit",
+        timestamp: "2026-01-01T00:00:02.000Z",
+        payload: { prompt: "query target required src/target.ts" },
+      }],
+    },
+    gold: {
+      requiredFacts: ["query target required fact"],
+      forbiddenFacts: ["query target stale forbidden distractor"],
+      goldObservationIds: ["labeled_only"],
+      expectedSessionStatus: "active",
+    },
+    budgets: {
+      contextTokens: 80,
+      hookP95Ms: 1500,
+    },
+  };
+}
+
 describe("Codex session replay eval", () => {
   it("loads the expanded fixture categories", () => {
     const fixtures = loadFixtures();
@@ -103,54 +154,7 @@ describe("Codex session replay eval", () => {
   }, 30000);
 
   it("uses gold labels only for grading, not mock candidate selection", async () => {
-    const fixture: CodexSessionEvalFixture = {
-      id: "label-isolation",
-      category: "Label isolation",
-      project: "/tmp/agentmemory-codex-eval/label-isolation",
-      priorSessions: [{
-        sessionId: "prior_label_isolation",
-        events: [
-          {
-            hook: "PostToolUse",
-            timestamp: "2026-01-01T00:00:00.000Z",
-            observationId: "labeled_only",
-            payload: {
-              tool_name: "Edit",
-              tool_input: { file_path: "docs/noise.md" },
-              tool_response: { output: "query target stale forbidden distractor" },
-            },
-          },
-          {
-            hook: "PostToolUse",
-            timestamp: "2026-01-01T00:00:01.000Z",
-            observationId: "relevant_by_query",
-            payload: {
-              tool_name: "Edit",
-              tool_input: { file_path: "src/target.ts" },
-              tool_response: { output: "query target required fact" },
-            },
-          },
-        ],
-      }],
-      currentSession: {
-        sessionId: "current_label_isolation",
-        events: [{
-          hook: "UserPromptSubmit",
-          timestamp: "2026-01-01T00:00:02.000Z",
-          payload: { prompt: "query target required src/target.ts" },
-        }],
-      },
-      gold: {
-        requiredFacts: ["query target required fact"],
-        forbiddenFacts: ["query target stale forbidden distractor"],
-        goldObservationIds: ["labeled_only"],
-        expectedSessionStatus: "active",
-      },
-      budgets: {
-        contextTokens: 80,
-        hookP95Ms: 1500,
-      },
-    };
+    const fixture = sourceRecallWarningFixture();
 
     const results = await runMockEval([fixture]);
     const [result] = results.fixtures;
@@ -158,8 +162,36 @@ describe("Codex session replay eval", () => {
     expect(result.selectedObservationIds).not.toContain("labeled_only");
     expect(result.candidateSelectionTrace.map((candidate) => candidate.id)).toContain("labeled_only");
     expect(result.leakedForbiddenFacts).toEqual([]);
+    expect(results.passed).toBe(true);
+    expect(results.warnings).toHaveLength(1);
+    expect(results.warnings[0]).toMatchObject({
+      fixtureId: "label-isolation",
+      factRecall: 1,
+      sourceRecall: 0,
+      threshold: 0.85,
+      goldObservationIds: ["labeled_only"],
+    });
+    expect(results.warnings[0].selectedObservationIds).toContain("relevant_by_query");
+    expect(results.warnings[0].selectedObservationIds).not.toContain("labeled_only");
     expect(markdownSummary(results)).toContain(
       "- label-isolation: fact_recall_from_context is 1.000 but source_recall is 0.000 below 0.85",
     );
+  }, 30000);
+
+  it("can make source-recall warnings fatal through an explicit policy", async () => {
+    const results = await runMockEval([sourceRecallWarningFixture()], "mock", undefined, true, {
+      maxSourceRecallWarnings: 0,
+      minAverageGoldObservationRecallAtK: 0.5,
+    });
+
+    expect(results.passed).toBe(false);
+    expect(results.warningPolicy.passed).toBe(false);
+    expect(results.gates.sourceRecallWarningCount).toBe(false);
+    expect(results.gates.goldObservationRecallAtK).toBe(false);
+    expect(results.warningPolicy.failures).toEqual([
+      "source_recall_warning_count 1 exceeds max 0",
+      "gold_observation_recall@k 0.000 is below min 0.500",
+    ]);
+    expect(markdownSummary(results)).toContain("- source_recall_warning_count 1 exceeds max 0");
   }, 30000);
 });

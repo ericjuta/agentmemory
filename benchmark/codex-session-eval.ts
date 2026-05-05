@@ -14,7 +14,7 @@ const defaultMarkdownResultsPath = join(__dirname, "CODEX-SESSION-EVAL-RESULTS.m
 const hooksDir = join(repoRoot, "plugin", "scripts");
 
 const hookNames = ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "SessionEnd"] as const;
-const sourceRecallWarningThreshold = 0.85;
+const defaultSourceRecallWarningThreshold = 0.85;
 
 const HookEventSchema = z.object({
   hook: z.enum(hookNames),
@@ -97,11 +97,27 @@ export interface FixtureResult {
   diagnostics: number;
 }
 
+export interface SourceRecallWarning {
+  fixtureId: string;
+  factRecall: number;
+  sourceRecall: number;
+  threshold: number;
+  selectedObservationIds: string[];
+  goldObservationIds: string[];
+}
+
+export interface EvalWarningPolicyOptions {
+  sourceRecallWarningThreshold?: number;
+  maxSourceRecallWarnings?: number;
+  minAverageGoldObservationRecallAtK?: number;
+}
+
 export interface EvalResults {
   mode: "mock" | "local-service";
   generatedAt: string;
   passed: boolean;
   fixtures: FixtureResult[];
+  warnings: SourceRecallWarning[];
   metrics: {
     fixtureCount: number;
     requiredFactRecallAtContext: number;
@@ -116,6 +132,13 @@ export interface EvalResults {
     disabledInjectionNoOutput: boolean;
   };
   gates: Record<string, boolean>;
+  warningPolicy: {
+    sourceRecallWarningThreshold: number;
+    maxSourceRecallWarnings?: number;
+    minAverageGoldObservationRecallAtK?: number;
+    passed: boolean;
+    failures: string[];
+  };
 }
 
 interface MockState {
@@ -139,6 +162,10 @@ interface GradeState {
 
 function avg(values: number[]): number {
   return values.length === 0 ? 0 : values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function definedNumber(value: number | undefined, fallback: number): number {
+  return value === undefined ? fallback : value;
 }
 
 function percentile(values: number[], p: number): number {
@@ -876,7 +903,10 @@ async function runServiceFixture(fixture: CodexSessionEvalFixture, service: { ur
   return gradeFixture(fixture, [...priorRuns, ...currentRuns], state);
 }
 
-async function runLocalServiceEval(fixtures = loadFixtures()): Promise<EvalResults> {
+async function runLocalServiceEval(
+  fixtures = loadFixtures(),
+  options: EvalWarningPolicyOptions = {},
+): Promise<EvalResults> {
   const service = await startLocalService();
   try {
     await runHook("prompt-submit.mjs", JSON.stringify({
@@ -890,7 +920,7 @@ async function runLocalServiceEval(fixtures = loadFixtures()): Promise<EvalResul
       AGENTMEMORY_SECRET: service.secret,
       AGENTMEMORY_HOOK_PROCESS_TIMEOUT_MS: "5000",
     });
-    const results = await runMockEval(fixtures, "local-service", async (fixture) => runServiceFixture(fixture, service), false);
+    const results = await runMockEval(fixtures, "local-service", async (fixture) => runServiceFixture(fixture, service), false, options);
     await waitForLocalServiceReady(service.url + "/agentmemory/health", { Authorization: "Bearer " + service.secret }, 5000);
     return results;
   } finally {
@@ -898,11 +928,68 @@ async function runLocalServiceEval(fixtures = loadFixtures()): Promise<EvalResul
   }
 }
 
+function sourceRecallWarnings(
+  fixtures: CodexSessionEvalFixture[],
+  fixtureResults: FixtureResult[],
+  threshold: number,
+): SourceRecallWarning[] {
+  return fixtureResults.flatMap((result, index) => (
+    result.requiredFactRecall === 1 && result.goldObservationRecallAtK < threshold
+      ? [{
+        fixtureId: result.fixtureId,
+        factRecall: result.requiredFactRecall,
+        sourceRecall: result.goldObservationRecallAtK,
+        threshold,
+        selectedObservationIds: result.selectedObservationIds,
+        goldObservationIds: fixtures[index]?.gold.goldObservationIds || [],
+      }]
+      : []
+  ));
+}
+
+function warningPolicy(
+  warnings: SourceRecallWarning[],
+  averageGoldObservationRecallAtK: number,
+  options: EvalWarningPolicyOptions,
+): EvalResults["warningPolicy"] {
+  const threshold = definedNumber(options.sourceRecallWarningThreshold, defaultSourceRecallWarningThreshold);
+  const failures: string[] = [];
+  if (options.maxSourceRecallWarnings !== undefined && warnings.length > options.maxSourceRecallWarnings) {
+    failures.push(
+      "source_recall_warning_count "
+      + String(warnings.length)
+      + " exceeds max "
+      + String(options.maxSourceRecallWarnings),
+    );
+  }
+  if (
+    options.minAverageGoldObservationRecallAtK !== undefined
+    && averageGoldObservationRecallAtK < options.minAverageGoldObservationRecallAtK
+  ) {
+    failures.push(
+      "gold_observation_recall@k "
+      + averageGoldObservationRecallAtK.toFixed(3)
+      + " is below min "
+      + options.minAverageGoldObservationRecallAtK.toFixed(3),
+    );
+  }
+  return {
+    sourceRecallWarningThreshold: threshold,
+    ...(options.maxSourceRecallWarnings !== undefined ? { maxSourceRecallWarnings: options.maxSourceRecallWarnings } : {}),
+    ...(options.minAverageGoldObservationRecallAtK !== undefined
+      ? { minAverageGoldObservationRecallAtK: options.minAverageGoldObservationRecallAtK }
+      : {}),
+    passed: failures.length === 0,
+    failures,
+  };
+}
+
 export async function runMockEval(
   fixtures = loadFixtures(),
   mode: EvalResults["mode"] = "mock",
   runOne: (fixture: CodexSessionEvalFixture) => Promise<FixtureResult> = runFixture,
   includeDisabledInjectionProbe = true,
+  options: EvalWarningPolicyOptions = {},
 ): Promise<EvalResults> {
   const fixtureResults: FixtureResult[] = [];
   for (const fixture of fixtures) {
@@ -912,9 +999,16 @@ export async function runMockEval(
   const latencies = fixtureResults.map((result) => result.hookLatencyMs.p95);
   const requiredFactRecallAtContext = avg(fixtureResults.map((result) => result.requiredFactRecall));
   const forbiddenFactLeakRate = avg(fixtureResults.map((result) => result.forbiddenFactLeakRate));
+  const goldObservationRecallAtK = avg(fixtureResults.map((result) => result.goldObservationRecallAtK));
   const sessionStateCorrectness = avg(fixtureResults.map((result) => result.sessionStateCorrect ? 1 : 0));
   const hookContractCorrectness = avg(fixtureResults.map((result) => result.hookContractCorrect ? 1 : 0));
   const maxContextTokens = Math.max(...fixtureResults.map((result) => result.estimatedContextTokens), 0);
+  const warnings = sourceRecallWarnings(
+    fixtures,
+    fixtureResults,
+    definedNumber(options.sourceRecallWarningThreshold, defaultSourceRecallWarningThreshold),
+  );
+  const activeWarningPolicy = warningPolicy(warnings, goldObservationRecallAtK, options);
   const gates = {
     hookContractCorrectness: hookContractCorrectness === 1,
     sessionStateCorrectness: sessionStateCorrectness === 1,
@@ -923,17 +1017,24 @@ export async function runMockEval(
     hookP95: percentile(latencies, 95) <= 1500,
     contextBudget: fixtureResults.every((result, index) => result.estimatedContextTokens <= fixtures[index].budgets.contextTokens + 64),
     disabledInjectionNoOutput,
+    ...(options.maxSourceRecallWarnings !== undefined
+      ? { sourceRecallWarningCount: warnings.length <= options.maxSourceRecallWarnings }
+      : {}),
+    ...(options.minAverageGoldObservationRecallAtK !== undefined
+      ? { goldObservationRecallAtK: goldObservationRecallAtK >= options.minAverageGoldObservationRecallAtK }
+      : {}),
   };
   return {
     mode,
     generatedAt: new Date().toISOString(),
-    passed: Object.values(gates).every(Boolean) && fixtureResults.every((result) => result.passed),
+    passed: Object.values(gates).every(Boolean) && fixtureResults.every((result) => result.passed) && activeWarningPolicy.passed,
     fixtures: fixtureResults,
+    warnings,
     metrics: {
       fixtureCount: fixtureResults.length,
       requiredFactRecallAtContext,
       forbiddenFactLeakRate,
-      goldObservationRecallAtK: avg(fixtureResults.map((result) => result.goldObservationRecallAtK)),
+      goldObservationRecallAtK,
       contextPrecisionProxy: avg(fixtureResults.map((result) => result.contextPrecisionProxy)),
       sessionStateCorrectness,
       hookContractCorrectness,
@@ -943,14 +1044,11 @@ export async function runMockEval(
       disabledInjectionNoOutput,
     },
     gates,
+    warningPolicy: activeWarningPolicy,
   };
 }
 
 export function markdownSummary(results: EvalResults): string {
-  const sourceRecallWarnings = results.fixtures.filter((result) => (
-    result.requiredFactRecall === 1
-    && result.goldObservationRecallAtK < sourceRecallWarningThreshold
-  ));
   const lines = [
     "# Codex Session Eval Results",
     "",
@@ -972,12 +1070,21 @@ export function markdownSummary(results: EvalResults): string {
     "",
     "## Warnings",
     "",
-    ...(sourceRecallWarnings.length === 0
+    ...(results.warnings.length === 0
       ? ["- none"]
-      : sourceRecallWarnings.map((result) => "- " + result.fixtureId + ": fact_recall_from_context is 1.000 but source_recall is "
-        + result.goldObservationRecallAtK.toFixed(3)
+      : results.warnings.map((warning) => "- " + warning.fixtureId + ": fact_recall_from_context is "
+        + warning.factRecall.toFixed(3)
+        + " but source_recall is "
+        + warning.sourceRecall.toFixed(3)
         + " below "
-        + sourceRecallWarningThreshold.toFixed(2))),
+        + warning.threshold.toFixed(2))),
+    ...(results.warningPolicy.failures.length === 0
+      ? []
+      : [
+        "",
+        "Warning policy failures:",
+        ...results.warningPolicy.failures.map((failure) => "- " + failure),
+      ]),
     "",
     "## Fixtures",
     "",
@@ -998,14 +1105,56 @@ export function markdownSummary(results: EvalResults): string {
   return lines.join("\n");
 }
 
+function optionValue(args: string[], name: string): string | undefined {
+  const index = args.indexOf(name);
+  if (index === -1) return undefined;
+  const value = args[index + 1];
+  if (!value || value.startsWith("--")) throw new Error(name + " requires a value");
+  return value;
+}
+
+function parseNumberOption(args: string[], name: string): number | undefined {
+  const value = optionValue(args, name);
+  if (value === undefined) return undefined;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) throw new Error(name + " must be a finite number");
+  return parsed;
+}
+
+function parseNonNegativeIntOption(args: string[], name: string): number | undefined {
+  const parsed = parseNumberOption(args, name);
+  if (parsed === undefined) return undefined;
+  if (!Number.isInteger(parsed) || parsed < 0) throw new Error(name + " must be a non-negative integer");
+  return parsed;
+}
+
+function cliWarningPolicyOptions(args: string[]): EvalWarningPolicyOptions {
+  const sourceRecallWarningThreshold = parseNumberOption(args, "--source-recall-warning-threshold");
+  const maxSourceRecallWarnings = parseNonNegativeIntOption(args, "--max-source-recall-warnings");
+  const minAverageGoldObservationRecallAtK = parseNumberOption(args, "--min-average-gold-observation-recall");
+  for (const [name, value] of [
+    ["--source-recall-warning-threshold", sourceRecallWarningThreshold],
+    ["--min-average-gold-observation-recall", minAverageGoldObservationRecallAtK],
+  ] as const) {
+    if (value !== undefined && (value < 0 || value > 1)) throw new Error(name + " must be between 0 and 1");
+  }
+  return {
+    ...(sourceRecallWarningThreshold !== undefined ? { sourceRecallWarningThreshold } : {}),
+    ...(maxSourceRecallWarnings !== undefined ? { maxSourceRecallWarnings } : {}),
+    ...(minAverageGoldObservationRecallAtK !== undefined ? { minAverageGoldObservationRecallAtK } : {}),
+  };
+}
+
 async function main(): Promise<void> {
-  const modeIndex = process.argv.indexOf("--mode");
-  const mode = modeIndex >= 0 ? process.argv[modeIndex + 1] : "mock";
+  const args = process.argv.slice(2);
+  const modeValue = optionValue(args, "--mode");
+  const mode = modeValue || "mock";
   if (mode !== "mock" && mode !== "local-service") {
     process.stderr.write("Supported Codex session eval modes: mock, local-service.\n");
     process.exit(1);
   }
-  const results = mode === "local-service" ? await runLocalServiceEval() : await runMockEval();
+  const options = cliWarningPolicyOptions(args);
+  const results = mode === "local-service" ? await runLocalServiceEval(loadFixtures(), options) : await runMockEval(loadFixtures(), "mock", runFixture, true, options);
   mkdirSync(dirname(defaultJsonResultsPath), { recursive: true });
   writeFileSync(defaultJsonResultsPath, JSON.stringify(results, null, 2) + "\n");
   writeFileSync(defaultMarkdownResultsPath, markdownSummary(results));
