@@ -11,6 +11,24 @@ import { StateKV } from "../state/kv.js";
 import { recordAccessBatch } from "./access-tracker.js";
 import { logger } from "../logger.js";
 
+interface ContextDebugBlockTrace {
+  type: "summary" | "observation" | "memory" | "fallback";
+  sourceObservationIds: string[];
+  sessionIds: string[];
+  tokens: number;
+  status: "selected" | "skipped";
+  skipReason?: string;
+  degraded?: boolean;
+  fallbackReason?: string;
+}
+
+interface ContextDebugTrace {
+  requested: true;
+  degraded: boolean;
+  fallbackReason?: string;
+  blocks: ContextDebugBlockTrace[];
+}
+
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 3);
 }
@@ -29,16 +47,30 @@ export function registerContextFunction(
   tokenBudget: number,
 ): void {
   sdk.registerFunction("mem::context", 
-    async (data: { sessionId: string; project: string; budget?: number; includeRetrievalIds?: boolean }) => {
+    async (data: {
+      sessionId: string;
+      project: string;
+      budget?: number;
+      includeRetrievalIds?: boolean;
+      includeDebugTrace?: boolean;
+    }) => {
       const budget = data.budget || tokenBudget;
       const includeRetrievalIds =
         data.includeRetrievalIds === true ||
         process.env["AGENTMEMORY_CONTEXT_DEBUG_IDS"] === "true";
+      const includeDebugTrace =
+        data.includeDebugTrace === true ||
+        process.env["AGENTMEMORY_CONTEXT_DEBUG_TRACE"] === "true";
       const blocks: ContextBlock[] = [];
+      const debugBlocks: ContextDebugBlockTrace[] = [];
+      const degradedReasons: string[] = [];
 
       const profile = await kv
         .get<ProjectProfile>(KV.profiles, data.project)
-        .catch(() => null);
+        .catch(() => {
+          degradedReasons.push("profile_lookup_failed");
+          return null;
+        });
       if (profile) {
         const profileParts = [];
         if (profile.topConcepts.length > 0) {
@@ -72,11 +104,17 @@ export function registerContextFunction(
             content: profileContent,
             tokens: estimateTokens(profileContent),
             recency: new Date(profile.updatedAt).getTime(),
+            sessionIds: [],
           });
         }
       }
 
-      const allSessions = await kv.list<Session>(KV.sessions);
+      const allSessions = await kv
+        .list<Session>(KV.sessions)
+        .catch(() => {
+          degradedReasons.push("session_list_failed");
+          return [];
+        });
       const sessions = allSessions
         .filter((s) => (
           s.project === data.project
@@ -108,6 +146,7 @@ export function registerContextFunction(
             tokens: estimateTokens(content),
             recency: new Date(summary.createdAt).getTime(),
             sourceIds: summary.sourceObservationIds,
+            sessionIds: [summary.sessionId || sessions[i].id],
           };
           blocks.push(block);
           summaryBlocksByIndex.set(i, block);
@@ -122,7 +161,10 @@ export function registerContextFunction(
           sessionsNeedingSummarySourceIds.map((i) =>
             kv
               .list<CompressedObservation>(KV.observations(sessions[i].id))
-              .catch(() => []),
+              .catch(() => {
+                degradedReasons.push("summary_source_observations_lookup_failed");
+                return [];
+              }),
           ),
         );
         for (let j = 0; j < sessionsNeedingSummarySourceIds.length; j++) {
@@ -143,7 +185,10 @@ export function registerContextFunction(
         sessionsNeedingObs.map((i) =>
           kv
             .list<CompressedObservation>(KV.observations(sessions[i].id))
-            .catch(() => []),
+            .catch(() => {
+              degradedReasons.push("session_observations_lookup_failed");
+              return [];
+            }),
         ),
       );
 
@@ -168,6 +213,7 @@ export function registerContextFunction(
             tokens: estimateTokens(content),
             recency: new Date(sessions[i].startedAt).getTime(),
             sourceIds: top.map((o) => o.id),
+            sessionIds: [sessions[i].id],
           });
         }
       }
@@ -181,12 +227,35 @@ export function registerContextFunction(
       const footer = `</agentmemory-context>`;
       usedTokens += estimateTokens(header) + estimateTokens(footer);
 
+      let budgetClosed = false;
       for (const block of blocks) {
-        if (usedTokens + block.tokens > budget) break;
+        if (budgetClosed || usedTokens + block.tokens > budget) {
+          if (includeDebugTrace) {
+            debugBlocks.push({
+              type: block.type,
+              sourceObservationIds: block.sourceIds || [],
+              sessionIds: block.sessionIds || [],
+              tokens: block.tokens,
+              status: "skipped",
+              skipReason: budgetClosed ? "budget_exhausted" : "budget_exceeded",
+            });
+          }
+          budgetClosed = true;
+          continue;
+        }
         selected.push(block.content);
         usedTokens += block.tokens;
         if (block.sourceIds && block.sourceIds.length > 0) {
           accessedIds.push(...block.sourceIds);
+        }
+        if (includeDebugTrace) {
+          debugBlocks.push({
+            type: block.type,
+            sourceObservationIds: block.sourceIds || [],
+            sessionIds: block.sessionIds || [],
+            tokens: block.tokens,
+            status: "selected",
+          });
         }
       }
 
@@ -196,7 +265,33 @@ export function registerContextFunction(
 
       if (selected.length === 0) {
         logger.info("No context available", { project: data.project });
-        return { context: "", blocks: 0, tokens: 0 };
+        const fallbackReason = degradedReasons[0] || "no_context_available";
+        return {
+          context: "",
+          blocks: 0,
+          tokens: 0,
+          ...(includeDebugTrace
+            ? {
+              debugTrace: {
+                requested: true,
+                degraded: true,
+                fallbackReason,
+                blocks: [
+                  ...debugBlocks,
+                  {
+                    type: "fallback",
+                    sourceObservationIds: [],
+                    sessionIds: [],
+                    tokens: 0,
+                    status: "selected",
+                    degraded: true,
+                    fallbackReason,
+                  },
+                ],
+              } satisfies ContextDebugTrace,
+            }
+            : {}),
+        };
       }
 
       const result = `${header}\n${selected.join("\n\n")}\n${footer}`;
@@ -209,6 +304,16 @@ export function registerContextFunction(
         blocks: selected.length,
         tokens: usedTokens,
         ...(includeRetrievalIds ? { selectedObservationIds: accessedIds } : {}),
+        ...(includeDebugTrace
+          ? {
+            debugTrace: {
+              requested: true,
+              degraded: degradedReasons.length > 0,
+              ...(degradedReasons[0] ? { fallbackReason: degradedReasons[0] } : {}),
+              blocks: debugBlocks,
+            } satisfies ContextDebugTrace,
+          }
+          : {}),
       };
     },
   );

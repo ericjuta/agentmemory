@@ -306,11 +306,12 @@ Acceptance:
 
 ### 5. Add CI Profiles
 
-The benchmark has three CI profiles:
+The benchmark has four CI profiles:
 
 - fast PR gate: `npm run eval:codex-session:ci:fast` runs the focused Codex eval tests plus mock eval
 - release gate: `npm run eval:codex-session:ci:release` runs the isolated local-service eval
 - optional warning-policy gate: `npm run eval:codex-session:ci:warning-policy` runs local-service eval with `--max-source-recall-warnings 2 --min-average-gold-observation-recall 0.9`
+- strict warning-policy gate: `npm run eval:codex-session:ci:strict-warning-policy` runs local-service eval with `--max-source-recall-warnings 0 --min-average-gold-observation-recall 1`
 
 Local exploratory commands remain non-fatal for source-recall warnings unless one of the warning-policy options is supplied:
 

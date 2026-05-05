@@ -24,6 +24,30 @@ type Response = {
   body: unknown;
 };
 
+function parsePositiveIntEnv(name: string, fallback: number): number {
+  const value = process.env[name];
+  if (!value) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+): Promise<{ timedOut: false; value: T } | { timedOut: true }> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise.then((value) => ({ timedOut: false as const, value })),
+      new Promise<{ timedOut: true }>((resolve) => {
+        timeout = setTimeout(() => resolve({ timedOut: true }), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 function parseOptionalInt(raw: unknown): number | undefined {
   if (raw === undefined || raw === null || raw === "") return undefined;
   const n = typeof raw === "number" ? raw : parseInt(String(raw), 10);
@@ -401,7 +425,15 @@ export function registerApiTriggers(
 
   sdk.registerFunction("api::context",
     async (
-      req: ApiRequest<{ sessionId: string; project: string; budget?: number; includeRetrievalIds?: boolean }>,
+      req: ApiRequest<{
+        sessionId: string;
+        project: string;
+        budget?: number;
+        includeRetrievalIds?: boolean;
+        includeDebugTrace?: boolean;
+        debugTrace?: boolean;
+        debug?: boolean;
+      }>,
     ): Promise<Response> => {
       const body = (req.body ?? {}) as Record<string, unknown>;
       const sessionId = asNonEmptyString(body.sessionId);
@@ -424,14 +456,53 @@ export function registerApiTriggers(
         project: string;
         budget?: number;
         includeRetrievalIds?: boolean;
+        includeDebugTrace?: boolean;
       } = {
         sessionId,
         project,
       };
       if (budget !== undefined) payload.budget = budget;
       if (body.includeRetrievalIds === true) payload.includeRetrievalIds = true;
-      const result = await sdk.trigger({ function_id: "mem::context", payload });
-      return { status_code: 200, body: result };
+      if (
+        body.includeDebugTrace === true ||
+        body.debugTrace === true ||
+        body.debug === true
+      ) {
+        payload.includeDebugTrace = true;
+      }
+      const result = await withTimeout(
+        sdk.trigger({ function_id: "mem::context", payload }),
+        parsePositiveIntEnv("AGENTMEMORY_CONTEXT_TIMEOUT_MS", 2500),
+      );
+      if (result.timedOut) {
+        return {
+          status_code: 200,
+          body: {
+            context: "",
+            blocks: 0,
+            tokens: 0,
+            ...(payload.includeDebugTrace
+              ? {
+                debugTrace: {
+                  requested: true,
+                  degraded: true,
+                  fallbackReason: "context_timeout",
+                  blocks: [{
+                    type: "fallback",
+                    sourceObservationIds: [],
+                    sessionIds: [sessionId],
+                    tokens: 0,
+                    status: "selected",
+                    degraded: true,
+                    fallbackReason: "context_timeout",
+                  }],
+                },
+              }
+              : {}),
+          },
+        };
+      }
+      return { status_code: 200, body: result.value };
     },
   );
   sdk.registerTrigger({
@@ -649,13 +720,21 @@ export function registerApiTriggers(
         observationCount: 0,
       };
       await kv.set(KV.sessions, sessionId, session);
-      const contextResult = await sdk.trigger<
+      const contextResult = await withTimeout(sdk.trigger<
         { sessionId: string; project: string },
         { context: string }
-      >({ function_id: "mem::context", payload: { sessionId, project } });
+      >({ function_id: "mem::context", payload: { sessionId, project } }),
+      parsePositiveIntEnv("AGENTMEMORY_SESSION_START_CONTEXT_TIMEOUT_MS", 2500));
       return {
         status_code: 200,
-        body: { session, context: contextResult.context },
+        body: contextResult.timedOut
+          ? {
+            session,
+            context: "",
+            degraded: true,
+            fallbackReason: "context_timeout",
+          }
+          : { session, context: contextResult.value.context },
       };
     },
   );

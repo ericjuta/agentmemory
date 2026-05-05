@@ -878,6 +878,12 @@ Create `~/.agentmemory/.env`:
                                    # UserPromptSubmit /agentmemory/context
                                    # calls. Defaults to the server context
                                    # budget when unset.
+# AGENTMEMORY_CONTEXT_DEBUG_TRACE=false
+                                   # OFF by default. When on, or when a
+                                   # /agentmemory/context request sets
+                                   # debugTrace/includeDebugTrace=true, the
+                                   # response includes per-block source,
+                                   # budget, and degraded/fallback trace data.
 # GRAPH_EXTRACTION_ENABLED=false
 # CONSOLIDATION_ENABLED=true
 # LESSON_DECAY_ENABLED=true
@@ -928,6 +934,12 @@ Create `~/.agentmemory/.env`:
 Full endpoint list: [`src/triggers/api.ts`](src/triggers/api.ts)
 
 </details>
+
+Codex live-session proof commands:
+
+- npm run codex:smoke starts isolated temp HOME/cwd/state, exercises native Codex SessionStart, UserPromptSubmit, PostToolUse, and Stop hooks, and asserts normal hook stdout keeps hookSpecificOutput.additionalContext as a string without debug/source fields.
+- npm run codex:smoke:live-readonly reads live host hook/API state only and labels every file or endpoint it touched.
+- npm run eval:codex-session:ci:strict-warning-policy runs the local-service eval with zero source-recall warnings and perfect average gold observation recall required.
 
 ---
 

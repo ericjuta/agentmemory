@@ -172,6 +172,7 @@ export interface ContextBlock {
   tokens: number;
   recency: number;
   sourceIds?: string[];
+  sessionIds?: string[];
 }
 
 export interface EvalResult {

@@ -51,7 +51,7 @@ export type CodexSessionEvalFixture = z.infer<typeof FixtureSchema>;
 type HookEvent = CodexSessionEvalFixture["currentSession"]["events"][number];
 type HookName = HookEvent["hook"];
 
-interface HookRun {
+export interface HookRun {
   hook: HookName;
   sessionId: string;
   stdout: string;
@@ -374,7 +374,7 @@ function hookPayload(fixture: CodexSessionEvalFixture, sessionId: string, event:
   return JSON.stringify({ hook_event_name: event.hook, session_id: sessionId, cwd: fixture.project, ...event.payload });
 }
 
-function runHook(scriptName: string, stdin: string, env: Record<string, string>): Promise<HookRun> {
+export function runHook(scriptName: string, stdin: string, env: Record<string, string>): Promise<HookRun> {
   return new Promise((resolve, reject) => {
     const start = Date.now();
     const child = spawn(process.execPath, [join(hooksDir, "codex-env-wrapper.mjs"), scriptName], {
@@ -419,7 +419,7 @@ async function replaySession(
   return runs;
 }
 
-function parseAdditionalContext(run: HookRun): string {
+export function parseAdditionalContext(run: HookRun): string {
   if (!run.stdout.trim()) return "";
   try {
     const parsed = JSON.parse(run.stdout) as { hookSpecificOutput?: { additionalContext?: unknown } };
@@ -619,7 +619,14 @@ async function waitForLocalServiceReady(url: string, headers: Record<string, str
   throw new Error("timed out waiting for local-service readiness at " + url + (lastError ? " (" + lastError + ")" : ""));
 }
 
-function serviceEnv(tmp: string, restPort: number, streamPort: number, workerPort: number, secret?: string): NodeJS.ProcessEnv {
+function serviceEnv(
+  tmp: string,
+  restPort: number,
+  streamPort: number,
+  workerPort: number,
+  secret: string | undefined,
+  contextDebugIds: boolean,
+): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     PATH: process.env["PATH"] || "",
     HOME: tmp,
@@ -630,7 +637,7 @@ function serviceEnv(tmp: string, restPort: number, streamPort: number, workerPor
     AGENTMEMORY_URL: "http://127.0.0.1:" + String(restPort),
     AGENTMEMORY_ENV_FILE: join(tmp, ".agentmemory", ".env"),
     AGENTMEMORY_INJECT_CONTEXT: "true",
-    AGENTMEMORY_CONTEXT_DEBUG_IDS: "true",
+    AGENTMEMORY_CONTEXT_DEBUG_IDS: contextDebugIds ? "true" : "false",
     AGENTMEMORY_AUTO_COMPRESS: "false",
     AGENTMEMORY_SESSION_IDLE_CLOSEOUT_ENABLED: "false",
     GRAPH_EXTRACTION_ENABLED: "false",
@@ -713,7 +720,15 @@ function serviceConfig(restPort: number, streamPort: number, workerPort: number)
   ].join("\n");
 }
 
-async function startLocalService(): Promise<{ url: string; secret: string; close: () => Promise<void> }> {
+export async function startLocalService(options: { contextDebugIds?: boolean } = {}): Promise<{
+  url: string;
+  secret: string;
+  home: string;
+  cwd: string;
+  statePath: string;
+  close: () => Promise<void>;
+}> {
+  const contextDebugIds = options.contextDebugIds !== false;
   const [restPort, streamPort, workerPort] = await distinctFreePorts(3);
   const tmp = mkdtempSync(join(tmpdir(), "agentmemory-codex-eval-"));
   chmodSync(tmp, 0o755);
@@ -730,7 +745,7 @@ async function startLocalService(): Promise<{ url: string; secret: string; close
     "",
   ].join("\n"));
   const secret = "codex-session-eval-secret";
-  const env = serviceEnv(tmp, restPort, streamPort, workerPort, secret);
+  const env = serviceEnv(tmp, restPort, streamPort, workerPort, secret, contextDebugIds);
   const iii = spawn("iii", ["--config", configPath, "--no-update-check"], {
     cwd: tmp,
     env,
@@ -774,6 +789,9 @@ async function startLocalService(): Promise<{ url: string; secret: string; close
   return {
     url,
     secret,
+    home: tmp,
+    cwd: tmp,
+    statePath: join(tmp, "data", "state_store.db"),
     close: async () => {
       await stopProcess(worker);
       await stopProcess(iii);

@@ -1,5 +1,9 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadFixtures, markdownSummary, runMockEval, type CodexSessionEvalFixture } from "../benchmark/codex-session-eval.js";
+
+const ROOT = join(import.meta.dirname, "..");
 
 function fixtureById(fixtures: CodexSessionEvalFixture[], id: string): CodexSessionEvalFixture {
   const fixture = fixtures.find((candidate) => candidate.id === id);
@@ -177,6 +181,16 @@ describe("Codex session replay eval", () => {
       "- label-isolation: fact_recall_from_context is 1.000 but source_recall is 0.000 below 0.85",
     );
   }, 30000);
+
+  it("exposes a strict warning-policy npm profile while keeping default evals permissive", () => {
+    const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf-8"));
+
+    expect(pkg.scripts["eval:codex-session"]).toBe("tsx benchmark/codex-session-eval.ts --mode mock");
+    expect(pkg.scripts["eval:codex-session:service"]).toBe("tsx benchmark/codex-session-eval.ts --mode local-service");
+    expect(pkg.scripts["eval:codex-session:ci:strict-warning-policy"]).toBe(
+      "npm run eval:codex-session:service -- --max-source-recall-warnings 0 --min-average-gold-observation-recall 1",
+    );
+  });
 
   it("can make source-recall warnings fatal through an explicit policy", async () => {
     const results = await runMockEval([sourceRecallWarningFixture()], "mock", undefined, true, {
