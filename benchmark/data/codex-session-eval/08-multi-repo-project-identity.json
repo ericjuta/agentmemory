@@ -27,6 +27,7 @@
           "timestamp": "2026-05-04T00:10:00.000Z",
           "observationId": "multirepo_api",
           "payload": {
+            "cwd": "/tmp/agentmemory-codex-eval/mono/packages/api",
             "tool_name": "Edit",
             "tool_input": { "file_path": "packages/api/src/auth.ts" },
             "tool_response": { "output": "packages/api/src/auth.ts stores auth redirect state in signed httpOnly cookies for the api package" }
@@ -38,6 +39,11 @@
   "currentSession": {
     "sessionId": "fixture_multirepo_current",
     "events": [
+      {
+        "hook": "SessionStart",
+        "timestamp": "2026-05-04T00:59:50.000Z",
+        "payload": { "cwd": "/tmp/agentmemory-codex-eval/mono/packages/api/src/routes" }
+      },
       {
         "hook": "UserPromptSubmit",
         "timestamp": "2026-05-04T01:00:00.000Z",

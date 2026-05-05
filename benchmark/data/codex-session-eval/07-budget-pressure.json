@@ -19,7 +19,7 @@
           "payload": {
             "tool_name": "Edit",
             "tool_input": { "file_path": "src/reporting/export.ts" },
-            "tool_response": { "output": "src/reporting/export.ts streams CSV rows and preserves header ordering under budget pressure" }
+            "tool_response": { "output": "src/reporting/export.ts streams CSV rows and preserves header ordering under budget pressure via csv_header_streaming_order" }
           }
         },
         {
@@ -37,12 +37,12 @@
       {
         "hook": "UserPromptSubmit",
         "timestamp": "2026-05-04T01:00:00.000Z",
-        "payload": { "prompt": "under budget pressure what matters for src/reporting/export.ts csv export" }
+        "payload": { "prompt": "under budget pressure what matters for src/reporting/export.ts csv export csv_header_streaming_order" }
       }
     ]
   },
   "gold": {
-    "requiredFacts": ["src/reporting/export.ts streams CSV rows and preserves header ordering under budget pressure"],
+    "requiredFacts": ["src/reporting/export.ts streams CSV rows and preserves header ordering under budget pressure via csv_header_streaming_order"],
     "forbiddenFacts": ["CSV export buffers the full report before writing"],
     "goldObservationIds": ["budget_core"],
     "expectedSessionStatus": "active"

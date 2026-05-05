@@ -1,6 +1,6 @@
 # Codex Session Eval Results
 
-Generated: 2026-05-04T20:29:35.580Z
+Generated: 2026-05-05T17:25:54.534Z
 Mode: local-service
 Status: PASS
 
@@ -13,7 +13,7 @@ Status: PASS
 - context_precision_proxy: 0.785
 - session_state_correctness: 1.000
 - hook_contract_correctness: 1.000
-- hook_p95_ms: 361
+- hook_p95_ms: 338
 - max_context_tokens: 232
 
 ## Warnings
@@ -31,7 +31,7 @@ Status: PASS
 | stop-then-resume | PASS | 1.000 | 0.000 | 0.000 | 107 | - | - |
 | noisy-tool-stream | PASS | 1.000 | 0.000 | 1.000 | 118 | - | - |
 | negative-recall | PASS | 1.000 | 0.000 | 1.000 | 73 | - | - |
-| budget-pressure | PASS | 1.000 | 0.000 | 0.000 | 146 | - | - |
+| budget-pressure | PASS | 1.000 | 0.000 | 0.000 | 154 | - | - |
 | multi-repo-project-identity | PASS | 1.000 | 0.000 | 1.000 | 81 | - | - |
 | long-session-selective-survival | PASS | 1.000 | 0.000 | 1.000 | 232 | - | - |
 | fresh-session-handoff | PASS | 1.000 | 0.000 | 1.000 | 81 | - | - |

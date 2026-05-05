@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { loadFixtures, markdownSummary, runMockEval, type CodexSessionEvalFixture } from "../benchmark/codex-session-eval.js";
 
+function fixtureById(fixtures: CodexSessionEvalFixture[], id: string): CodexSessionEvalFixture {
+  const fixture = fixtures.find((candidate) => candidate.id === id);
+  expect(fixture).toBeDefined();
+  return fixture!;
+}
+
 describe("Codex session replay eval", () => {
   it("loads the expanded fixture categories", () => {
     const fixtures = loadFixtures();
@@ -30,6 +36,49 @@ describe("Codex session replay eval", () => {
     expect(new Set(fixtures.map((fixture) => fixture.category)).size).toBe(20);
   });
 
+  it("keeps the requested Codex failure modes represented structurally", () => {
+    const fixtures = loadFixtures();
+
+    const multiRepo = fixtureById(fixtures, "multi-repo-project-identity");
+    const multiRepoEvents = [...multiRepo.priorSessions.flatMap((session) => session.events), ...multiRepo.currentSession.events];
+    const nestedApiCwd = multiRepoEvents.find((event) => event.hook === "SessionStart")?.payload.cwd;
+    const neighborCwd = multiRepoEvents.find((event) => event.observationId === "multirepo_neighbor")?.payload.cwd;
+    expect(multiRepo.project).toBe("/tmp/agentmemory-codex-eval/mono/packages/api");
+    expect(nestedApiCwd).toBe("/tmp/agentmemory-codex-eval/mono/packages/api/src/routes");
+    expect(String(nestedApiCwd)).toContain(multiRepo.project + "/");
+    expect(neighborCwd).toBe("/tmp/agentmemory-codex-eval/mono/packages/web");
+    expect(multiRepo.currentSession.events.some((event) => (
+      event.hook === "SessionStart"
+      && typeof event.payload.cwd === "string"
+      && event.payload.cwd.startsWith(multiRepo.project + "/")
+    ))).toBe(true);
+
+    const longSession = fixtureById(fixtures, "long-session-selective-survival");
+    const longEvents = longSession.priorSessions.flatMap((session) => session.events);
+    expect(longEvents).toHaveLength(21);
+    expect([...longEvents, ...longSession.currentSession.events]).toHaveLength(22);
+    expect(longEvents.filter((event) => event.hook === "PostToolUse")).toHaveLength(21);
+
+    const handoff = fixtureById(fixtures, "fresh-session-handoff");
+    expect(handoff.priorSessions.flatMap((session) => session.events).some((event) => event.hook === "SessionEnd")).toBe(true);
+    expect(handoff.currentSession.events.map((event) => event.hook)).toEqual(["SessionStart", "UserPromptSubmit"]);
+
+    const worktree = fixtureById(fixtures, "branch-worktree-isolation");
+    const worktreeNeighbor = worktree.priorSessions.flatMap((session) => session.events).find((event) => event.observationId === "worktree_neighbor");
+    expect(worktreeNeighbor?.payload.cwd).toBe("/tmp/agentmemory-codex-eval/worktrees/feature-b");
+    expect(worktree.gold.forbiddenFacts).toContain("feature-b switches src/payments/gateway.ts to sandbox card gateway");
+
+    const promptOnly = fixtureById(fixtures, "prompt-only-user-decision");
+    expect(promptOnly.priorSessions.flatMap((session) => session.events).every((event) => event.hook === "UserPromptSubmit")).toBe(true);
+    expect(promptOnly.gold.requiredFacts[0]).toContain("User decision:");
+
+    const failedTool = fixtureById(fixtures, "failed-tool-correction");
+    const failedToolIds = failedTool.priorSessions.flatMap((session) => session.events).map((event) => event.observationId);
+    expect(failedToolIds).toEqual(["failed_tool_initial", "failed_tool_fixed"]);
+    expect(failedTool.gold.requiredFacts[0]).toContain("now passes");
+    expect(failedTool.gold.forbiddenFacts[0]).toContain("still failing");
+  });
+
   it("passes mock mode without a live service", async () => {
     const results = await runMockEval();
     expect(results.passed).toBe(true);
@@ -39,6 +88,18 @@ describe("Codex session replay eval", () => {
     expect(results.metrics.sessionStateCorrectness).toBe(1);
     expect(results.metrics.hookContractCorrectness).toBe(1);
     expect(results.metrics.disabledInjectionNoOutput).toBe(true);
+    for (const fixtureId of [
+      "multi-repo-project-identity",
+      "long-session-selective-survival",
+      "fresh-session-handoff",
+      "branch-worktree-isolation",
+      "prompt-only-user-decision",
+      "failed-tool-correction",
+    ]) {
+      const result = results.fixtures.find((fixture) => fixture.fixtureId === fixtureId);
+      expect(result?.goldObservationRecallAtK).toBe(1);
+      expect(result?.leakedForbiddenFacts).toEqual([]);
+    }
   }, 30000);
 
   it("uses gold labels only for grading, not mock candidate selection", async () => {

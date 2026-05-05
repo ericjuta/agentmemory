@@ -240,7 +240,7 @@ Current risk is low for hook transport and session state regression, medium for 
 Status after the first release-quality implementation:
 
 - mock mode no longer uses gold labels during candidate selection.
-- local-service mode starts an isolated iii-engine plus agentmemory worker, replays real hook subprocesses, checks auth/health, waits for replayed observations, and grades context from REST output.
+- local-service mode starts an isolated iii-engine plus agentmemory worker, replays real hook subprocesses, checks auth/health readiness, tolerates host CPU-only health alerts during startup, waits for replayed observations, and grades context from REST output.
 - The expanded 20-fixture set passes in both modes with 100% required fact recall and 0% forbidden fact leakage.
 - Markdown output now warns when context fact recall is perfect but source recall is low, so summary/rendering wins do not hide retrieval drift.
 
@@ -250,7 +250,7 @@ What is left is mostly operational polish, not a blocker for the current Codex-s
 
 Completed coverage now includes:
 
-- multi-repo monorepo tasks where cwd, package root, and project identity differ
+- multi-repo monorepo tasks where cwd, package root, and sibling package identity differ
 - long sessions with 20+ tool events where only a few observations should survive budget pressure
 - fresh-session handoff where a closed prior thread should still produce useful summary context
 - branch/worktree-specific decisions that should not leak across sibling worktrees

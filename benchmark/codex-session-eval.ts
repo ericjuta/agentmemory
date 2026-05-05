@@ -520,21 +520,76 @@ async function distinctFreePorts(count: number): Promise<number[]> {
   return [...ports];
 }
 
+async function fetchJson(url: string, headers: Record<string, string>): Promise<{ ok: boolean; status: number; text: string; json: unknown }> {
+  const res = await fetch(url, { headers, signal: AbortSignal.timeout(1000) });
+  const text = await res.text();
+  let json: unknown = {};
+  if (text.trim()) {
+    try {
+      json = JSON.parse(text);
+    } catch {
+      json = { text };
+    }
+  }
+  return { ok: res.ok, status: res.status, text, json };
+}
+
 async function waitForJson(url: string, headers: Record<string, string>, timeoutMs: number): Promise<unknown> {
   const start = Date.now();
   let lastError = "";
   while (Date.now() - start < timeoutMs) {
     try {
-      const res = await fetch(url, { headers, signal: AbortSignal.timeout(1000) });
-      const text = await res.text();
-      if (res.ok) return text ? JSON.parse(text) : {};
-      lastError = "HTTP " + String(res.status) + (text ? ": " + text.slice(0, 200) : "");
+      const response = await fetchJson(url, headers);
+      if (response.ok) return response.json;
+      lastError = "HTTP " + String(response.status) + (response.text ? ": " + response.text.slice(0, 200) : "");
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new Error("timed out waiting for " + url + (lastError ? " (" + lastError + ")" : ""));
+}
+
+function objectValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? value as Record<string, unknown> : null;
+}
+
+function localServiceReadyFromHealth(value: unknown): boolean {
+  const body = objectValue(value);
+  const health = objectValue(body?.health);
+  if (!body || !health || health.connectionState !== "connected") return false;
+  const alerts = Array.isArray(health.alerts) ? health.alerts.filter((alert): alert is string => typeof alert === "string") : [];
+  const nonCpuAlerts = alerts.filter((alert) => !alert.startsWith("cpu_"));
+  return body.status === "healthy" || (nonCpuAlerts.length === 0 && alerts.length > 0);
+}
+
+function healthSummary(value: unknown): string {
+  const body = objectValue(value);
+  const health = objectValue(body?.health);
+  const alerts = Array.isArray(health?.alerts) ? health.alerts.filter((alert): alert is string => typeof alert === "string") : [];
+  return "health status=" + String(body?.status || "missing") +
+    " connectionState=" + String(health?.connectionState || "missing") +
+    " alerts=" + (alerts.length ? alerts.join(",") : "none");
+}
+
+async function waitForLocalServiceReady(url: string, headers: Record<string, string>, timeoutMs: number): Promise<unknown> {
+  const start = Date.now();
+  let lastError = "";
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const response = await fetchJson(url, headers);
+      if (response.ok || response.status === 503) {
+        if (localServiceReadyFromHealth(response.json)) return response.json;
+        lastError = healthSummary(response.json);
+      } else {
+        lastError = "HTTP " + String(response.status) + (response.text ? ": " + response.text.slice(0, 200) : "");
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error("timed out waiting for local-service readiness at " + url + (lastError ? " (" + lastError + ")" : ""));
 }
 
 function serviceEnv(tmp: string, restPort: number, streamPort: number, workerPort: number, secret?: string): NodeJS.ProcessEnv {
@@ -675,7 +730,7 @@ async function startLocalService(): Promise<{ url: string; secret: string; close
     await waitForJson(url + "/agentmemory/livez", {}, 15_000);
     const unauth = await fetch(url + "/agentmemory/health", { signal: AbortSignal.timeout(1000) });
     if (unauth.status !== 401) throw new Error("expected unauthenticated /agentmemory/health to return 401, got " + String(unauth.status));
-    await waitForJson(url + "/agentmemory/health", authHeaders, 15_000);
+    await waitForLocalServiceReady(url + "/agentmemory/health", authHeaders, 30_000);
   } catch (error) {
     await stopProcess(worker);
     await stopProcess(iii);
@@ -836,7 +891,7 @@ async function runLocalServiceEval(fixtures = loadFixtures()): Promise<EvalResul
       AGENTMEMORY_HOOK_PROCESS_TIMEOUT_MS: "5000",
     });
     const results = await runMockEval(fixtures, "local-service", async (fixture) => runServiceFixture(fixture, service), false);
-    await serviceJson(service, "/agentmemory/health", { method: "GET" });
+    await waitForLocalServiceReady(service.url + "/agentmemory/health", { Authorization: "Bearer " + service.secret }, 5000);
     return results;
   } finally {
     await service.close();
