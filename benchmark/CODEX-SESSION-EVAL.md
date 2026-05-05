@@ -244,7 +244,7 @@ Status after the first release-quality implementation:
 - The expanded 20-fixture set passes in both modes with 100% required fact recall and 0% forbidden fact leakage.
 - Markdown output now warns when context fact recall is perfect but source recall is low, so summary/rendering wins do not hide retrieval drift.
 
-What is left is mostly operational polish, not a blocker for the current Codex-session gate.
+What is left is mostly operational polish, not a blocker for the current Codex-session gate. The next hardening step should turn the current warning signals into explicit release policy.
 
 ### 1. Expand Fixture Breadth
 
@@ -286,11 +286,21 @@ Acceptance:
 
 gold_observation_recall@k is now measurable, but context rendering can still pass if adjacent summaries contain the same phrase while the intended observation was not selected. That is useful but should be visible.
 
+Current local-service result: 20 fixtures pass with 100% fact recall and 0% forbidden leakage, while `stop-then-resume` and `budget-pressure` warn because fact recall is perfect but source recall is 0.000 for those fixtures. This is acceptable for the current release gate because the warnings are visible, but it should not remain policy-free.
+
 Acceptance:
 
 - result output separates fact_recall_from_context from source_recall
 - service mode maps fixture observation IDs to actual generated IDs deterministically
 - any fixture with perfect fact recall but low source recall is marked as a warning in the markdown summary
+- define an explicit source-recall warning budget, such as max warning count or minimum average `gold_observation_recall@k`, before wiring this into CI enforcement
+- keep source-recall warnings non-fatal until the intended attribution behavior for summarized/closed sessions is fixed
+
+Next implementation notes:
+
+- add a machine-readable `warnings` array to the JSON result, not only markdown text
+- include per-warning fields for fixture id, fact recall, source recall, threshold, selected observation IDs, and gold observation IDs
+- add a CLI threshold option so CI can fail on warning count or source recall without changing local exploratory runs
 
 ### 5. Add CI Profiles
 
@@ -298,12 +308,14 @@ The benchmark should have two CI levels:
 
 - fast PR gate: schema tests, mock eval, and focused Codex eval tests
 - release gate: local-service eval with isolated iii-engine
+- optional warning-policy gate: local-service eval plus the source-recall warning budget once the policy is chosen
 
 Acceptance:
 
 - CI commands are documented in this file and package.json
 - local-service failures print startup logs, fixture diagnostics, selected IDs, and missing/leaked facts
 - release gate does not depend on live ~/.agentmemory data or user environment keys
+- release gate artifacts include the markdown and JSON result files so source-recall warning changes are reviewable
 
 ### 6. Watch Runtime Memory/RSS Under Compression
 
@@ -317,4 +329,4 @@ Acceptance:
 
 ## Current Recommendation
 
-Keep the current benchmark as the release-confidence gate for Codex session integration. The next best investment is live-readonly diagnostics and runtime RSS burn-in, not more scoring sophistication. The scoring is now honest enough; it needs cleaner operational gates around it.
+Keep the current benchmark as the release-confidence gate for Codex session integration. The next best investment is source-recall warning policy plus CI profiles, then live-readonly diagnostics. Runtime RSS burn-in remains useful, but it should stay separate from Codex-session recall scoring so retrieval quality and resource health do not blur together.
