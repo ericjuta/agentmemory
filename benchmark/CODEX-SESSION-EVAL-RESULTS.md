@@ -1,6 +1,6 @@
 # Codex Session Eval Results
 
-Generated: 2026-05-05T17:43:43.409Z
+Generated: 2026-05-05T18:17:23.667Z
 Mode: local-service
 Status: PASS
 
@@ -9,17 +9,16 @@ Status: PASS
 - fixtures: 20
 - required_fact_recall@context: 1.000
 - forbidden_fact_leak_rate: 0.000
-- gold_observation_recall@k: 0.900
+- gold_observation_recall@k: 1.000
 - context_precision_proxy: 0.785
 - session_state_correctness: 1.000
 - hook_contract_correctness: 1.000
-- hook_p95_ms: 339
+- hook_p95_ms: 378
 - max_context_tokens: 232
 
 ## Warnings
 
-- stop-then-resume: fact_recall_from_context is 1.000 but source_recall is 0.000 below 0.85
-- budget-pressure: fact_recall_from_context is 1.000 but source_recall is 0.000 below 0.85
+- none
 
 ## Fixtures
 
@@ -28,10 +27,10 @@ Status: PASS
 | same-repo-continuation | PASS | 1.000 | 0.000 | 1.000 | 99 | - | - |
 | stale-decision-replacement | PASS | 1.000 | 0.000 | 1.000 | 135 | - | - |
 | cross-session-implementation-trail | PASS | 1.000 | 0.000 | 1.000 | 165 | - | - |
-| stop-then-resume | PASS | 1.000 | 0.000 | 0.000 | 107 | - | - |
+| stop-then-resume | PASS | 1.000 | 0.000 | 1.000 | 107 | - | - |
 | noisy-tool-stream | PASS | 1.000 | 0.000 | 1.000 | 118 | - | - |
 | negative-recall | PASS | 1.000 | 0.000 | 1.000 | 73 | - | - |
-| budget-pressure | PASS | 1.000 | 0.000 | 0.000 | 154 | - | - |
+| budget-pressure | PASS | 1.000 | 0.000 | 1.000 | 154 | - | - |
 | multi-repo-project-identity | PASS | 1.000 | 0.000 | 1.000 | 81 | - | - |
 | long-session-selective-survival | PASS | 1.000 | 0.000 | 1.000 | 232 | - | - |
 | fresh-session-handoff | PASS | 1.000 | 0.000 | 1.000 | 81 | - | - |

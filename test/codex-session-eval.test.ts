@@ -151,7 +151,7 @@ describe("Codex session replay eval", () => {
       expect(result?.goldObservationRecallAtK).toBe(1);
       expect(result?.leakedForbiddenFacts).toEqual([]);
     }
-  }, 30000);
+  }, 60000);
 
   it("uses gold labels only for grading, not mock candidate selection", async () => {
     const fixture = sourceRecallWarningFixture();

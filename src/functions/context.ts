@@ -78,7 +78,10 @@ export function registerContextFunction(
 
       const allSessions = await kv.list<Session>(KV.sessions);
       const sessions = allSessions
-        .filter((s) => s.project === data.project && s.id !== data.sessionId)
+        .filter((s) => (
+          s.project === data.project
+          && (s.id !== data.sessionId || typeof s.lastStopAt === "string")
+        ))
         .sort(
           (a, b) =>
             new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime(),
@@ -92,19 +95,48 @@ export function registerContextFunction(
       );
 
       const sessionsNeedingObs: number[] = [];
+      const sessionsNeedingSummarySourceIds: number[] = [];
+      const summaryBlocksByIndex = new Map<number, ContextBlock>();
       for (let i = 0; i < sessions.length; i++) {
         const summary = summariesPerSession[i];
         if (summary) {
+          if (!summary.sourceObservationIds) sessionsNeedingSummarySourceIds.push(i);
           const content = `## ${summary.title}\n${summary.narrative}\nDecisions: ${summary.keyDecisions.join("; ")}\nFiles: ${summary.filesModified.join(", ")}`;
-          blocks.push({
+          const block: ContextBlock = {
             type: "summary",
             content,
             tokens: estimateTokens(content),
             recency: new Date(summary.createdAt).getTime(),
-          });
+            sourceIds: summary.sourceObservationIds,
+          };
+          blocks.push(block);
+          summaryBlocksByIndex.set(i, block);
         } else {
           sessionsNeedingObs.push(i);
         }
+      }
+
+      const summarySourceIds = new Map<number, string[]>();
+      if (sessionsNeedingSummarySourceIds.length > 0) {
+        const summaryObsResults = await Promise.all(
+          sessionsNeedingSummarySourceIds.map((i) =>
+            kv
+              .list<CompressedObservation>(KV.observations(sessions[i].id))
+              .catch(() => []),
+          ),
+        );
+        for (let j = 0; j < sessionsNeedingSummarySourceIds.length; j++) {
+          const sessionIndex = sessionsNeedingSummarySourceIds[j];
+          const observations = summaryObsResults[j];
+          if (sessionIndex !== undefined && observations) {
+            summarySourceIds.set(sessionIndex, observations.map((o) => o.id));
+          }
+        }
+      }
+
+      for (const [index, sourceIds] of summarySourceIds) {
+        const block = summaryBlocksByIndex.get(index);
+        if (block && sourceIds.length > 0) block.sourceIds = sourceIds;
       }
 
       const obsResults = await Promise.all(

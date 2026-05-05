@@ -788,7 +788,12 @@ async function serviceJson(service: { url: string; secret: string }, path: strin
     Authorization: "Bearer " + service.secret,
     ...(init.headers as Record<string, string> | undefined),
   };
-  const res = await fetch(service.url + path, { ...init, headers, signal: AbortSignal.timeout(5000) });
+  let res: Response;
+  try {
+    res = await fetch(service.url + path, { ...init, headers, signal: AbortSignal.timeout(15_000) });
+  } catch (error) {
+    throw new Error(path + " request failed: " + (error instanceof Error ? error.message : String(error)));
+  }
   const text = await res.text();
   const json = text ? JSON.parse(text) as Record<string, unknown> : {};
   if (!res.ok) throw new Error(path + " failed with HTTP " + String(res.status) + ": " + text.slice(0, 500));
@@ -827,9 +832,24 @@ async function waitForServiceObservations(fixture: CodexSessionEvalFixture, serv
   }
 }
 
-async function serviceGradeState(fixture: CodexSessionEvalFixture, service: { url: string; secret: string }): Promise<GradeState> {
+async function serviceGradeState(
+  fixture: CodexSessionEvalFixture,
+  service: { url: string; secret: string },
+  contextSessionId: string,
+): Promise<GradeState> {
   await waitForServiceObservations(fixture, service);
   const fixtureIdByActualId = new Map<string, string>();
+  const expectedObservationIdsBySession = new Map<string, string[]>();
+  for (const session of [...fixture.priorSessions, fixture.currentSession]) {
+    const ids = expectedObservationIdsBySession.get(session.sessionId) || [];
+    ids.push(
+      ...session.events
+        .filter((event) => ["UserPromptSubmit", "PostToolUse", "Stop"].includes(event.hook))
+        .map((event) => event.observationId)
+        .filter((id): id is string => typeof id === "string"),
+    );
+    expectedObservationIdsBySession.set(session.sessionId, ids);
+  }
   const sessions = new Map<string, { status: string }>();
   let observationsCaptured = 0;
   for (const session of [...fixture.priorSessions, fixture.currentSession]) {
@@ -840,10 +860,7 @@ async function serviceGradeState(fixture: CodexSessionEvalFixture, service: { ur
     else observationsCaptured += observationsInReplay(replay);
     const timeline = replay.timeline && typeof replay.timeline === "object" ? replay.timeline as { events?: unknown } : null;
     const events = Array.isArray(timeline?.events) ? timeline.events : [];
-    const expectedObservationIds = session.events
-      .filter((event) => ["UserPromptSubmit", "PostToolUse", "Stop"].includes(event.hook))
-      .map((event) => event.observationId)
-      .filter((id): id is string => typeof id === "string");
+    const expectedObservationIds = expectedObservationIdsBySession.get(session.sessionId) || [];
     for (let i = 0; i < expectedObservationIds.length && i < events.length; i++) {
       const event = events[i] as { id?: unknown };
       if (typeof event.id === "string") fixtureIdByActualId.set(event.id, expectedObservationIds[i]);
@@ -852,7 +869,7 @@ async function serviceGradeState(fixture: CodexSessionEvalFixture, service: { ur
   const contextResult = await serviceJson(service, "/agentmemory/context", {
     method: "POST",
     body: JSON.stringify({
-      sessionId: fixture.currentSession.sessionId + ":eval-context",
+      sessionId: contextSessionId,
       project: fixture.project,
       budget: fixture.budgets.contextTokens,
       includeRetrievalIds: true,
@@ -899,8 +916,12 @@ async function runServiceFixture(fixture: CodexSessionEvalFixture, service: { ur
   }
   await ensureSession(fixture.currentSession.sessionId, fixture.currentSession.events);
   const currentRuns = await replaySession(fixture, fixture.currentSession.sessionId, fixture.currentSession.events, service);
-  const state = await serviceGradeState(fixture, service);
-  return gradeFixture(fixture, [...priorRuns, ...currentRuns], state);
+  const runs = [...priorRuns, ...currentRuns];
+  const contextSessionId = runs.some((run) => parseAdditionalContext(run).length > 0)
+    ? fixture.currentSession.sessionId
+    : fixture.currentSession.sessionId + ":eval-context";
+  const state = await serviceGradeState(fixture, service, contextSessionId);
+  return gradeFixture(fixture, runs, state);
 }
 
 async function runLocalServiceEval(

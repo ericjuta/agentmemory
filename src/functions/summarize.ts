@@ -31,6 +31,7 @@ function parseSummaryXml(
   sessionId: string,
   project: string,
   obsCount: number,
+  sourceObservationIds: string[],
 ): SessionSummary | null {
   const title = getXmlTag(xml, "title");
   if (!title) return null;
@@ -45,6 +46,7 @@ function parseSummaryXml(
     filesModified: getXmlChildren(xml, "files", "file"),
     concepts: getXmlChildren(xml, "concepts", "concept"),
     observationCount: obsCount,
+    sourceObservationIds,
   };
 }
 
@@ -122,6 +124,7 @@ export function registerSummarizeFunction(
           sessionId,
           session.project,
           compressed.length,
+          compressed.map((obs) => obs.id),
         );
 
         if (!summary) {

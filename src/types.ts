@@ -106,6 +106,7 @@ export interface SessionSummary {
   filesModified: string[];
   concepts: string[];
   observationCount: number;
+  sourceObservationIds?: string[];
 }
 
 export type HookType =

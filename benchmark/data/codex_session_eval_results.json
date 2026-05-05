@@ -1,6 +1,6 @@
 {
   "mode": "local-service",
-  "generatedAt": "2026-05-05T17:43:43.409Z",
+  "generatedAt": "2026-05-05T18:17:23.667Z",
   "passed": true,
   "fixtures": [
     {
@@ -16,17 +16,16 @@
       "contextBytes": 396,
       "estimatedContextTokens": 99,
       "hookLatencyMs": {
-        "p50": 270,
-        "p95": 295,
-        "max": 295
+        "p50": 277,
+        "p95": 286,
+        "max": 286
       },
       "observationsCaptured": 3,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosx2oyb_26d3287ae7b8",
-        "obs_mosx2oc6_3e30849b1bfa",
-        "obs_mosx2oke_3e42c4ccc40b",
+        "obs_mosya5cn_6ec8c12c08bf",
+        "obs_mosya5lp_7adac0f0741c",
         "same_prompt",
         "same_auth_timeout"
       ],
@@ -46,17 +45,16 @@
       "contextBytes": 540,
       "estimatedContextTokens": 135,
       "hookLatencyMs": {
-        "p50": 249,
-        "p95": 324,
-        "max": 324
+        "p50": 248,
+        "p95": 378,
+        "max": 378
       },
       "observationsCaptured": 3,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosx2pqy_6b1de2b62c51",
-        "obs_mosx2phs_d20f31201469",
-        "obs_mosx2pau_dfa1627b3345",
+        "obs_mosya6hg_14ea612f2941",
+        "obs_mosya6a8_e9acd45820ac",
         "stale_replacement",
         "stale_initial"
       ],
@@ -76,18 +74,17 @@
       "contextBytes": 657,
       "estimatedContextTokens": 165,
       "hookLatencyMs": {
-        "p50": 240,
-        "p95": 365,
-        "max": 365
+        "p50": 276,
+        "p95": 334,
+        "max": 334
       },
       "observationsCaptured": 4,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosx2qvj_137c6536829d",
-        "obs_mosx2qlv_e06c875f91e0",
-        "obs_mosx2qcb_7f0d44293811",
-        "obs_mosx2q5h_dd45529e457f",
+        "obs_mosya7qd_9e7a7254c5a1",
+        "obs_mosya7h0_8ab91a42e8e0",
+        "obs_mosya78c_c01b262479ea",
         "trail_tests",
         "trail_panel",
         "trail_api"
@@ -101,24 +98,25 @@
       "passed": true,
       "requiredFactRecall": 1,
       "forbiddenFactLeakRate": 0,
-      "goldObservationRecallAtK": 0,
+      "goldObservationRecallAtK": 1,
       "contextPrecisionProxy": 0.3333333333333333,
       "sessionStateCorrect": true,
       "hookContractCorrect": true,
       "contextBytes": 425,
       "estimatedContextTokens": 107,
       "hookLatencyMs": {
-        "p50": 241,
-        "p95": 255,
-        "max": 255
+        "p50": 268,
+        "p95": 277,
+        "max": 277
       },
       "observationsCaptured": 6,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosx2rbw_afc96e2b3271",
-        "obs_mosx2rie_792d1ea173a9",
-        "obs_mosx2rou_47aa9f5fa33b",
+        "obs_mosya8g4_8f5454aaf885",
+        "obs_mosya8nk_ba3d916a1322",
+        "obs_mosya8uk_102d9c596fd8",
+        "stop_prior_patch",
         "stop_marker",
         "stop_resume_prompt"
       ],
@@ -138,18 +136,17 @@
       "contextBytes": 471,
       "estimatedContextTokens": 118,
       "hookLatencyMs": {
-        "p50": 231,
-        "p95": 264,
-        "max": 264
+        "p50": 256,
+        "p95": 272,
+        "max": 272
       },
       "observationsCaptured": 4,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosx2six_9ab009061619",
-        "obs_mosx2ry8_f02166923868",
-        "obs_mosx2s4j_728e0ed9cf43",
-        "obs_mosx2sbh_ff2d9e60b2d5",
+        "obs_mosya95e_0b961e2ef33d",
+        "obs_mosya9cr_24490aad6aa2",
+        "obs_mosya9jo_a91182cf693b",
         "noise_rg_1",
         "noise_rg_2",
         "noise_decision"
@@ -170,16 +167,15 @@
       "contextBytes": 290,
       "estimatedContextTokens": 73,
       "hookLatencyMs": {
-        "p50": 257,
-        "p95": 261,
-        "max": 261
+        "p50": 269,
+        "p95": 273,
+        "max": 273
       },
       "observationsCaptured": 3,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosx2t9i_c60562cdabe2",
-        "obs_mosx2t2b_c6f354960dcb",
+        "obs_mosyaa8p_d8924b7ceee5",
         "negative_api"
       ],
       "candidateSelectionTrace": [],
@@ -191,22 +187,27 @@
       "passed": true,
       "requiredFactRecall": 1,
       "forbiddenFactLeakRate": 0,
-      "goldObservationRecallAtK": 0,
+      "goldObservationRecallAtK": 1,
       "contextPrecisionProxy": 0.3333333333333333,
       "sessionStateCorrect": true,
       "hookContractCorrect": true,
       "contextBytes": 615,
       "estimatedContextTokens": 154,
       "hookLatencyMs": {
-        "p50": 254,
-        "p95": 288,
-        "max": 288
+        "p50": 251,
+        "p95": 289,
+        "max": 289
       },
       "observationsCaptured": 4,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosx2u8t_148da2509892"
+        "obs_mosyaarn_93bbbd312232",
+        "obs_mosyaayb_435f8df91e56",
+        "obs_mosyab5m_cf8e59d92f7b",
+        "budget_noise_1",
+        "budget_core",
+        "budget_noise_2"
       ],
       "candidateSelectionTrace": [],
       "diagnostics": 26
@@ -224,15 +225,15 @@
       "contextBytes": 322,
       "estimatedContextTokens": 81,
       "hookLatencyMs": {
-        "p50": 251,
-        "p95": 285,
-        "max": 285
+        "p50": 284,
+        "p95": 413,
+        "max": 413
       },
       "observationsCaptured": 3,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosx2ush_2a4b799aa1ff",
+        "obs_mosyabw7_0370df86a053",
         "multirepo_api"
       ],
       "candidateSelectionTrace": [],
@@ -251,20 +252,19 @@
       "contextBytes": 927,
       "estimatedContextTokens": 232,
       "hookLatencyMs": {
-        "p50": 243,
-        "p95": 333,
-        "max": 3212
+        "p50": 255,
+        "p95": 376,
+        "max": 479
       },
-      "observationsCaptured": 21,
+      "observationsCaptured": 22,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosx31t8_95caf5cfc5a0",
-        "obs_mosx2vh8_cb08f610b2f6",
-        "obs_mosx2vo2_c2663b71ee83",
-        "obs_mosx2vuj_ba14fa96487a",
-        "obs_mosx2w13_06a5be4bb8ec",
-        "obs_mosx2waa_a14127c43ccd",
+        "obs_mosyacvo_01242534335c",
+        "obs_mosyad8p_c7a6ed645959",
+        "obs_mosyadjf_7f03f4ea470b",
+        "obs_mosyadra_a6bf6bff73a7",
+        "obs_mosyae0e_90b7ffe25d82",
         "long_core_rollup",
         "long_noise_02",
         "long_noise_03",
@@ -287,16 +287,15 @@
       "contextBytes": 321,
       "estimatedContextTokens": 81,
       "hookLatencyMs": {
-        "p50": 255,
-        "p95": 339,
-        "max": 339
+        "p50": 268,
+        "p95": 325,
+        "max": 325
       },
       "observationsCaptured": 2,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosx36oh_c31a34337053",
-        "obs_mosx3619_8e5bc187cbf7",
+        "obs_mosyahlr_9ba9e54cc4ba",
         "handoff_patch"
       ],
       "candidateSelectionTrace": [],
@@ -315,16 +314,15 @@
       "contextBytes": 307,
       "estimatedContextTokens": 77,
       "hookLatencyMs": {
-        "p50": 241,
-        "p95": 262,
-        "max": 262
+        "p50": 237,
+        "p95": 252,
+        "max": 252
       },
       "observationsCaptured": 3,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosx37e2_d6b4c40ea7f1",
-        "obs_mosx3773_789f26223076",
+        "obs_mosyaiql_20ff47013ef2",
         "worktree_feature_a"
       ],
       "candidateSelectionTrace": [],
@@ -343,16 +341,15 @@
       "contextBytes": 261,
       "estimatedContextTokens": 66,
       "hookLatencyMs": {
-        "p50": 251,
-        "p95": 261,
-        "max": 261
+        "p50": 255,
+        "p95": 284,
+        "max": 284
       },
       "observationsCaptured": 2,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosx37yc_26034d6d72d7",
-        "obs_mosx37r4_670ed65dc131",
+        "obs_mosyaj7s_e11f6b75cf8d",
         "prompt_only_decision"
       ],
       "candidateSelectionTrace": [],
@@ -371,17 +368,16 @@
       "contextBytes": 434,
       "estimatedContextTokens": 109,
       "hookLatencyMs": {
-        "p50": 243,
-        "p95": 261,
-        "max": 261
+        "p50": 262,
+        "p95": 270,
+        "max": 270
       },
       "observationsCaptured": 3,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosx38o9_eadf53bcaa6b",
-        "obs_mosx38am_050c20d68b08",
-        "obs_mosx38h6_468a1eb7c20f",
+        "obs_mosyajpx_34194c984ec0",
+        "obs_mosyajx0_e578a35f6116",
         "failed_tool_initial",
         "failed_tool_fixed"
       ],
@@ -401,16 +397,15 @@
       "contextBytes": 337,
       "estimatedContextTokens": 85,
       "hookLatencyMs": {
-        "p50": 226,
-        "p95": 258,
-        "max": 258
+        "p50": 252,
+        "p95": 266,
+        "max": 266
       },
       "observationsCaptured": 2,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosx397c_aefa47391ea6",
-        "obs_mosx390b_f7c92775ab7b",
+        "obs_mosyakek_fe90a4edd595",
         "secret_redaction"
       ],
       "candidateSelectionTrace": [],
@@ -429,16 +424,15 @@
       "contextBytes": 329,
       "estimatedContextTokens": 83,
       "hookLatencyMs": {
-        "p50": 240,
-        "p95": 264,
-        "max": 264
+        "p50": 265,
+        "p95": 273,
+        "max": 273
       },
       "observationsCaptured": 2,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosx39qf_a91b1c946fce",
-        "obs_mosx39j6_b94bb719f1df",
+        "obs_mosyakwa_df2731a1665b",
         "subagent_worker_contract"
       ],
       "candidateSelectionTrace": [],
@@ -457,16 +451,15 @@
       "contextBytes": 322,
       "estimatedContextTokens": 81,
       "hookLatencyMs": {
-        "p50": 261,
-        "p95": 281,
-        "max": 281
+        "p50": 240,
+        "p95": 240,
+        "max": 240
       },
       "observationsCaptured": 2,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosx3aan_7c1eeafca06c",
-        "obs_mosx3a35_6c326a7a3ad6",
+        "obs_mosyaldz_310986c2fd32",
         "runtime_boundary"
       ],
       "candidateSelectionTrace": [],
@@ -485,17 +478,16 @@
       "contextBytes": 397,
       "estimatedContextTokens": 100,
       "hookLatencyMs": {
-        "p50": 250,
-        "p95": 259,
-        "max": 259
+        "p50": 229,
+        "p95": 282,
+        "max": 282
       },
       "observationsCaptured": 3,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosx3b1h_b9ced5381660",
-        "obs_mosx3an4_c8691dd01cb3",
-        "obs_mosx3au3_8dcfa982b4c1",
+        "obs_mosyalu0_2788b589d9c3",
+        "obs_mosyam01_5eb5e22e7af1",
         "correction_assumption",
         "correction_user"
       ],
@@ -515,17 +507,16 @@
       "contextBytes": 473,
       "estimatedContextTokens": 119,
       "hookLatencyMs": {
-        "p50": 275,
-        "p95": 282,
-        "max": 282
+        "p50": 255,
+        "p95": 258,
+        "max": 258
       },
       "observationsCaptured": 3,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosx3bt1_ad60099aadfb",
-        "obs_mosx3bdm_c178b692a916",
-        "obs_mosx3bl3_682cc6d9a3cb",
+        "obs_mosyami4_206f1a350331",
+        "obs_mosyamp4_326632fc2f55",
         "test_diag_failure",
         "test_diag_fix"
       ],
@@ -545,16 +536,15 @@
       "contextBytes": 302,
       "estimatedContextTokens": 76,
       "hookLatencyMs": {
-        "p50": 265,
-        "p95": 272,
-        "max": 272
+        "p50": 227,
+        "p95": 251,
+        "max": 251
       },
       "observationsCaptured": 2,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosx3cds_0afc4b02cac5",
-        "obs_mosx3c5z_15d6d5cb031c",
+        "obs_mosyan5z_02c2fb60d7e7",
         "artifact_tmp_handoff"
       ],
       "candidateSelectionTrace": [],
@@ -573,63 +563,33 @@
       "contextBytes": 291,
       "estimatedContextTokens": 73,
       "hookLatencyMs": {
-        "p50": 229,
-        "p95": 248,
-        "max": 248
+        "p50": 231,
+        "p95": 254,
+        "max": 254
       },
       "observationsCaptured": 2,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosx3cwo_6563fa89d055",
-        "obs_mosx3cpy_b1856e9d8e65",
+        "obs_mosyanm7_64395fd3bb6c",
         "noop_contract"
       ],
       "candidateSelectionTrace": [],
       "diagnostics": 80
     }
   ],
-  "warnings": [
-    {
-      "fixtureId": "stop-then-resume",
-      "factRecall": 1,
-      "sourceRecall": 0,
-      "threshold": 0.85,
-      "selectedObservationIds": [
-        "obs_mosx2rbw_afc96e2b3271",
-        "obs_mosx2rie_792d1ea173a9",
-        "obs_mosx2rou_47aa9f5fa33b",
-        "stop_marker",
-        "stop_resume_prompt"
-      ],
-      "goldObservationIds": [
-        "stop_prior_patch"
-      ]
-    },
-    {
-      "fixtureId": "budget-pressure",
-      "factRecall": 1,
-      "sourceRecall": 0,
-      "threshold": 0.85,
-      "selectedObservationIds": [
-        "obs_mosx2u8t_148da2509892"
-      ],
-      "goldObservationIds": [
-        "budget_core"
-      ]
-    }
-  ],
+  "warnings": [],
   "metrics": {
     "fixtureCount": 20,
     "requiredFactRecallAtContext": 1,
     "forbiddenFactLeakRate": 0,
-    "goldObservationRecallAtK": 0.9,
+    "goldObservationRecallAtK": 1,
     "contextPrecisionProxy": 0.7849999999999999,
     "sessionStateCorrectness": 1,
     "hookContractCorrectness": 1,
-    "hookP95Ms": 339,
+    "hookP95Ms": 378,
     "maxContextTokens": 232,
-    "observationsCaptured": 77,
+    "observationsCaptured": 78,
     "disabledInjectionNoOutput": true
   },
   "gates": {
@@ -639,10 +599,14 @@
     "forbiddenFactLeakRate": true,
     "hookP95": true,
     "contextBudget": true,
-    "disabledInjectionNoOutput": true
+    "disabledInjectionNoOutput": true,
+    "sourceRecallWarningCount": true,
+    "goldObservationRecallAtK": true
   },
   "warningPolicy": {
     "sourceRecallWarningThreshold": 0.85,
+    "maxSourceRecallWarnings": 2,
+    "minAverageGoldObservationRecallAtK": 0.9,
     "passed": true,
     "failures": []
   }
