@@ -940,6 +940,7 @@ Codex live-session proof commands:
 - npm run codex:smoke starts isolated temp HOME/cwd/state, exercises native Codex SessionStart, UserPromptSubmit, PostToolUse, and Stop hooks, and asserts normal hook stdout keeps hookSpecificOutput.additionalContext as a string without debug/source fields.
 - npm run codex:smoke:live-readonly reads live host hook/API state only and labels every file or endpoint it touched.
 - npm run eval:codex-session:ci:strict-warning-policy runs the local-service eval with zero source-recall warnings and perfect average gold observation recall required.
+- npm run agentmemory:burnin samples live-readonly health and hook diagnostics over time, reporting RSS growth, KV latency, active worker/invocation state, and hook failure/timeout deltas without creating sessions or writing observations.
 
 ---
 

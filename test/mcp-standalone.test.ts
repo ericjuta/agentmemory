@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 vi.mock("../src/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -26,6 +26,7 @@ import {
 } from "../src/mcp/tools-registry.js";
 import { InMemoryKV } from "../src/mcp/in-memory-kv.js";
 import { handleToolCall } from "../src/mcp/standalone.js";
+import { resetHandleForTests } from "../src/mcp/rest-proxy.js";
 import { writeFileSync } from "node:fs";
 
 describe("Tools Registry", () => {
@@ -120,8 +121,22 @@ describe("InMemoryKV", () => {
 });
 
 describe("handleToolCall", () => {
+  const originalUrl = process.env["AGENTMEMORY_URL"];
+  const originalSecret = process.env["AGENTMEMORY_SECRET"];
+
   beforeEach(() => {
     vi.mocked(writeFileSync).mockClear();
+    process.env["AGENTMEMORY_URL"] = "http://127.0.0.1:1";
+    process.env["AGENTMEMORY_SECRET"] = "";
+    resetHandleForTests();
+  });
+
+  afterEach(() => {
+    if (originalUrl === undefined) delete process.env["AGENTMEMORY_URL"];
+    else process.env["AGENTMEMORY_URL"] = originalUrl;
+    if (originalSecret === undefined) delete process.env["AGENTMEMORY_SECRET"];
+    else process.env["AGENTMEMORY_SECRET"] = originalSecret;
+    resetHandleForTests();
   });
 
   it("memory_save persists to disk immediately after saving", async () => {

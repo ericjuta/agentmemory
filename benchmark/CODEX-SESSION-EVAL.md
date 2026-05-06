@@ -329,12 +329,14 @@ Acceptance:
 
 The current live stack is healthy, but LLM compression, graph extraction, vector indexes, and consolidation are all enabled. RSS should be watched as part of operational confidence, separate from benchmark correctness.
 
+Status: `npm run agentmemory:burnin` samples the existing live-readonly health surfaces over time. It reads `/agentmemory/health` and `/agentmemory/hooks/diagnostics`, records RSS, KV latency, active worker/invocation state, function metric totals, hook failure/timeout deltas, and applies explicit warning/fail thresholds for RSS growth, KV latency, and new hook errors. It does not create sessions, write observations, run hooks, or fold resource health into Codex recall scoring.
+
 Acceptance:
 
-- add a lightweight burn-in probe that records RSS, active invocations, KV latency, and hook diagnostics over time
-- define warning and fail thresholds for sustained RSS growth
-- keep this out of the Codex-session recall score so retrieval quality and runtime resource health do not blur together
+- `npm run agentmemory:burnin -- --samples 12 --interval-ms 5000` records RSS, active worker/invocation state, KV latency, and hook diagnostics over time
+- warning/fail thresholds are configurable with `--warn-rss-growth-mb`, `--fail-rss-growth-mb`, `--warn-kv-latency-ms`, `--fail-kv-latency-ms`, and `--fail-hook-errors`
+- the probe stays live-readonly and remains outside the Codex-session recall score, so retrieval quality and runtime resource health do not blur together
 
 ## Current Recommendation
 
-Keep the current benchmark as the release-confidence gate for Codex session integration. The next best investment is source-recall warning policy plus CI profiles, then live-readonly diagnostics. Runtime RSS burn-in remains useful, but it should stay separate from Codex-session recall scoring so retrieval quality and resource health do not blur together.
+Keep the current benchmark as the release-confidence gate for Codex session integration. Source-recall policy, CI profiles, live-readonly diagnostics, and the first RSS burn-in probe are now in place. The next best investment is a longer unattended burn-in run under realistic compression and retrieval traffic, using the burn-in thresholds as an operational guardrail while keeping Codex-session recall scoring focused on retrieval quality.
