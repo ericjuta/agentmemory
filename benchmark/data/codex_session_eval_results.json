@@ -1,6 +1,6 @@
 {
   "mode": "local-service",
-  "generatedAt": "2026-05-05T18:17:23.667Z",
+  "generatedAt": "2026-05-06T03:51:43.189Z",
   "passed": true,
   "fixtures": [
     {
@@ -16,16 +16,16 @@
       "contextBytes": 396,
       "estimatedContextTokens": 99,
       "hookLatencyMs": {
-        "p50": 277,
-        "p95": 286,
-        "max": 286
+        "p50": 224,
+        "p95": 250,
+        "max": 250
       },
       "observationsCaptured": 3,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosya5cn_6ec8c12c08bf",
-        "obs_mosya5lp_7adac0f0741c",
+        "obs_motisssz_602a48dbd0a2",
+        "obs_motisszs_92380e38fb8e",
         "same_prompt",
         "same_auth_timeout"
       ],
@@ -45,16 +45,16 @@
       "contextBytes": 540,
       "estimatedContextTokens": 135,
       "hookLatencyMs": {
-        "p50": 248,
-        "p95": 378,
-        "max": 378
+        "p50": 228,
+        "p95": 325,
+        "max": 325
       },
       "observationsCaptured": 3,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosya6hg_14ea612f2941",
-        "obs_mosya6a8_e9acd45820ac",
+        "obs_motistsa_6c3a67ad2bd0",
+        "obs_motistlo_9d809549388b",
         "stale_replacement",
         "stale_initial"
       ],
@@ -74,17 +74,17 @@
       "contextBytes": 657,
       "estimatedContextTokens": 165,
       "hookLatencyMs": {
-        "p50": 276,
-        "p95": 334,
-        "max": 334
+        "p50": 225,
+        "p95": 327,
+        "max": 327
       },
       "observationsCaptured": 4,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosya7qd_9e7a7254c5a1",
-        "obs_mosya7h0_8ab91a42e8e0",
-        "obs_mosya78c_c01b262479ea",
+        "obs_motisuux_d31fd4ad515d",
+        "obs_motisum1_d75170ec1078",
+        "obs_motisufe_5fade61f2169",
         "trail_tests",
         "trail_panel",
         "trail_api"
@@ -105,17 +105,17 @@
       "contextBytes": 425,
       "estimatedContextTokens": 107,
       "hookLatencyMs": {
-        "p50": 268,
-        "p95": 277,
-        "max": 277
+        "p50": 227,
+        "p95": 240,
+        "max": 240
       },
       "observationsCaptured": 6,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosya8g4_8f5454aaf885",
-        "obs_mosya8nk_ba3d916a1322",
-        "obs_mosya8uk_102d9c596fd8",
+        "obs_motisvj9_1f8c3539c7f5",
+        "obs_motisvpl_d8e26eed019e",
+        "obs_motisvvs_ebaa4157bec0",
         "stop_prior_patch",
         "stop_marker",
         "stop_resume_prompt"
@@ -136,17 +136,17 @@
       "contextBytes": 471,
       "estimatedContextTokens": 118,
       "hookLatencyMs": {
-        "p50": 256,
-        "p95": 272,
-        "max": 272
+        "p50": 236,
+        "p95": 247,
+        "max": 247
       },
       "observationsCaptured": 4,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosya95e_0b961e2ef33d",
-        "obs_mosya9cr_24490aad6aa2",
-        "obs_mosya9jo_a91182cf693b",
+        "obs_motisw5g_64d2f48d0188",
+        "obs_motiswc0_b9876da2d125",
+        "obs_motiswij_17582e936644",
         "noise_rg_1",
         "noise_rg_2",
         "noise_decision"
@@ -167,15 +167,15 @@
       "contextBytes": 290,
       "estimatedContextTokens": 73,
       "hookLatencyMs": {
-        "p50": 269,
-        "p95": 273,
-        "max": 273
+        "p50": 247,
+        "p95": 272,
+        "max": 272
       },
       "observationsCaptured": 3,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosyaa8p_d8924b7ceee5",
+        "obs_motisx65_f411ec35dd1e",
         "negative_api"
       ],
       "candidateSelectionTrace": [],
@@ -194,17 +194,17 @@
       "contextBytes": 615,
       "estimatedContextTokens": 154,
       "hookLatencyMs": {
-        "p50": 251,
-        "p95": 289,
-        "max": 289
+        "p50": 254,
+        "p95": 283,
+        "max": 283
       },
       "observationsCaptured": 4,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosyaarn_93bbbd312232",
-        "obs_mosyaayb_435f8df91e56",
-        "obs_mosyab5m_cf8e59d92f7b",
+        "obs_motisxoc_cf8930c9becf",
+        "obs_motisxv9_89e55bb484ce",
+        "obs_motisy26_706de8859f9f",
         "budget_noise_1",
         "budget_core",
         "budget_noise_2"
@@ -225,15 +225,15 @@
       "contextBytes": 322,
       "estimatedContextTokens": 81,
       "hookLatencyMs": {
-        "p50": 284,
-        "p95": 413,
-        "max": 413
+        "p50": 253,
+        "p95": 274,
+        "max": 274
       },
       "observationsCaptured": 3,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosyabw7_0370df86a053",
+        "obs_motisys9_36240dd1dfb5",
         "multirepo_api"
       ],
       "candidateSelectionTrace": [],
@@ -252,19 +252,19 @@
       "contextBytes": 927,
       "estimatedContextTokens": 232,
       "hookLatencyMs": {
-        "p50": 255,
-        "p95": 376,
-        "max": 479
+        "p50": 223,
+        "p95": 233,
+        "max": 238
       },
       "observationsCaptured": 22,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosyacvo_01242534335c",
-        "obs_mosyad8p_c7a6ed645959",
-        "obs_mosyadjf_7f03f4ea470b",
-        "obs_mosyadra_a6bf6bff73a7",
-        "obs_mosyae0e_90b7ffe25d82",
+        "obs_motiszff_b315b6fc2d44",
+        "obs_motiszli_9d6b00739f76",
+        "obs_motiszrq_83336a28f125",
+        "obs_motiszy0_51f76e8d4c09",
+        "obs_motit04i_56e21f6cc835",
         "long_core_rollup",
         "long_noise_02",
         "long_noise_03",
@@ -287,15 +287,15 @@
       "contextBytes": 321,
       "estimatedContextTokens": 81,
       "hookLatencyMs": {
-        "p50": 268,
-        "p95": 325,
-        "max": 325
+        "p50": 226,
+        "p95": 296,
+        "max": 296
       },
       "observationsCaptured": 2,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosyahlr_9ba9e54cc4ba",
+        "obs_motit3b3_3dcc0c961605",
         "handoff_patch"
       ],
       "candidateSelectionTrace": [],
@@ -314,15 +314,15 @@
       "contextBytes": 307,
       "estimatedContextTokens": 77,
       "hookLatencyMs": {
-        "p50": 237,
-        "p95": 252,
-        "max": 252
+        "p50": 225,
+        "p95": 235,
+        "max": 235
       },
       "observationsCaptured": 3,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosyaiql_20ff47013ef2",
+        "obs_motit4bg_71482a1a5e16",
         "worktree_feature_a"
       ],
       "candidateSelectionTrace": [],
@@ -341,15 +341,15 @@
       "contextBytes": 261,
       "estimatedContextTokens": 66,
       "hookLatencyMs": {
-        "p50": 255,
-        "p95": 284,
-        "max": 284
+        "p50": 229,
+        "p95": 233,
+        "max": 233
       },
       "observationsCaptured": 2,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosyaj7s_e11f6b75cf8d",
+        "obs_motit4r4_75fccca2c3a5",
         "prompt_only_decision"
       ],
       "candidateSelectionTrace": [],
@@ -368,16 +368,16 @@
       "contextBytes": 434,
       "estimatedContextTokens": 109,
       "hookLatencyMs": {
-        "p50": 262,
-        "p95": 270,
-        "max": 270
+        "p50": 232,
+        "p95": 240,
+        "max": 240
       },
       "observationsCaptured": 3,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosyajpx_34194c984ec0",
-        "obs_mosyajx0_e578a35f6116",
+        "obs_motit576_3db51aa453a0",
+        "obs_motit5du_a32e07e3c1d2",
         "failed_tool_initial",
         "failed_tool_fixed"
       ],
@@ -397,15 +397,15 @@
       "contextBytes": 337,
       "estimatedContextTokens": 85,
       "hookLatencyMs": {
-        "p50": 252,
-        "p95": 266,
-        "max": 266
+        "p50": 225,
+        "p95": 230,
+        "max": 230
       },
       "observationsCaptured": 2,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosyakek_fe90a4edd595",
+        "obs_motit5t0_65f80076168d",
         "secret_redaction"
       ],
       "candidateSelectionTrace": [],
@@ -424,15 +424,15 @@
       "contextBytes": 329,
       "estimatedContextTokens": 83,
       "hookLatencyMs": {
-        "p50": 265,
-        "p95": 273,
-        "max": 273
+        "p50": 222,
+        "p95": 232,
+        "max": 232
       },
       "observationsCaptured": 2,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosyakwa_df2731a1665b",
+        "obs_motit68f_1de56c00ce22",
         "subagent_worker_contract"
       ],
       "candidateSelectionTrace": [],
@@ -451,15 +451,15 @@
       "contextBytes": 322,
       "estimatedContextTokens": 81,
       "hookLatencyMs": {
-        "p50": 240,
-        "p95": 240,
-        "max": 240
+        "p50": 226,
+        "p95": 238,
+        "max": 238
       },
       "observationsCaptured": 2,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosyaldz_310986c2fd32",
+        "obs_motit6o8_ffff2d86cc70",
         "runtime_boundary"
       ],
       "candidateSelectionTrace": [],
@@ -478,16 +478,16 @@
       "contextBytes": 397,
       "estimatedContextTokens": 100,
       "hookLatencyMs": {
-        "p50": 229,
-        "p95": 282,
-        "max": 282
+        "p50": 232,
+        "p95": 239,
+        "max": 239
       },
       "observationsCaptured": 3,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosyalu0_2788b589d9c3",
-        "obs_mosyam01_5eb5e22e7af1",
+        "obs_motit73e_2f0a6bf9571a",
+        "obs_motit79m_48377e1984d5",
         "correction_assumption",
         "correction_user"
       ],
@@ -507,16 +507,16 @@
       "contextBytes": 473,
       "estimatedContextTokens": 119,
       "hookLatencyMs": {
-        "p50": 255,
-        "p95": 258,
-        "max": 258
+        "p50": 232,
+        "p95": 246,
+        "max": 246
       },
       "observationsCaptured": 3,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosyami4_206f1a350331",
-        "obs_mosyamp4_326632fc2f55",
+        "obs_motit7pr_a1b8afd17fb2",
+        "obs_motit7vy_c8d17d5ef113",
         "test_diag_failure",
         "test_diag_fix"
       ],
@@ -536,15 +536,15 @@
       "contextBytes": 302,
       "estimatedContextTokens": 76,
       "hookLatencyMs": {
-        "p50": 227,
-        "p95": 251,
-        "max": 251
+        "p50": 218,
+        "p95": 250,
+        "max": 250
       },
       "observationsCaptured": 2,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosyan5z_02c2fb60d7e7",
+        "obs_motit8c2_dfd53b1a9f07",
         "artifact_tmp_handoff"
       ],
       "candidateSelectionTrace": [],
@@ -563,15 +563,15 @@
       "contextBytes": 291,
       "estimatedContextTokens": 73,
       "hookLatencyMs": {
-        "p50": 231,
-        "p95": 254,
-        "max": 254
+        "p50": 227,
+        "p95": 231,
+        "max": 231
       },
       "observationsCaptured": 2,
       "missingRequiredFacts": [],
       "leakedForbiddenFacts": [],
       "selectedObservationIds": [
-        "obs_mosyanm7_64395fd3bb6c",
+        "obs_motit8s6_5394d697aeb8",
         "noop_contract"
       ],
       "candidateSelectionTrace": [],
@@ -587,7 +587,7 @@
     "contextPrecisionProxy": 0.7849999999999999,
     "sessionStateCorrectness": 1,
     "hookContractCorrectness": 1,
-    "hookP95Ms": 378,
+    "hookP95Ms": 325,
     "maxContextTokens": 232,
     "observationsCaptured": 78,
     "disabledInjectionNoOutput": true
@@ -605,8 +605,8 @@
   },
   "warningPolicy": {
     "sourceRecallWarningThreshold": 0.85,
-    "maxSourceRecallWarnings": 2,
-    "minAverageGoldObservationRecallAtK": 0.9,
+    "maxSourceRecallWarnings": 0,
+    "minAverageGoldObservationRecallAtK": 1,
     "passed": true,
     "failures": []
   }
