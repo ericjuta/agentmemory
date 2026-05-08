@@ -191,6 +191,16 @@ export interface FunctionMetrics {
   failureReasons?: Record<string, number>;
   avgLatencyMs: number;
   avgQualityScore: number;
+  lastCalledAt?: string;
+  lastSuccessAt?: string;
+  lastFailureAt?: string;
+  recentWindowMs?: number;
+  recentCalls?: number;
+  recentSuccessCount?: number;
+  recentFailureCount?: number;
+  recentFailureRate?: number;
+  recentAvgLatencyMs?: number;
+  recentFailureReasons?: Record<string, number>;
 }
 
 export interface HealthSnapshot {

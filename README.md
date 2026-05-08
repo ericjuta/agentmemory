@@ -26,9 +26,9 @@
   <picture><source media="(prefers-color-scheme: dark)" srcset="assets/tags/light/stat-recall.svg"><img src="assets/tags/stat-recall.svg" alt="95.2% retrieval R@5" height="38" /></picture>
   <picture><source media="(prefers-color-scheme: dark)" srcset="assets/tags/light/stat-tokens.svg"><img src="assets/tags/stat-tokens.svg" alt="92% fewer tokens" height="38" /></picture>
   <picture><source media="(prefers-color-scheme: dark)" srcset="assets/tags/light/stat-tools.svg"><img src="assets/tags/stat-tools.svg" alt="51 MCP tools" height="38" /></picture>
-  <picture><source media="(prefers-color-scheme: dark)" srcset="assets/tags/light/stat-hooks.svg"><img src="assets/tags/stat-hooks.svg" alt="12 auto hooks" height="38" /></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="assets/tags/light/stat-hooks.svg"><img src="assets/tags/stat-hooks.svg" alt="13 auto hooks" height="38" /></picture>
   <picture><source media="(prefers-color-scheme: dark)" srcset="assets/tags/light/stat-deps.svg"><img src="assets/tags/stat-deps.svg" alt="0 external DBs" height="38" /></picture>
-  <picture><source media="(prefers-color-scheme: dark)" srcset="assets/tags/light/stat-tests.svg"><img src="assets/tags/stat-tests.svg" alt="827 tests passing" height="38" /></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="assets/tags/light/stat-tests.svg"><img src="assets/tags/stat-tests.svg" alt="891 tests passing" height="38" /></picture>
 </p>
 
 <p align="center">
@@ -134,7 +134,7 @@ agentmemory works with any agent that supports hooks, MCP, or REST API. All agen
 <sub>AgentSDKProvider</sub>
 </td>
 <td align="center" width="12.5%">
-<img src="https://img.shields.io/badge/110-endpoints-1f6feb?style=flat-square" alt="REST API" width="48" /><br/>
+<img src="https://img.shields.io/badge/124-endpoints-1f6feb?style=flat-square" alt="REST API" width="48" /><br/>
 <strong>Any agent</strong><br/>
 <sub>REST API</sub>
 </td>
@@ -346,7 +346,7 @@ Install agentmemory: run `npx @agentmemory/agentmemory` in a separate terminal t
 <summary><b>OpenClaw (paste this prompt)</b></summary>
 
 ```
-Install agentmemory for OpenClaw. Run `npx @agentmemory/agentmemory` in a separate terminal to start the memory server on localhost:3111. Then add this to my OpenClaw MCP config so agentmemory is available with all 50 memory tools:
+Install agentmemory for OpenClaw. Run `npx @agentmemory/agentmemory` in a separate terminal to start the memory server on localhost:3111. Then add this to my OpenClaw MCP config so agentmemory is available with all 51 memory tools:
 
 {
   "mcpServers": {
@@ -368,7 +368,7 @@ Full guide: [`integrations/openclaw/`](integrations/openclaw/)
 <summary><b>Hermes Agent (paste this prompt)</b></summary>
 
 ```
-Install agentmemory for Hermes. Run `npx @agentmemory/agentmemory` in a separate terminal to start the memory server on localhost:3111. Then add this to ~/.hermes/config.yaml so Hermes can use agentmemory as an MCP server with all 50 memory tools:
+Install agentmemory for Hermes. Run `npx @agentmemory/agentmemory` in a separate terminal to start the memory server on localhost:3111. Then add this to ~/.hermes/config.yaml so Hermes can use agentmemory as an MCP server with all 51 memory tools:
 
 mcp_servers:
   agentmemory:
@@ -615,7 +615,7 @@ npm install @xenova/transformers
 
 51 tools, 6 resources, 3 prompts, and 4 skills — the most comprehensive MCP memory toolkit for any agent.
 
-### 50 Tools
+### 51 Tools
 
 <details>
 <summary>Core tools (always available)</summary>
@@ -637,7 +637,7 @@ npm install @xenova/transformers
 </details>
 
 <details>
-<summary>Extended tools (50 total — set AGENTMEMORY_TOOLS=all)</summary>
+<summary>Extended tools (51 total — set AGENTMEMORY_TOOLS=all)</summary>
 
 | Tool | Description |
 |------|-------------|
@@ -905,7 +905,7 @@ Create `~/.agentmemory/.env`:
 
 <h2 id="api"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/tags/light/section-api.svg"><img src="assets/tags/section-api.svg" alt="API" height="32" /></picture></h2>
 
-110 endpoints on port `3111`. The REST API binds to `127.0.0.1` by default. Protected endpoints require `Authorization: Bearer <secret>` when `AGENTMEMORY_SECRET` is set, and mesh sync endpoints require `AGENTMEMORY_SECRET` on both peers.
+124 endpoints on port `3111`. The REST API binds to `127.0.0.1` by default. Protected endpoints require `Authorization: Bearer <secret>` when `AGENTMEMORY_SECRET` is set, and mesh sync endpoints require `AGENTMEMORY_SECRET` on both peers.
 
 <details>
 <summary>Key endpoints</summary>
@@ -940,7 +940,7 @@ Codex live-session proof commands:
 - npm run codex:smoke starts isolated temp HOME/cwd/state, exercises native Codex SessionStart, UserPromptSubmit, PostToolUse, and Stop hooks, and asserts normal hook stdout keeps hookSpecificOutput.additionalContext as a string without debug/source fields.
 - npm run codex:smoke:live-readonly reads live host hook/API state only and labels every file or endpoint it touched.
 - npm run eval:codex-session:ci:strict-warning-policy runs the local-service eval with zero source-recall warnings and perfect average gold observation recall required.
-- npm run agentmemory:burnin samples live-readonly health and hook diagnostics over time, reporting RSS growth, KV latency, active worker/invocation state, and hook failure/timeout deltas without creating sessions or writing observations.
+- npm run agentmemory:burnin samples live-readonly health and hook diagnostics over time, reporting RSS growth, KV latency, active worker/invocation state, hook failure/timeout deltas, and compress/summarize failure deltas without creating sessions or writing observations.
 
 ---
 

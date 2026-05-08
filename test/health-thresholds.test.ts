@@ -18,6 +18,15 @@ function snap(over: Partial<HealthSnapshot> = {}): HealthSnapshot {
 }
 
 describe("evaluateHealth memory severity", () => {
+  it("goes critical when KV connectivity is not ok", () => {
+    const { status, alerts } = evaluateHealth(snap({
+      kvConnectivity: { status: "error", latencyMs: 5000, error: "kv_probe_failed" },
+    }));
+
+    expect(status).toBe("critical");
+    expect(alerts).toContain("kv_connectivity_error");
+  });
+
   it("stays healthy when heap fills a tiny steady-state process (issue #158)", () => {
     const s = snap({
       memory: {

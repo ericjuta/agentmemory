@@ -194,7 +194,7 @@ describe("session-start hook — context injection gate (#143)", () => {
     }
   });
 
-  it("keeps live AGENTMEMORY env values ahead of wrapper env file", async () => {
+  it("lets the wrapper env file override inherited AGENTMEMORY values", async () => {
     const requests: Array<{ url: string | undefined; body: unknown }> = [];
     const server = createServer((req, res) => {
       let body = "";
@@ -216,8 +216,8 @@ describe("session-start hook — context injection gate (#143)", () => {
     writeFileSync(
       envFile,
       [
-        "AGENTMEMORY_INJECT_CONTEXT=true",
-        "AGENTMEMORY_URL=http://127.0.0.1:1",
+        "AGENTMEMORY_INJECT_CONTEXT=false",
+        `AGENTMEMORY_URL=http://127.0.0.1:${address.port}`,
       ].join("\n"),
     );
 
@@ -232,8 +232,8 @@ describe("session-start hook — context injection gate (#143)", () => {
         payload,
         {
           AGENTMEMORY_ENV_FILE: envFile,
-          AGENTMEMORY_INJECT_CONTEXT: "false",
-          AGENTMEMORY_URL: `http://127.0.0.1:${address.port}`,
+          AGENTMEMORY_INJECT_CONTEXT: "true",
+          AGENTMEMORY_URL: "http://127.0.0.1:1",
         },
         ["session-start.mjs"],
       );

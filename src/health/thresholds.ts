@@ -41,6 +41,11 @@ export function evaluateHealth(
     degraded = true;
   }
 
+  if (snapshot.kvConnectivity.status !== "ok") {
+    alerts.push("kv_connectivity_error");
+    critical = true;
+  }
+
   if (snapshot.eventLoopLagMs > cfg.eventLoopLagCriticalMs) {
     alerts.push(
       `event_loop_lag_critical_${Math.round(snapshot.eventLoopLagMs)}ms`,

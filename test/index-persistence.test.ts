@@ -117,6 +117,26 @@ describe("IndexPersistence", () => {
     expect(loaded.vector?.size).toBe(1001);
   });
 
+  it("keeps loading usable vector snapshots when BM25 snapshot is corrupt", async () => {
+    const bm25 = new SearchIndex();
+    bm25.add(makeObs({ id: "obs_1", title: "auth handler" }));
+    const vector = new VectorIndex();
+    vector.add("obs_1", "ses_1", new Float32Array([1, 0, 0]));
+
+    const persistence = new IndexPersistence(kv as never, bm25, vector, {
+      cacheDir: indexDir,
+    });
+    await persistence.save();
+    await writeFile(join(indexDir, "bm25.json"), "corrupt", "utf-8");
+
+    const loaded = await persistence.load();
+
+    expect(loaded.bm25).toBeNull();
+    expect(loaded.vector).not.toBeNull();
+    expect(loaded.vector!.size).toBe(1);
+    expect(loaded.vector!.search(new Float32Array([1, 0, 0]))[0]?.obsId).toBe("obs_1");
+  });
+
   it("loads legacy single-file vector snapshots", async () => {
     const bm25 = new SearchIndex();
     const vector = new VectorIndex();

@@ -17,6 +17,7 @@ function readText(relativePath: string): string {
 
 describe("Consistency checks", () => {
   const toolCount = getAllTools().length;
+  const restEndpointCount = 124;
 
   it("version.ts matches package.json", () => {
     const pkg = JSON.parse(readText("package.json"));
@@ -40,6 +41,21 @@ describe("Consistency checks", () => {
     expect(readme).toMatch(toolCountPattern);
     const toolResourcePattern = new RegExp(`${toolCount}\\s+tools,\\s+6\\s+resources`);
     expect(readme).toMatch(toolResourcePattern);
+    expect(readme).not.toMatch(/\b50\s+(?:memory\s+)?tools\b/i);
+    expect(readme).not.toMatch(/###\s+50\s+Tools/);
+  });
+
+  it("REST endpoint count matches api trigger registrations and docs", () => {
+    const api = readText("src/triggers/api.ts");
+    const index = readText("src/index.ts");
+    const readme = readText("README.md");
+    const endpointRegistrations = api.match(/api_path:\s*"/g) ?? [];
+    expect(endpointRegistrations).toHaveLength(restEndpointCount);
+    expect(index).toContain(`Endpoints: ${restEndpointCount} REST`);
+    expect(readme).toMatch(new RegExp(`${restEndpointCount}\\s+endpoints on port`));
+    expect(readme).toContain(`${restEndpointCount}-endpoints`);
+    expect(readme).not.toMatch(/\b110\s+endpoints\b/);
+    expect(readme).not.toContain("110-endpoints");
   });
 
   it("all tool names are unique", () => {

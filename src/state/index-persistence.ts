@@ -123,7 +123,6 @@ export class IndexPersistence {
       this.logFailure(err);
       return null;
     });
-    if (fileLoaded) return fileLoaded;
 
     const bm25Data = await this.kv
       .get<string>(KV.bm25Index, "data")
@@ -140,7 +139,10 @@ export class IndexPersistence {
       vecData && typeof vecData === "string"
         ? VectorIndex.deserialize(vecData)
         : null;
-    return { bm25, vector };
+    return {
+      bm25: fileLoaded?.bm25 ?? bm25,
+      vector: fileLoaded?.vector ?? vector,
+    };
   }
 
   stop(): void {
@@ -163,15 +165,37 @@ export class IndexPersistence {
     if (metadata.version !== SNAPSHOT_VERSION) return null;
 
     const bm25 = metadata.bm25
-      ? SearchIndex.deserialize(await this.readSnapshotFile(metadata.bm25))
+      ? await this.loadBm25Snapshot(metadata.bm25)
       : null;
     const vector = metadata.vector
-      ? VectorIndex.deserializeShards(await this.readSnapshotFiles(metadata.vector))
+      ? await this.loadVectorSnapshot(metadata.vector)
       : null;
     const usableBm25 = bm25 && bm25.size > 0 ? bm25 : null;
     const usableVector = vector && vector.size > 0 ? vector : null;
     if (!usableBm25 && !usableVector) return null;
     return { bm25: usableBm25, vector: usableVector };
+  }
+
+  private async loadBm25Snapshot(
+    metadata: SnapshotFileMetadata,
+  ): Promise<SearchIndex | null> {
+    try {
+      return SearchIndex.deserialize(await this.readSnapshotFile(metadata));
+    } catch (err) {
+      this.logFailure(err);
+      return null;
+    }
+  }
+
+  private async loadVectorSnapshot(
+    metadata: SnapshotFileMetadata,
+  ): Promise<VectorIndex | null> {
+    try {
+      return VectorIndex.deserializeShards(await this.readSnapshotFiles(metadata));
+    } catch (err) {
+      this.logFailure(err);
+      return null;
+    }
   }
 
   private async writeSnapshotFile(

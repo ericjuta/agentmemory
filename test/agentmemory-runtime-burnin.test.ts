@@ -17,6 +17,7 @@ function config(overrides: Partial<BurninConfig> = {}): BurninConfig {
     warnKvLatencyMs: 100,
     failKvLatencyMs: 500,
     failHookErrors: 0,
+    failFunctionErrors: 0,
     json: false,
     ...overrides,
   };
@@ -38,6 +39,10 @@ function sample(overrides: Partial<BurninSample> = {}): BurninSample {
     activeInvocations: 0,
     workerCount: 1,
     functionMetricCalls: 10,
+    compressCalls: 10,
+    compressFailures: 0,
+    summarizeCalls: 5,
+    summarizeFailures: 0,
     hookAttempts: 100,
     hookFailures: 0,
     hookTimeouts: 0,
@@ -59,6 +64,8 @@ describe("agentmemory runtime burn-in summary", () => {
     expect(summary.rssGrowthMb).toBe(5);
     expect(summary.maxKvLatencyMs).toBe(8);
     expect(summary.maxActiveInvocations).toBe(3);
+    expect(summary.compressCallDelta).toBe(0);
+    expect(summary.summarizeFailureDelta).toBe(0);
     expect(summary.failures).toEqual([]);
   });
 
@@ -82,6 +89,20 @@ describe("agentmemory runtime burn-in summary", () => {
     expect(summary.passed).toBe(false);
     expect(summary.failures.some((failure) => failure.includes("health status critical"))).toBe(true);
     expect(summary.failures.some((failure) => failure.includes("hook_error_delta 1"))).toBe(true);
+  });
+
+  it("fails on compress and summarize failure deltas", () => {
+    const summary = summarizeBurnin([
+      sample({ index: 1, compressCalls: 10, compressFailures: 1, summarizeCalls: 5, summarizeFailures: 2 }),
+      sample({ index: 2, compressCalls: 12, compressFailures: 2, summarizeCalls: 6, summarizeFailures: 3 }),
+    ], config());
+
+    expect(summary.passed).toBe(false);
+    expect(summary.compressCallDelta).toBe(2);
+    expect(summary.compressFailureDelta).toBe(1);
+    expect(summary.summarizeCallDelta).toBe(1);
+    expect(summary.summarizeFailureDelta).toBe(1);
+    expect(summary.failures.some((failure) => failure.includes("function_error_delta 2"))).toBe(true);
   });
 
   it("warns and clamps hook deltas when diagnostics counters reset", () => {
@@ -114,6 +135,7 @@ describe("agentmemory runtime burn-in summary", () => {
       "--warn-kv-latency-ms", "30",
       "--fail-kv-latency-ms", "40",
       "--fail-hook-errors", "2",
+      "--fail-function-errors", "3",
       "--json",
     ], {});
 
@@ -126,6 +148,7 @@ describe("agentmemory runtime burn-in summary", () => {
       warnKvLatencyMs: 30,
       failKvLatencyMs: 40,
       failHookErrors: 2,
+      failFunctionErrors: 3,
       json: true,
     });
   });

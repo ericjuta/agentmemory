@@ -70,7 +70,7 @@ const env = { ...process.env };
 const filePath = envFilePath();
 if (filePath) {
 	const loaded = parseAgentmemoryEnv(filePath);
-	for (const [key, value] of Object.entries(loaded)) if (env[key] === void 0) env[key] = value;
+	for (const [key, value] of Object.entries(loaded)) env[key] = value;
 }
 const hookName = hookNameFromScript(targetScript);
 const startedAt = Date.now();

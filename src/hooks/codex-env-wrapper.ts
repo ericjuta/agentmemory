@@ -85,7 +85,7 @@ const filePath = envFilePath();
 if (filePath) {
   const loaded = parseAgentmemoryEnv(filePath);
   for (const [key, value] of Object.entries(loaded)) {
-    if (env[key] === undefined) env[key] = value;
+    env[key] = value;
   }
 }
 

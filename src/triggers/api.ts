@@ -1,5 +1,10 @@
 import type { ISdk, ApiRequest } from "iii-sdk";
-import type { Session, CompressedObservation, HookPayload } from "../types.js";
+import type {
+  Session,
+  CompressedObservation,
+  HookPayload,
+  FunctionMetrics,
+} from "../types.js";
 import { KV } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
 import { getLatestHealth } from "../health/monitor.js";
@@ -135,6 +140,41 @@ function parseOptionalPositiveInt(value: unknown): number | undefined | null {
   return parsed;
 }
 
+function evaluateMetricHealth(
+  metrics: FunctionMetrics[],
+): { status: "healthy" | "degraded" | "critical"; alerts: string[] } {
+  const watched = new Set(["mem::compress", "mem::summarize"]);
+  const alerts: string[] = [];
+  let critical = false;
+  let degraded = false;
+
+  for (const metric of metrics) {
+    if (!watched.has(metric.functionId)) continue;
+    const recentCalls = metric.recentCalls ?? 0;
+    const recentFailureCount = metric.recentFailureCount ?? 0;
+    const recentFailureRate = metric.recentFailureRate ?? 0;
+    if (recentCalls < 3 || recentFailureCount === 0) continue;
+
+    const percent = Math.round(recentFailureRate * 100);
+    if (recentCalls >= 5 && recentFailureRate >= 0.8) {
+      alerts.push(
+        `function_failures_critical_${metric.functionId}_${percent}%_${recentFailureCount}of${recentCalls}`,
+      );
+      critical = true;
+    } else if (recentFailureRate >= 0.5 || recentFailureCount >= 3) {
+      alerts.push(
+        `function_failures_warn_${metric.functionId}_${percent}%_${recentFailureCount}of${recentCalls}`,
+      );
+      degraded = true;
+    }
+  }
+
+  return {
+    status: critical ? "critical" : degraded ? "degraded" : "healthy",
+    alerts,
+  };
+}
+
 export function registerApiTriggers(
   sdk: ISdk,
   kv: StateKV,
@@ -255,8 +295,21 @@ export function registerApiTriggers(
       const circuitBreaker =
         provider && "circuitState" in provider ? provider.circuitState : null;
 
-      const status = health?.status || "healthy";
+      const metricHealth = evaluateMetricHealth(functionMetrics);
+      let status = health?.status || "healthy";
+      if (metricHealth.status === "critical") {
+        status = "critical";
+      } else if (metricHealth.status === "degraded" && status === "healthy") {
+        status = "degraded";
+      }
       const statusCode = status === "critical" ? 503 : 200;
+      const healthWithMetrics = health
+        ? {
+            ...health,
+            status,
+            alerts: [...health.alerts, ...metricHealth.alerts],
+          }
+        : null;
 
       return {
         status_code: statusCode,
@@ -264,7 +317,7 @@ export function registerApiTriggers(
           status,
           service: "agentmemory",
           version: VERSION,
-          health: health || null,
+          health: healthWithMetrics,
           functionMetrics,
           circuitBreaker,
         },

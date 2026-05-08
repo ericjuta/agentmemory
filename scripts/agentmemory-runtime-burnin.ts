@@ -13,6 +13,7 @@ export interface BurninConfig {
   warnKvLatencyMs: number;
   failKvLatencyMs: number;
   failHookErrors: number;
+  failFunctionErrors: number;
   json: boolean;
 }
 
@@ -31,6 +32,10 @@ export interface BurninSample {
   activeInvocations: number;
   workerCount: number;
   functionMetricCalls: number;
+  compressCalls: number;
+  compressFailures: number;
+  summarizeCalls: number;
+  summarizeFailures: number;
   hookAttempts: number;
   hookFailures: number;
   hookTimeouts: number;
@@ -52,6 +57,10 @@ export interface BurninSummary {
   maxActiveInvocations: number;
   hookFailureDelta: number;
   hookTimeoutDelta: number;
+  compressCallDelta: number;
+  compressFailureDelta: number;
+  summarizeCallDelta: number;
+  summarizeFailureDelta: number;
 }
 
 function readAgentmemoryEnv(): Record<string, string> {
@@ -101,11 +110,13 @@ export function parseBurninArgs(
   const warnKvLatencyMs = numberOption(args, "--warn-kv-latency-ms") ?? 250;
   const failKvLatencyMs = numberOption(args, "--fail-kv-latency-ms") ?? 1000;
   const failHookErrors = numberOption(args, "--fail-hook-errors") ?? 0;
+  const failFunctionErrors = numberOption(args, "--fail-function-errors") ?? 0;
   if (!Number.isInteger(samples) || samples < 1) throw new Error("--samples must be a positive integer");
   if (!Number.isInteger(intervalMs) || intervalMs < 0) throw new Error("--interval-ms must be a non-negative integer");
   if (failRssGrowthMb < warnRssGrowthMb) throw new Error("--fail-rss-growth-mb must be >= --warn-rss-growth-mb");
   if (failKvLatencyMs < warnKvLatencyMs) throw new Error("--fail-kv-latency-ms must be >= --warn-kv-latency-ms");
   if (!Number.isInteger(failHookErrors) || failHookErrors < 0) throw new Error("--fail-hook-errors must be a non-negative integer");
+  if (!Number.isInteger(failFunctionErrors) || failFunctionErrors < 0) throw new Error("--fail-function-errors must be a non-negative integer");
   return {
     url: stringOption(args, "--url") || env["AGENTMEMORY_URL"] || loaded.AGENTMEMORY_URL || "http://127.0.0.1:3111",
     secret: stringOption(args, "--secret") || env["AGENTMEMORY_SECRET"] || loaded.AGENTMEMORY_SECRET,
@@ -116,6 +127,7 @@ export function parseBurninArgs(
     warnKvLatencyMs,
     failKvLatencyMs,
     failHookErrors,
+    failFunctionErrors,
     json: args.includes("--json"),
   };
 }
@@ -153,20 +165,45 @@ function totalFunctionMetricCalls(metrics: unknown): number {
   return metrics.reduce((sum, metric) => sum + numericValue(objectValue(metric).totalCalls), 0);
 }
 
+function functionMetricCounts(
+  metrics: unknown,
+  functionId: string,
+): { totalCalls: number; failureCount: number } {
+  if (!Array.isArray(metrics)) return { totalCalls: 0, failureCount: 0 };
+  const metric = metrics
+    .map(objectValue)
+    .find((item) => item.functionId === functionId);
+  if (!metric) return { totalCalls: 0, failureCount: 0 };
+  return {
+    totalCalls: numericValue(metric.totalCalls),
+    failureCount: numericValue(metric.failureCount),
+  };
+}
+
 async function timedJson(
   url: string,
   path: string,
   headers: Record<string, string>,
   allowHttpErrorBody = false,
 ): Promise<{ json: Record<string, unknown>; tookMs: number }> {
-  const started = Date.now();
-  const res = await fetch(url + path, { headers, signal: AbortSignal.timeout(5000) });
-  const text = await res.text();
-  const tookMs = Date.now() - started;
-  if (!res.ok && !allowHttpErrorBody) {
-    throw new Error(path + " failed with HTTP " + String(res.status) + ": " + text.slice(0, 400));
+  const retries = 2;
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const started = Date.now();
+    try {
+      const res = await fetch(url + path, { headers, signal: AbortSignal.timeout(5000) });
+      const text = await res.text();
+      const tookMs = Date.now() - started;
+      if (!res.ok && !allowHttpErrorBody) {
+        throw new Error(path + " failed with HTTP " + String(res.status) + ": " + text.slice(0, 400));
+      }
+      return { json: text ? JSON.parse(text) as Record<string, unknown> : {}, tookMs };
+    } catch (error) {
+      lastError = error;
+      if (attempt < retries) await sleep(250 * (attempt + 1));
+    }
   }
-  return { json: text ? JSON.parse(text) as Record<string, unknown> : {}, tookMs };
+  throw lastError;
 }
 
 async function collectSample(config: BurninConfig, index: number): Promise<BurninSample> {
@@ -183,6 +220,8 @@ async function collectSample(config: BurninConfig, index: number): Promise<Burni
   const diagnosticsSummary = objectValue(diagnosticsResult.json.summary);
   const hooks = Array.isArray(diagnosticsResult.json.hooks) ? diagnosticsResult.json.hooks : [];
   const hookMaxLatencyMs = hooks.reduce((max, hook) => Math.max(max, numericValue(objectValue(hook).maxLatencyMs)), 0);
+  const compressMetrics = functionMetricCounts(healthResult.json.functionMetrics, "mem::compress");
+  const summarizeMetrics = functionMetricCounts(healthResult.json.functionMetrics, "mem::summarize");
   return {
     index,
     timestamp: new Date().toISOString(),
@@ -198,6 +237,10 @@ async function collectSample(config: BurninConfig, index: number): Promise<Burni
     activeInvocations: activeInvocationCount(health.workers),
     workerCount: Array.isArray(health.workers) ? health.workers.length : 0,
     functionMetricCalls: totalFunctionMetricCalls(healthResult.json.functionMetrics),
+    compressCalls: compressMetrics.totalCalls,
+    compressFailures: compressMetrics.failureCount,
+    summarizeCalls: summarizeMetrics.totalCalls,
+    summarizeFailures: summarizeMetrics.failureCount,
     hookAttempts: numericValue(diagnosticsSummary.attempts),
     hookFailures: numericValue(diagnosticsSummary.failures),
     hookTimeouts: numericValue(diagnosticsSummary.timeouts),
@@ -217,8 +260,16 @@ export function summarizeBurnin(samples: BurninSample[], config: BurninConfig): 
   const maxActiveInvocations = Math.max(...samples.map((sample) => sample.activeInvocations));
   const rawHookFailureDelta = last.hookFailures - first.hookFailures;
   const rawHookTimeoutDelta = last.hookTimeouts - first.hookTimeouts;
+  const rawCompressCallDelta = last.compressCalls - first.compressCalls;
+  const rawCompressFailureDelta = last.compressFailures - first.compressFailures;
+  const rawSummarizeCallDelta = last.summarizeCalls - first.summarizeCalls;
+  const rawSummarizeFailureDelta = last.summarizeFailures - first.summarizeFailures;
   const hookFailureDelta = Math.max(0, rawHookFailureDelta);
   const hookTimeoutDelta = Math.max(0, rawHookTimeoutDelta);
+  const compressCallDelta = Math.max(0, rawCompressCallDelta);
+  const compressFailureDelta = Math.max(0, rawCompressFailureDelta);
+  const summarizeCallDelta = Math.max(0, rawSummarizeCallDelta);
+  const summarizeFailureDelta = Math.max(0, rawSummarizeFailureDelta);
   const warnings: string[] = [];
   const failures: string[] = [];
 
@@ -236,8 +287,19 @@ export function summarizeBurnin(samples: BurninSample[], config: BurninConfig): 
   if (rawHookFailureDelta < 0 || rawHookTimeoutDelta < 0) {
     warnings.push("hook diagnostics counters decreased during burn-in; runtime likely restarted");
   }
+  if (
+    rawCompressCallDelta < 0 ||
+    rawCompressFailureDelta < 0 ||
+    rawSummarizeCallDelta < 0 ||
+    rawSummarizeFailureDelta < 0
+  ) {
+    warnings.push("function metrics counters decreased during burn-in; runtime likely restarted");
+  }
   if (hookFailureDelta + hookTimeoutDelta > config.failHookErrors) {
     failures.push("hook_error_delta " + String(hookFailureDelta + hookTimeoutDelta) + " exceeds fail " + String(config.failHookErrors));
+  }
+  if (compressFailureDelta + summarizeFailureDelta > config.failFunctionErrors) {
+    failures.push("function_error_delta " + String(compressFailureDelta + summarizeFailureDelta) + " exceeds fail " + String(config.failFunctionErrors));
   }
 
   return {
@@ -253,6 +315,10 @@ export function summarizeBurnin(samples: BurninSample[], config: BurninConfig): 
     maxActiveInvocations,
     hookFailureDelta,
     hookTimeoutDelta,
+    compressCallDelta,
+    compressFailureDelta,
+    summarizeCallDelta,
+    summarizeFailureDelta,
   };
 }
 
@@ -271,14 +337,15 @@ function formatSummary(config: BurninConfig, samples: BurninSample[], summary: B
     "kv_latency_ms_max: " + summary.maxKvLatencyMs.toFixed(1),
     "active_invocations_max: " + String(summary.maxActiveInvocations),
     "hook_delta: failures " + String(summary.hookFailureDelta) + " timeouts " + String(summary.hookTimeoutDelta),
+    "function_delta: compress calls " + String(summary.compressCallDelta) + " failures " + String(summary.compressFailureDelta) + "; summarize calls " + String(summary.summarizeCallDelta) + " failures " + String(summary.summarizeFailureDelta),
     "warnings:",
     ...(summary.warnings.length ? summary.warnings.map((warning) => "- " + warning) : ["- none"]),
     "failures:",
     ...(summary.failures.length ? summary.failures.map((failure) => "- " + failure) : ["- none"]),
     "sample_table:",
-    "| # | status | rss MB | kv ms | active | hooks fail/timeout | health ms | diag ms |",
-    "| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
-    ...samples.map((sample) => "| " + String(sample.index) + " | " + sample.healthStatus + " | " + sample.rssMb.toFixed(1) + " | " + (sample.kvLatencyMs === null ? "-" : sample.kvLatencyMs.toFixed(1)) + " | " + String(sample.activeInvocations) + " | " + String(sample.hookFailures) + "/" + String(sample.hookTimeouts) + " | " + String(sample.healthHttpMs) + " | " + String(sample.diagnosticsHttpMs) + " |"),
+    "| # | status | rss MB | kv ms | active | hooks fail/timeout | compress fail | summarize fail | health ms | diag ms |",
+    "| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ...samples.map((sample) => "| " + String(sample.index) + " | " + sample.healthStatus + " | " + sample.rssMb.toFixed(1) + " | " + (sample.kvLatencyMs === null ? "-" : sample.kvLatencyMs.toFixed(1)) + " | " + String(sample.activeInvocations) + " | " + String(sample.hookFailures) + "/" + String(sample.hookTimeouts) + " | " + String(sample.compressFailures) + " | " + String(sample.summarizeFailures) + " | " + String(sample.healthHttpMs) + " | " + String(sample.diagnosticsHttpMs) + " |"),
     "",
   ].join("\n");
 }
